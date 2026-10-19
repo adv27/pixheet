@@ -1,0 +1,148 @@
+"""Image preparation: open, normalize to RGB, and fit to the spreadsheet limits."""
+
+import math
+import struct
+from collections.abc import Callable
+
+from PIL import Image, ImageColor, ImageMath, ImageOps
+
+from pixheet._xlsx import MAX_COLUMNS, MAX_ROWS
+
+# Excel allows 64,000 cell formats and format 0 is the default style.
+MAX_COLORS = 63_999
+# Any image whose longest side is at most this has at most 252 * 252 = 63,504
+# pixels, so it always fits MAX_COLORS without counting.
+_ALWAYS_FITS_SIDE = math.isqrt(MAX_COLORS)
+
+_EXIF_ORIENTATION = 0x0112
+
+type RGB = tuple[int, int, int]
+
+
+def parse_background(value: str | RGB | None) -> RGB | None:
+    """Parse a background option: a color name, ``#RRGGBB``, an (r, g, b) tuple, or "none".
+
+    Returns None for "none" (drop alpha without compositing).
+    """
+    if value is None:
+        return None
+    if isinstance(value, tuple):
+        if len(value) == 3 and all(isinstance(c, int) and 0 <= c <= 255 for c in value):
+            return value
+        raise ValueError(f"invalid background color {value!r}: expected (r, g, b) in 0..255")
+    text = str(value).strip()
+    if text.lower() == "none":
+        return None
+    try:
+        rgb = ImageColor.getrgb(text)
+    except ValueError:
+        raise ValueError(
+            f"invalid background color {value!r}: use white, black, #RRGGBB or none"
+        ) from None
+    return rgb[:3]
+
+
+def _orientation(im: Image.Image) -> int:
+    try:
+        return im.getexif().get(_EXIF_ORIENTATION, 1)
+    except SyntaxError, struct.error:  # an EXIF block that is not valid TIFF data
+        return 1
+
+
+def _to_8_bit(im: Image.Image) -> Image.Image:
+    """Keep the top 8 bits of 16-bit samples (mode I) instead of letting RGB clip them."""
+    key = im.info.get("transparency")
+    out = im.point(lambda v: v / 256)
+    out.info.pop("transparency", None)
+    if isinstance(key, int):
+        # The transparent gray level is a 16-bit value too: mask before scaling.
+        mask = ImageMath.lambda_eval(lambda a: (a["im"] != key) * 255, im=im).convert("L")
+        out = out.convert("L")
+        out.putalpha(mask)
+    return out
+
+
+def normalize(im: Image.Image, background: RGB | None) -> Image.Image:
+    """Return ``im`` upright and in mode RGB, with transparency composited onto ``background``.
+
+    ``background=None`` drops alpha without compositing. Can return ``im`` itself.
+    """
+    if _orientation(im) != 1:
+        im = ImageOps.exif_transpose(im)
+    sixteen_bit = im.mode.startswith("I;16")
+    if sixteen_bit:
+        im = im.convert("I")
+    if im.mode == "I" and (sixteen_bit or im.getextrema()[1] > 255):
+        im = _to_8_bit(im)
+    if im.has_transparency_data:
+        if im.mode == "La":
+            im = im.convert("LA")
+        rgba = im.convert("RGBA")
+        if background is None:
+            return rgba.convert("RGB")
+        out = Image.new("RGB", rgba.size, background)
+        out.paste(rgba, mask=rgba)
+        return out
+    return im if im.mode == "RGB" else im.convert("RGB")
+
+
+def _cap_size(w: int, h: int, max_side: int) -> tuple[int, int]:
+    """Largest size with the same aspect ratio that fits ``max_side`` and the sheet grid."""
+    max_w = min(MAX_COLUMNS, max_side or MAX_COLUMNS)
+    max_h = min(MAX_ROWS, max_side or MAX_ROWS)
+    scale = min(1.0, max_w / w, max_h / h)
+    if scale == 1.0:
+        return w, h
+    return (
+        min(max_w, max(1, round(w * scale))),
+        min(max_h, max(1, round(h * scale))),
+    )
+
+
+def _largest_passing(
+    lo: int, hi: int, attempt: Callable[[int], Image.Image | None]
+) -> Image.Image | None:
+    """Binary-search ``lo..hi`` for the largest side whose ``attempt`` succeeds.
+
+    The color count is not strictly monotonic in size, so this returns the result of
+    the last attempt that passed, never an untested or failed midpoint.
+    """
+    best = None
+    while lo <= hi:
+        mid = (lo + hi) // 2
+        result = attempt(mid)
+        if result is None:
+            hi = mid - 1
+        else:
+            best, lo = result, mid + 1
+    return best
+
+
+def fit(im: Image.Image, max_side: int) -> Image.Image:
+    """Shrink an RGB image until it fits the sheet grid, ``max_side`` and MAX_COLORS.
+
+    First one LANCZOS resize caps the size; then a binary search finds the largest
+    longest side (to the pixel) whose color count is within MAX_COLORS. Every search
+    step resizes the capped image, never the (possibly much larger) original.
+    Can return ``im`` itself.
+    """
+    if max_side < 0:
+        raise ValueError(f"max_side must be >= 0, got {max_side}")
+    if 0 in im.size:
+        raise ValueError(f"the image has no pixels ({im.size[0]}x{im.size[1]})")
+    size = _cap_size(*im.size, max_side)
+    if size != im.size:
+        im = im.resize(size, Image.Resampling.LANCZOS)
+    if im.getcolors(MAX_COLORS) is not None:
+        return im
+
+    def attempt(side: int) -> Image.Image | None:
+        candidate = im.copy()
+        candidate.thumbnail((side, side), Image.Resampling.LANCZOS)
+        return candidate if candidate.getcolors(MAX_COLORS) is not None else None
+
+    best = _largest_passing(_ALWAYS_FITS_SIDE + 1, max(im.size) - 1, attempt)
+    if best is None:
+        best = im.copy()
+        best.thumbnail((_ALWAYS_FITS_SIDE, _ALWAYS_FITS_SIDE), Image.Resampling.LANCZOS)
+    return best

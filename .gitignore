@@ -1,0 +1,29 @@
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+build/
+dist/
+*.egg-info/
+
+# Tools
+.pytest_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
+# Local sample images and outputs: never commit them
+samples/
+local-samples/
+output/
+*.xlsx
+.pixheet-*.tmp
+
+# Editors / OS
+.idea/
+.vscode/
+Thumbs.db
+.DS_Store
+
+# Local profiler output (python -m profiling.sampling)
+profiles/

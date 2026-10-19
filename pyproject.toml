@@ -1,0 +1,52 @@
+[project]
+name = "pixheet"
+version = "0.1.0"
+description = "Turn any image into an .xlsx spreadsheet where every cell is one pixel."
+readme = "README.md"
+license = "MIT"
+license-files = ["LICENSE"]
+authors = [{ name = "Dinh-Anh Vu", email = "anhvd27@gmail.com" }]
+requires-python = ">=3.15"
+dependencies = ["pillow>=13.0.0"]
+keywords = ["image", "xlsx", "spreadsheet", "pixel-art", "converter"]
+classifiers = [
+    "Environment :: Console",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3 :: Only",
+    "Programming Language :: Python :: 3.15",
+    "Topic :: Multimedia :: Graphics :: Graphics Conversion",
+    "Topic :: Office/Business :: Financial :: Spreadsheet",
+    "Typing :: Typed",
+]
+
+[project.scripts]
+pixheet = "pixheet.cli:main"
+
+[dependency-groups]
+dev = [
+    "openpyxl>=3.1.5",
+    "pytest>=9.1.1",
+    "ruff>=0.17.1",
+    "xlsxwriter>=3.2.9",
+]
+
+[build-system]
+requires = ["uv_build>=0.13.1,<0.14"]
+build-backend = "uv_build"
+
+[tool.pytest]
+testpaths = ["tests"]
+addopts = ["-ra", "--strict-markers"]
+filterwarnings = ["error"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py315"
+
+[tool.ruff.lint]
+select = ["E", "W", "F", "I", "UP", "B", "SIM", "RUF", "PT", "PTH", "PERF"]
+
+[tool.ruff.lint.per-file-ignores]
+# Long XML string literals read best unbroken.
+"src/pixheet/_xlsx.py" = ["E501"]
