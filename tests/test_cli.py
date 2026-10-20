@@ -101,15 +101,23 @@ def test_max_side_zero(tmp_path, capsys):
 
 
 @pytest.mark.parametrize(
-    "args",
-    [["--max-side", "-1"], ["--max-side", "big"], ["--background", "nope"], []],
+    ("args", "message"),
+    [
+        (["--max-side", "-1"], "argument --max-side: must be >= 0, got -1"),
+        (["--max-side", "big"], "argument --max-side: not an integer: 'big'"),
+        (["--max-side", "1.5"], "argument --max-side: not an integer: '1.5'"),
+        (["--background", "nope"], "argument --background: invalid background color 'nope'"),
+        ([], "the following arguments are required: INPUT"),
+    ],
 )
-def test_bad_arguments(images, args, capsys):
+def test_bad_arguments(images, args, message, capsys):
     argv = [str(images[0]), *args] if args else []
     with pytest.raises(SystemExit) as exc:
         main(argv)
     assert exc.value.code == 2
-    assert "usage: pixheet" in capsys.readouterr().err
+    err = capsys.readouterr().err
+    assert "usage: pixheet" in err
+    assert message in err
 
 
 def test_wildcards_are_expanded(images, tmp_path, capsys):
@@ -130,15 +138,17 @@ def test_version(capsys):
     assert re.match(r"pixheet \d+\.\d+\.\d+", capsys.readouterr().out)
 
 
-def test_python_dash_m(images):
+@pytest.mark.parametrize("module", ["pixheet", "pixheet.cli"])
+def test_python_dash_m(images, module):
     proc = subprocess.run(
-        [sys.executable, "-m", "pixheet", str(images[0])],
+        [sys.executable, "-m", module, str(images[0])],
         capture_output=True,
         text=True,
         check=False,
     )
     assert proc.returncode == 0, proc.stderr
     assert LINE.match(proc.stdout.strip())
+    assert images[0].with_suffix(".xlsx").exists()
 
 
 def test_unencodable_file_name_does_not_stop_the_batch(tmp_path):

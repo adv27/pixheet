@@ -16,8 +16,9 @@ from pathlib import Path
 from PIL import Image
 
 from pixheet import convert
-from pixheet._image import fit, normalize, parse_background
-from pixheet._xlsx import write_xlsx
+from pixheet._image import fit, normalize, opened
+from pixheet.cli import background_arg, max_side_arg
+from pixheet.core import DEFAULT_BACKGROUND, DEFAULT_MAX_SIDE, _write
 
 
 def find_images(folders: list[Path]) -> list[Path]:
@@ -28,11 +29,10 @@ def find_images(folders: list[Path]) -> list[Path]:
 
 
 def stages(path: Path, out: Path, max_side: int, background, compact: bool) -> dict[str, float]:
-    """One conversion, timed per stage (same steps as pixheet.convert)."""
+    """One conversion, timed per stage. It does the steps of pixheet.convert one by one."""
     times = {}
     t = time.perf_counter()
-    with Image.open(path) as im:
-        im.load()
+    with opened(path) as im:
         times["open"] = time.perf_counter() - t
         t = time.perf_counter()
         upright = normalize(im, background)
@@ -41,8 +41,7 @@ def stages(path: Path, out: Path, max_side: int, background, compact: bool) -> d
         fitted = fit(upright, max_side)
         times["fit"] = time.perf_counter() - t
         t = time.perf_counter()
-        with out.open("wb") as f:
-            write_xlsx(fitted, f, compact=compact)
+        _write(fitted, out, compact)
         times["write"] = time.perf_counter() - t
     return times
 
@@ -51,8 +50,8 @@ def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     parser.add_argument("--samples", type=Path, action="append", metavar="DIR")
     parser.add_argument("-n", "--repeat", type=int, default=3, help="runs per image (best of N)")
-    parser.add_argument("--max-side", type=int, default=1000)
-    parser.add_argument("--background", default="white")
+    parser.add_argument("--max-side", type=max_side_arg, default=DEFAULT_MAX_SIDE)
+    parser.add_argument("--background", type=background_arg, default=DEFAULT_BACKGROUND)
     parser.add_argument("--compact", action="store_true")
     parser.add_argument("--stages", action="store_true", help="also time each stage")
     args = parser.parse_args()
@@ -69,7 +68,7 @@ def main() -> int:
     if not images:
         parser.error("no images found")
 
-    background = parse_background(args.background)
+    background = args.background
     header = (
         f"{'image':<28} {'original':>11} {'sheet':>9} {'colors':>7} {'cells':>9} "
         f"{'best s':>7} {'cells/s':>10} {'xlsx MB':>8}"

@@ -3,19 +3,19 @@
 import os
 import secrets
 import time
-from collections.abc import Iterator
-from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
 from typing import IO
 
 from PIL import Image
 
-from pixheet._image import RGB, fit, normalize, parse_background
+from pixheet._image import RGB, Source, fitted
 from pixheet._xlsx import write_xlsx
 
-type Source = str | os.PathLike[str] | IO[bytes] | Image.Image
 type Destination = str | os.PathLike[str] | IO[bytes]
+
+DEFAULT_MAX_SIDE = 1000
+DEFAULT_BACKGROUND = "white"
 
 
 @dataclass(frozen=True, slots=True)
@@ -34,53 +34,22 @@ class ConvertResult:
     """Wall-clock time of the whole conversion."""
 
 
-@contextmanager
-def _opened(src: Source) -> Iterator[Image.Image]:
-    if isinstance(src, Image.Image):
-        yield src
-        return
-    if not isinstance(src, (str, os.PathLike)):
-        with Image.open(src) as im:
-            im.load()
-            yield im
-        return
-    # Open the file ourselves: given a file name, Pillow 13 memory-maps uncompressed
-    # TIFFs and then scrambles those with an EXIF rotation (orientation 5-8).
-    with Path(src).open("rb") as f:
-        try:
-            im = Image.open(f)
-        except Image.UnidentifiedImageError:
-            raise Image.UnidentifiedImageError(
-                f"cannot identify image file {os.fspath(src)!r}"
-            ) from None
-        with im:
-            im.load()
-            yield im
-
-
-def _check_max_side(max_side: int) -> None:
-    if max_side < 0:
-        raise ValueError(f"max_side must be >= 0, got {max_side}")
-
-
 def prepare(
-    src: Source, *, max_side: int = 1000, background: str | RGB | None = "white"
+    src: Source,
+    *,
+    max_side: int = DEFAULT_MAX_SIDE,
+    background: str | RGB | None = DEFAULT_BACKGROUND,
 ) -> Image.Image:
     """Return the RGB image that :func:`convert` would write, one pixel per cell."""
-    _check_max_side(max_side)
-    bg = parse_background(background)
-    with _opened(src) as im:
-        out = fit(normalize(im, bg), max_side)
-        # Detach from the source: it is closed (or still owned by the caller).
-        return out.copy() if out is im else out
+    return fitted(src, max_side, background)[1]
 
 
 def convert(
     src: Source,
     dst: Destination,
     *,
-    max_side: int = 1000,
-    background: str | RGB | None = "white",
+    max_side: int = DEFAULT_MAX_SIDE,
+    background: str | RGB | None = DEFAULT_BACKGROUND,
     compact: bool = False,
 ) -> ConvertResult:
     """Convert an image into an .xlsx spreadsheet where every cell is one pixel.
@@ -102,16 +71,11 @@ def convert(
     ``max_side``, the sheet grid and 63,999 distinct colors (Excel's cell-format limit).
     """
     start = time.perf_counter()
-    _check_max_side(max_side)
-    bg = parse_background(background)
     if _same_file(src, dst):
         raise ValueError(f"the output {os.fspath(dst)!r} is the input image; choose another path")
-    with _opened(src) as im:
-        upright = normalize(im, bg)
-        original_size = upright.size
-        fitted = fit(upright, max_side)
-        colors = _write(fitted, dst, compact)
-    w, h = fitted.size
+    original_size, image = fitted(src, max_side, background)
+    colors = _write(image, dst, compact)
+    w, h = image.size
     return ConvertResult(
         original_size=original_size,
         size=(w, h),
@@ -123,13 +87,12 @@ def convert(
 
 def _same_file(src: Source, dst: Destination) -> bool:
     paths = (str, os.PathLike)
-    return (
-        isinstance(src, paths)
-        and isinstance(dst, paths)
-        and Path(dst).exists()
-        and Path(src).exists()
-        and Path(src).samefile(dst)
-    )
+    if not (isinstance(src, paths) and isinstance(dst, paths)):
+        return False
+    try:
+        return Path(src).samefile(dst)
+    except OSError, ValueError:  # a path that does not exist, or that is not valid
+        return False
 
 
 def _write(im: Image.Image, dst: Destination, compact: bool) -> int:
@@ -143,13 +106,10 @@ def _write(im: Image.Image, dst: Destination, compact: bool) -> int:
         with tmp.open("xb") as f:
             colors = write_xlsx(im, f, compact=compact)
         tmp.replace(path)
-    except OSError as e:
+    except BaseException as e:
         tmp.unlink(missing_ok=True)
-        if e.filename != str(tmp):
-            raise
-        # Report the target, not the hidden temp file.
-        raise type(e)(e.errno, e.strerror, str(path)) from e
-    except BaseException:
-        tmp.unlink(missing_ok=True)
+        if isinstance(e, OSError) and e.filename == str(tmp):
+            # Report the target, not the hidden temp file.
+            raise type(e)(e.errno, e.strerror, str(path)) from e
         raise
     return colors

@@ -6,7 +6,6 @@ what xlsxwriter writes for the same image (see tests/test_golden.py); the theme 
 docProps parts it adds are optional and left out.
 """
 
-import os
 import shutil
 import sys
 import tempfile
@@ -21,6 +20,8 @@ assert array("I").itemsize == 4
 
 MAX_COLUMNS = 16_384
 MAX_ROWS = 1_048_576
+# Excel allows 64,000 cell formats, and format 0 is the default style (see styles_xml).
+MAX_COLORS = 63_999
 
 XML_DECL = '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\n'
 MAIN_NS = "http://schemas.openxmlformats.org/spreadsheetml/2006/main"
@@ -134,30 +135,19 @@ def _seekable(f: IO[bytes]) -> bool:
     return True
 
 
-def write_xlsx(
-    im: Image.Image, dst: str | os.PathLike[str] | IO[bytes], *, compact: bool = False
-) -> int:
-    """Write ``im`` (mode RGB) as an .xlsx with one filled cell per pixel.
+def write_xlsx(im: Image.Image, dst: IO[bytes], *, compact: bool = False) -> int:
+    """Write ``im`` (mode RGB) to the binary file ``dst`` as an .xlsx, one cell per pixel.
 
-    ``dst`` is a path or a writable binary file object. With ``compact=True`` the
-    optional ``r="A1"`` cell references are left out. Returns the number of colors.
+    With ``compact=True`` the optional ``r="A1"`` cell references are left out.
+    Returns the number of colors.
     """
     if im.mode != "RGB":
         raise ValueError(f"expected an RGB image, got mode {im.mode}")
     w, h = im.size
     if not (0 < w <= MAX_COLUMNS and 0 < h <= MAX_ROWS):
         raise ValueError(f"{w}x{h} does not fit a sheet ({MAX_COLUMNS}x{MAX_ROWS} at most)")
-
-    # One int per pixel. RGBX pads every pixel with the same byte, so equal colors
-    # always get equal keys.
-    pixels = array("I", im.convert("RGBX").tobytes())
-    columns = [column_name(x) for x in range(w)]
-    last_cell = f"{columns[-1]}{h}"
-    # Pixel key -> style id, numbered by first appearance.
-    style_ids: dict[int, int] = {}
-    style_id = style_ids.setdefault
     zip64 = w * h * _MAX_CELL_BYTES + h * _MAX_ROW_BYTES > zipfile.ZIP64_LIMIT
-    if zip64 and not isinstance(dst, (str, os.PathLike)) and not _seekable(dst):
+    if zip64 and not _seekable(dst):
         # A stream that cannot seek gets a zip64 entry with a data descriptor, and
         # Excel refuses those. Build the file on disk, then copy it out.
         with tempfile.TemporaryFile() as tmp:
@@ -165,6 +155,14 @@ def write_xlsx(
             tmp.seek(0)
             shutil.copyfileobj(tmp, dst)
         return colors
+
+    # One int per pixel. RGBX pads every pixel with the same byte, so equal colors
+    # always get equal keys.
+    pixels = array("I", im.convert("RGBX").tobytes())
+    columns = [column_name(x) for x in range(w)]
+    # Pixel key -> style id, numbered by first appearance.
+    style_ids: dict[int, int] = {}
+    style_id = style_ids.setdefault
 
     with zipfile.ZipFile(dst, "w", zipfile.ZIP_DEFLATED) as zf:
         zf.writestr("[Content_Types].xml", CONTENT_TYPES_XML)
@@ -174,7 +172,7 @@ def write_xlsx(
 
         with zf.open("xl/worksheets/sheet1.xml", "w", force_zip64=zip64) as sheet:
             write = sheet.write
-            ref = "A1" if last_cell == "A1" else f"A1:{last_cell}"
+            ref = "A1" if w == h == 1 else f"A1:{columns[-1]}{h}"
             write(SHEET_HEADER_XML.format(ref=ref, width=w).encode())
             for y in range(h):
                 row = pixels[y * w : (y + 1) * w]

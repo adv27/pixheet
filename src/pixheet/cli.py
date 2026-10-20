@@ -8,26 +8,29 @@ from collections.abc import Sequence
 from importlib.metadata import PackageNotFoundError, version
 from pathlib import Path
 
-from pixheet._image import parse_background
-from pixheet.core import ConvertResult, convert
+from pixheet._image import RGB, check_max_side, parse_background
+from pixheet.core import DEFAULT_BACKGROUND, DEFAULT_MAX_SIDE, ConvertResult, convert
 
 
-def _max_side(text: str) -> int:
+def max_side_arg(text: str) -> int:
+    """The argparse type of --max-side."""
     try:
         value = int(text)
     except ValueError:
         raise argparse.ArgumentTypeError(f"not an integer: {text!r}") from None
-    if value < 0:
-        raise argparse.ArgumentTypeError(f"must be >= 0, got {value}")
+    try:
+        check_max_side(value)
+    except ValueError:  # the library message names the parameter, not the option
+        raise argparse.ArgumentTypeError(f"must be >= 0, got {value}") from None
     return value
 
 
-def _background(text: str) -> str:
+def background_arg(text: str) -> RGB | None:
+    """The argparse type of --background: the parsed color, None for "none"."""
     try:
-        parse_background(text)
+        return parse_background(text)
     except ValueError as e:
         raise argparse.ArgumentTypeError(str(e)) from None
-    return text
 
 
 def _version() -> str:
@@ -55,18 +58,19 @@ def _build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument(
         "--max-side",
-        type=_max_side,
-        default=1000,
+        type=max_side_arg,
+        default=DEFAULT_MAX_SIDE,
         metavar="N",
-        help="cap on the longest side in pixels; 0 = only the sheet limits apply (default: 1000)",
+        help="cap on the longest side in pixels; 0 = only the sheet limits apply "
+        "(default: %(default)s)",
     )
     parser.add_argument(
         "--background",
-        type=_background,
-        default="white",
+        type=background_arg,
+        default=DEFAULT_BACKGROUND,
         metavar="COLOR",
         help="color for transparent areas: white, black, #RRGGBB, or none to drop alpha "
-        "(default: white)",
+        "(default: %(default)s)",
     )
     parser.add_argument(
         "--compact",
@@ -81,8 +85,9 @@ def _build_parser() -> argparse.ArgumentParser:
 def _expand(inputs: Sequence[str]) -> list[str]:
     """Expand wildcards the shell left alone (cmd and PowerShell don't expand them).
 
-    Only the file-name part is a pattern: brackets in folder names are literal, as in
-    "shots [2024]/*.jpg". An existing file such as "img[1].png" is taken as is.
+    The file-name part must hold the wildcard. In the folder part, "*" and "?" are
+    wildcards too, but brackets are literal, as in "shots [2024]/*.jpg". An existing
+    file such as "img[1].png" is taken as is.
     """
     paths = []
     for arg in inputs:
@@ -105,7 +110,7 @@ def _summary(name: str, result: ConvertResult) -> str:
 
 
 def main(argv: Sequence[str] | None = None) -> int:
-    # A file name the console code page cannot show must not stop the batch.
+    # A file name that the console code page cannot show must not stop the batch.
     if hasattr(sys.stdout, "reconfigure"):
         sys.stdout.reconfigure(errors="backslashreplace")
     parser = _build_parser()
@@ -120,7 +125,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         try:
             src = Path(name)
             dst = args.output or src.with_suffix(".xlsx")
-            key = os.path.normcase(Path(dst).resolve())
+            key = os.path.normcase(dst.resolve())
             if key in written:
                 raise ValueError(f"{dst} was already written from {written[key]}")
             result = convert(

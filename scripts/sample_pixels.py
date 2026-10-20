@@ -13,13 +13,15 @@ import random
 import sys
 
 from pixheet import prepare
+from pixheet.cli import background_arg, max_side_arg
+from pixheet.core import DEFAULT_BACKGROUND, DEFAULT_MAX_SIDE
 
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     parser.add_argument("image")
-    parser.add_argument("--max-side", type=int, default=1000)
-    parser.add_argument("--background", default="white")
+    parser.add_argument("--max-side", type=max_side_arg, default=DEFAULT_MAX_SIDE)
+    parser.add_argument("--background", type=background_arg, default=DEFAULT_BACKGROUND)
     parser.add_argument("--count", type=int, default=80)
     parser.add_argument("--seed", type=int, default=0)
     args = parser.parse_args()
@@ -29,7 +31,7 @@ def main() -> int:
     rng = random.Random(args.seed)
     spots = [(0, 0), (w - 1, h - 1)]
     spots += [(rng.randrange(w), rng.randrange(h)) for _ in range(max(0, args.count - 2))]
-    samples = [[y + 1, x + 1, "{:02X}{:02X}{:02X}".format(*im.getpixel((x, y)))] for x, y in spots]
+    samples = [[y + 1, x + 1, bytes(im.getpixel((x, y))).hex().upper()] for x, y in spots]
     json.dump({"width": w, "height": h, "samples": samples}, sys.stdout)
     return 0
 

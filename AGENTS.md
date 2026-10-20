@@ -22,7 +22,7 @@ Read [README.md](README.md) for usage, the Python API, and the Excel limits.
 | `scripts/` | `excel_check.ps1` (Excel COM check, Windows) and `sample_pixels.py`. |
 
 Modules with a leading underscore are private. Do not import them from outside the
-package, except in tests.
+package, except in tests and in `bench/bench.py`, which times each stage.
 
 ## Commands
 

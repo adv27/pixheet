@@ -1,22 +1,48 @@
 """Image preparation: open, normalize to RGB, and fit to the spreadsheet limits."""
 
 import math
+import os
 import struct
-from collections.abc import Callable
+from collections.abc import Callable, Generator
+from contextlib import contextmanager
+from pathlib import Path
+from typing import IO
 
-from PIL import Image, ImageColor, ImageMath, ImageOps
+from PIL import ExifTags, Image, ImageColor, ImageMath, ImageOps
 
-from pixheet._xlsx import MAX_COLUMNS, MAX_ROWS
+from pixheet._xlsx import MAX_COLORS, MAX_COLUMNS, MAX_ROWS
 
-# Excel allows 64,000 cell formats and format 0 is the default style.
-MAX_COLORS = 63_999
 # Any image whose longest side is at most this has at most 252 * 252 = 63,504
 # pixels, so it always fits MAX_COLORS without counting.
 _ALWAYS_FITS_SIDE = math.isqrt(MAX_COLORS)
 
-_EXIF_ORIENTATION = 0x0112
-
 type RGB = tuple[int, int, int]
+type Source = str | os.PathLike[str] | IO[bytes] | Image.Image
+
+
+@contextmanager
+def opened(src: Source) -> Generator[Image.Image]:
+    """Yield ``src`` as a loaded image. Close it after, unless the caller gave an Image."""
+    if isinstance(src, Image.Image):
+        yield src
+        return
+    if not isinstance(src, (str, os.PathLike)):
+        with Image.open(src) as im:
+            im.load()
+            yield im
+        return
+    # Open the file here: given a file name, Pillow 13 memory-maps uncompressed TIFFs
+    # and then scrambles those with an EXIF rotation (orientation 5-8).
+    with Path(src).open("rb") as f:
+        try:
+            im = Image.open(f)
+        except Image.UnidentifiedImageError:
+            raise Image.UnidentifiedImageError(
+                f"cannot identify image file {os.fspath(src)!r}"
+            ) from None
+        with im:
+            im.load()
+            yield im
 
 
 def parse_background(value: str | RGB | None) -> RGB | None:
@@ -42,9 +68,14 @@ def parse_background(value: str | RGB | None) -> RGB | None:
     return rgb[:3]
 
 
+def check_max_side(max_side: int) -> None:
+    if max_side < 0:
+        raise ValueError(f"max_side must be >= 0, got {max_side}")
+
+
 def _orientation(im: Image.Image) -> int:
     try:
-        return im.getexif().get(_EXIF_ORIENTATION, 1)
+        return im.getexif().get(ExifTags.Base.Orientation, 1)
     except SyntaxError, struct.error:  # an EXIF block that is not valid TIFF data
         return 1
 
@@ -69,10 +100,9 @@ def normalize(im: Image.Image, background: RGB | None) -> Image.Image:
     """
     if _orientation(im) != 1:
         im = ImageOps.exif_transpose(im)
-    sixteen_bit = im.mode.startswith("I;16")
-    if sixteen_bit:
-        im = im.convert("I")
-    if im.mode == "I" and (sixteen_bit or im.getextrema()[1] > 255):
+    if im.mode.startswith("I;16"):
+        im = _to_8_bit(im.convert("I"))
+    elif im.mode == "I" and im.getextrema()[1] > 255:
         im = _to_8_bit(im)
     if im.has_transparency_data:
         if im.mode == "La":
@@ -126,8 +156,7 @@ def fit(im: Image.Image, max_side: int) -> Image.Image:
     step resizes the capped image, never the (possibly much larger) original.
     Can return ``im`` itself.
     """
-    if max_side < 0:
-        raise ValueError(f"max_side must be >= 0, got {max_side}")
+    check_max_side(max_side)
     if 0 in im.size:
         raise ValueError(f"the image has no pixels ({im.size[0]}x{im.size[1]})")
     size = _cap_size(*im.size, max_side)
@@ -136,13 +165,30 @@ def fit(im: Image.Image, max_side: int) -> Image.Image:
     if im.getcolors(MAX_COLORS) is not None:
         return im
 
+    def shrunk(side: int) -> Image.Image:
+        out = im.copy()
+        out.thumbnail((side, side), Image.Resampling.LANCZOS)
+        return out
+
     def attempt(side: int) -> Image.Image | None:
-        candidate = im.copy()
-        candidate.thumbnail((side, side), Image.Resampling.LANCZOS)
+        candidate = shrunk(side)
         return candidate if candidate.getcolors(MAX_COLORS) is not None else None
 
     best = _largest_passing(_ALWAYS_FITS_SIDE + 1, max(im.size) - 1, attempt)
-    if best is None:
-        best = im.copy()
-        best.thumbnail((_ALWAYS_FITS_SIDE, _ALWAYS_FITS_SIDE), Image.Resampling.LANCZOS)
-    return best
+    return best if best is not None else shrunk(_ALWAYS_FITS_SIDE)
+
+
+def fitted(
+    src: Source, max_side: int, background: str | RGB | None
+) -> tuple[tuple[int, int], Image.Image]:
+    """Open, normalize and fit ``src``. Return the upright size and the fitted image.
+
+    The fitted image does not depend on the source: it stays valid after the source
+    file closes, and it is never the caller's own Image object.
+    """
+    check_max_side(max_side)
+    bg = parse_background(background)
+    with opened(src) as im:
+        upright = normalize(im, bg)
+        out = fit(upright, max_side)
+        return upright.size, (out.copy() if out is im else out)

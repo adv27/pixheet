@@ -23,8 +23,8 @@ param(
     [Parameter(Mandatory = $true)] [string] $Folder,
     [string] $Source = $Folder,
     [int] $Samples = 80,
-    [int] $MaxSide = 1000,
-    [string] $Background = "white",
+    [int] $MaxSide,
+    [string] $Background,
     [string] $Snapshot = ""
 )
 
@@ -33,7 +33,12 @@ $repo = Split-Path -Parent $PSScriptRoot
 $helper = Join-Path $PSScriptRoot "sample_pixels.py"
 $files = @(Get-ChildItem -Path $Folder -Filter *.xlsx -File | Sort-Object Name)
 if ($files.Count -eq 0) { Write-Error "No .xlsx files in $Folder" }
-if ($Snapshot) { New-Item -ItemType Directory -Force -Path $Snapshot | Out-Null }
+$sources = @(Get-ChildItem -Path $Source -File | Where-Object { $_.Extension -ne ".xlsx" })
+if ($Snapshot) { $Snapshot = (New-Item -ItemType Directory -Force -Path $Snapshot).FullName }
+# Pass --max-side and --background only when you give them. Then the package defaults apply.
+$options = @("--count", $Samples)
+if ($PSBoundParameters.ContainsKey("MaxSide")) { $options += "--max-side", $MaxSide }
+if ($PSBoundParameters.ContainsKey("Background")) { $options += "--background", $Background }
 
 function Get-Rgb([double] $color) {
     # Excel colors are 0xBBGGRR.
@@ -64,12 +69,9 @@ try {
                 $file.Name, $used.Address($false, $false), $cols, $rows, `
                 $ws.Rows.Item(1).RowHeight, $ws.Columns.Item(1).ColumnWidth, $ws.Columns.Item(1).Width
 
-            $src = Get-ChildItem -Path $Source -File |
-                Where-Object { $_.BaseName -eq $file.BaseName -and $_.Extension -ne ".xlsx" } |
-                Select-Object -First 1
+            $src = $sources | Where-Object { $_.BaseName -eq $file.BaseName } | Select-Object -First 1
             if ($src) {
-                $json = & uv run --project $repo --quiet python $helper $src.FullName `
-                    --max-side $MaxSide --background $Background --count $Samples
+                $json = & uv run --project $repo --quiet python $helper $src.FullName @options
                 if ($LASTEXITCODE -ne 0) { throw "sample_pixels.py failed for $($src.Name)" }
                 $expected = $json | ConvertFrom-Json
                 if ($expected.width -ne $cols -or $expected.height -ne $rows) {
@@ -91,7 +93,7 @@ try {
 
             if ($Snapshot) {
                 # Hidden Excel renders nothing to the screen, but printing (PDF export) works.
-                $pdf = Join-Path (Resolve-Path $Snapshot) ($file.BaseName + ".pdf")
+                $pdf = Join-Path $Snapshot ($file.BaseName + ".pdf")
                 $setup = $ws.PageSetup
                 $setup.Zoom = $false
                 $setup.FitToPagesWide = 1
