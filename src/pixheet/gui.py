@@ -366,6 +366,7 @@ class App:
         self.dnd = dnd_type is not None and self._register_drop(dnd_type)
         if not self.dnd:
             self.zone_label.configure(text="Choose images to convert")
+            self.or_label.grid_remove()  # Browse is the only way
             self.status_var.set(NO_DND_TEXT)
         root.protocol("WM_DELETE_WINDOW", self.close)
         root.report_callback_exception = self._report_exception
@@ -394,7 +395,8 @@ class App:
         self.zone = zone
         self.zone_label = ttk.Label(zone, text=DROP_TEXT, font=self._big_font, anchor="center")
         self.zone_label.grid(row=1, column=0, pady=(0, 8))
-        ttk.Label(zone, text="or").grid(row=2, column=0, pady=(0, 8))
+        self.or_label = ttk.Label(zone, text="or")
+        self.or_label.grid(row=2, column=0, pady=(0, 8))
         self.browse_button = ttk.Button(zone, text="Browse...", command=self.browse)
         self.browse_button.grid(row=3, column=0, sticky="n")
 

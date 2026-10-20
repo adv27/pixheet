@@ -676,6 +676,8 @@ def test_window_without_dnd_says_so(harness):
     h = harness()
     assert not h.app.dnd
     assert h.app.status_var.get() == gui.NO_DND_TEXT
+    assert h.app.zone_label.cget("text") == "Choose images to convert"
+    assert h.app.or_label.winfo_manager() == ""  # no "or" above Browse
 
 
 def test_callback_error_is_shown_in_a_dialog(harness, capsys):
@@ -732,6 +734,7 @@ root.withdraw()
 app = gui.App(root, dnd_type=gui.enable_dnd(root))
 print(app.dnd)
 print(repr(app.status_var.get()))
+print(app.or_label.winfo_manager())
 for widget in (app.body, app.zone):
     print("on_drop" in root.tk.call("bind", widget, "<<Drop>>"))
 root.destroy()
@@ -744,4 +747,4 @@ def test_real_tkdnd_registers_the_drop_zone():
     new_root().destroy()
     result = run_python("-c", REGISTER_DROP)
     assert result.returncode == 0, result.stderr
-    assert result.stdout.split() == ["True", "''", "True", "True"]
+    assert result.stdout.split() == ["True", "''", "grid", "True", "True"]
