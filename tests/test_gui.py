@@ -38,9 +38,9 @@ tk = pytest.importorskip("tkinter")
 def collect_tk_garbage():
     """Collect the Tk objects of a test on the main thread, at the end of the test.
 
-    A Tk variable deletes itself in Tcl when Python collects it. If the cyclic garbage
-    collector runs on the worker thread of a later test, that call comes from the wrong
-    thread: Tk waits for one second and then raises "main thread is not in main loop".
+    A Tk variable deletes itself in Tcl when Python collects it. The cyclic garbage
+    collector can run on the worker thread of a later test. Then the call comes from the
+    wrong thread. Tk waits for one second and then raises "main thread is not in main loop".
     """
     yield
     gc.collect()
@@ -193,7 +193,7 @@ def test_run_batch_cancelled_while_writing_keeps_the_old_file(tmp_path, monkeypa
 
     def convert(*args, progress, **kwargs):
         def cancel_at_once(done, total):
-            cancel.set()  # the user clicks Cancel while the sheet is written
+            cancel.set()  # the user clicks Cancel while convert writes the sheet
             progress(done, total)
 
         return real_convert(*args, progress=cancel_at_once, **kwargs)
