@@ -209,13 +209,22 @@ def sixteen_bit(values, fmt="PNG", transparency=None) -> Image.Image:
     return out
 
 
-@pytest.mark.parametrize(("fmt", "mode"), [("PNG", "I;16")])
+@pytest.mark.parametrize(("fmt", "mode"), [("PNG", "I;16"), ("PPM", "I")])
 def test_16_bit_scaling_does_not_depend_on_content(fmt, mode):
     alone = sixteen_bit([255, 255], fmt)
     assert alone.mode == mode
     with_brighter = sixteen_bit([255, 256], fmt)
     assert normalize(alone, WHITE).getpixel((0, 0)) == (0, 0, 0)
     assert normalize(with_brighter, WHITE).getpixel((0, 0)) == (0, 0, 0)
+
+
+@pytest.mark.parametrize("fmt", ["TIFF"])
+def test_32_bit_file_with_8_bit_values_keeps_them(fmt):
+    # Pillow writes mode I as 32-bit samples here; values up to 255 stay as they are.
+    im = Image.open(encoded(Image.new("I", (3, 2), 100), fmt))
+    im.load()
+    assert (im.mode, im.format) == ("I", fmt)
+    assert normalize(im, WHITE).getpixel((0, 0)) == (100, 100, 100)
 
 
 @pytest.mark.parametrize(

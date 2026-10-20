@@ -98,11 +98,15 @@ def normalize(im: Image.Image, background: RGB | None) -> Image.Image:
 
     ``background=None`` drops alpha without compositing. Can return ``im`` itself.
     """
+    # Pillow decodes a 16-bit PGM to mode I, scaled to the full 16-bit range. Other
+    # mode I images (32-bit TIFF, IM, or made in memory) have no known scale, so their
+    # values decide. Read the format first: the transposed image has no format.
+    pgm_16_bit = im.format == "PPM"
     if _orientation(im) != 1:
         im = ImageOps.exif_transpose(im)
     if im.mode.startswith("I;16"):
         im = _to_8_bit(im.convert("I"))
-    elif im.mode == "I" and im.getextrema()[1] > 255:
+    elif im.mode == "I" and (pgm_16_bit or im.getextrema()[1] > 255):
         im = _to_8_bit(im)
     if im.has_transparency_data:
         if im.mode == "La":
