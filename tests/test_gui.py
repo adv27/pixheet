@@ -479,6 +479,124 @@ def test_close_during_a_batch_waits_for_the_worker(harness, tmp_path, monkeypatc
     assert no_temp_files(tmp_path)
 
 
+def convert_threads() -> list[threading.Thread]:
+    return [t for t in threading.enumerate() if t.name == "pixheet-convert"]
+
+
+def drop_inside(h, path, seen):
+    """Return a dialog that drops ``path`` and runs the event loop, as a modal dialog does."""
+
+    def dialog(*args, **kwargs):
+        seen.append(h.drop(path))
+        h.root.update()  # runs a start() that the drop scheduled
+        seen.append(len(convert_threads()))
+        return kwargs.pop("result", True)
+
+    return dialog
+
+
+def test_drop_during_the_replace_prompt_is_refused(harness, tmp_path):
+    h = harness()
+    a = image(tmp_path / "a.png")
+    a.with_suffix(".xlsx").write_bytes(b"old")
+    b = image(tmp_path / "b.png")
+    seen = []
+    h.app.ask_yes_no = drop_inside(h, b, seen)
+
+    h.run_batch(a)
+
+    assert seen == ["refuse_drop", 0]  # no worker started inside the prompt
+    assert h.app.note_var.get() == gui.BUSY_DROP_TEXT
+    assert h.app.title_var.get() == "Converted 1 file."
+    assert a.with_suffix(".xlsx").read_bytes() != b"old"
+    assert not (tmp_path / "b.xlsx").exists()
+    assert convert_threads() == []
+
+
+def test_drop_during_the_file_dialog_is_refused(harness, tmp_path):
+    h = harness()
+    a = image(tmp_path / "a.png")
+    b = image(tmp_path / "b.png")
+    seen = []
+    pick = drop_inside(h, b, seen)
+    h.app.ask_files = lambda **kw: pick(**kw, result=(str(a),))
+
+    h.app.browse()
+    h.pump(lambda: not h.app.busy)
+
+    assert seen == ["refuse_drop", 0]
+    assert (tmp_path / "a.xlsx").exists()
+    assert not (tmp_path / "b.xlsx").exists()
+
+
+def test_drop_during_the_error_dialog_is_refused(harness, tmp_path):
+    h = harness()
+    bad = tmp_path / "bad.png"
+    bad.write_text("not an image")
+    good = image(tmp_path / "good.png")
+    seen = []
+    h.app.show_error = drop_inside(h, good, seen)
+
+    h.run_batch(bad)
+
+    assert seen == ["refuse_drop", 0]
+    assert not (tmp_path / "good.xlsx").exists()
+    # No second batch and no second timer that reads the queue.
+    assert h.app.worker is None
+    assert h.app._poll_id is None
+    deadline = time.monotonic() + 0.2
+    while time.monotonic() < deadline:
+        h.root.update()
+    assert h.app._poll_id is None
+
+
+def test_second_start_before_idle_is_refused_with_a_note(harness, tmp_path, monkeypatch):
+    gate = gate_convert(monkeypatch)
+    h = harness()
+    a = image(tmp_path / "a.png")
+    b = image(tmp_path / "b.png")
+    assert h.drop(a) == "copy"
+    assert h.drop(b) == "copy"  # the first start() did not run yet
+    h.root.update()
+    assert len(convert_threads()) == 1
+    assert h.app.note_var.get() == gui.BUSY_DROP_TEXT
+
+    gate.set()
+    h.pump(lambda: not h.app.busy)
+    assert (tmp_path / "a.xlsx").exists()
+    assert not (tmp_path / "b.xlsx").exists()
+
+
+def test_close_during_a_dialog_closes_after_it(harness, tmp_path):
+    h = harness()
+    a = image(tmp_path / "a.png")
+    a.with_suffix(".xlsx").write_bytes(b"old")
+    alive = []
+
+    def ask(*args, **kwargs):
+        h.app.close()
+        alive.append(h.root.winfo_exists())  # the window waits for the dialog
+        return True
+
+    h.app.ask_yes_no = ask
+    h.app.start([a])
+
+    assert alive == [1]
+    assert destroyed(h.root)
+    assert h.app.worker is None
+    assert a.with_suffix(".xlsx").read_bytes() == b"old"
+
+
+def test_old_messages_do_not_reach_a_new_batch(harness, tmp_path):
+    h = harness()
+    h.app.queue.put(Finished(0, cancelled=True))  # a message that no batch reads
+
+    h.run_batch(image(tmp_path / "a.png"))
+
+    assert h.app.title_var.get() == "Converted 1 file."
+    assert (tmp_path / "a.xlsx").exists()
+
+
 def test_close_when_idle_destroys_the_root(harness):
     h = harness()
     h.app.close()

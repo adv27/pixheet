@@ -336,6 +336,8 @@ class App:
         self.cancel_event = threading.Event()
         self.worker: threading.Thread | None = None
         self.closing = False
+        self._dialogs = 0
+        """The number of open modal dialogs. A modal dialog runs a nested event loop."""
         self.last_output: Path | None = None
         self.errors: list[str] = []
         self._poll_id: str | None = None
@@ -443,8 +445,33 @@ class App:
 
     @property
     def busy(self) -> bool:
-        """True from the start of a batch until the window has read its last message."""
-        return self.worker is not None
+        """True while a batch runs or a modal dialog is open.
+
+        A batch runs from its start until the window reads its last message. While a
+        dialog is open, events still come in. The app refuses a drop in that time, so
+        that a second batch cannot start in the middle of the code that opened the dialog.
+        """
+        return self.worker is not None or self._dialogs > 0
+
+    def _modal[T](self, dialog: Callable[..., T], *args: Any, **kwargs: Any) -> T:
+        """Show a modal dialog. The app is busy until the dialog closes."""
+        self._dialogs += 1
+        try:
+            return dialog(*args, **kwargs)
+        finally:
+            self._dialogs -= 1
+
+    def _close_if_asked(self) -> bool:
+        """Destroy the window if the user closed it while a dialog was open.
+
+        Call this after each dialog. Return True when the window is gone.
+        """
+        if not self.closing or self.busy:
+            return False
+        self.dispose()
+        with contextlib.suppress(tk.TclError):
+            self.root.destroy()
+        return True
 
     def on_drop(self, event: Any) -> str:
         """Handle a file drop. Return the drop action for tkdnd."""
@@ -459,16 +486,24 @@ class App:
 
     def browse(self) -> None:
         """Let the user choose images, then convert them."""
-        if self.busy:
+        if self.busy or self.closing:
             return
-        names = self.ask_files(parent=self.root, title="Choose images", filetypes=IMAGE_TYPES)
+        names = self._modal(
+            self.ask_files, parent=self.root, title="Choose images", filetypes=IMAGE_TYPES
+        )
+        if self._close_if_asked():
+            return
         if names:
             self.start([Path(name) for name in names])
 
     def start(self, sources: Sequence[Path]) -> None:
-        """Convert ``sources`` on a worker thread. Do nothing while a batch runs."""
-        if self.busy or self.closing:
+        """Convert ``sources`` on a worker thread. Refuse them while the app is busy."""
+        if self.closing:
             return
+        if self.busy:
+            self.note_var.set(BUSY_DROP_TEXT)
+            return
+        self.note_var.set("")  # before the dialogs, which can refuse a new drop
         if not sources:
             self.status_var.set("The drop has no files. Drop image files, not folders.")
             return
@@ -477,19 +512,24 @@ class App:
                 self.max_side_var.get(), self.background_var.get(), self.compact_var.get()
             )
         except ValueError as e:
-            self.show_error(TITLE, str(e), parent=self.root)
+            self._modal(self.show_error, TITLE, str(e), parent=self.root)
+            self._close_if_asked()
             return
         plan = plan_jobs(sources)
         jobs = plan.jobs
         self._skipped = 0
-        if plan.existing and not self._replace(plan.existing):
+        replace = not plan.existing or self._replace(plan.existing)
+        if self._close_if_asked():
+            return
+        if not replace:
             skip = set(plan.existing)
             jobs = [job for job in jobs if job not in skip]
             self._skipped = len(skip)
         self.errors = list(plan.errors)
         self._inputs = len(sources)
         self._last_summary = ""
-        self.note_var.set("")
+        # A new queue for each batch, so that no message of an earlier batch can arrive.
+        self.queue = queue.SimpleQueue()
         self.cancel_event = threading.Event()
         self.worker = threading.Thread(
             target=run_batch,
@@ -513,11 +553,11 @@ class App:
             question = f"{len(existing):,} output files exist. Do you want to replace them?"
         detail = "If you click No, the app does not convert these images."
         message = f"{question}\n\n" + "\n".join(names) + f"\n\n{detail}"
-        return bool(self.ask_yes_no(TITLE, message, parent=self.root))
+        return bool(self._modal(self.ask_yes_no, TITLE, message, parent=self.root))
 
     def cancel(self) -> None:
         """Stop the batch. The current file stops at its next row."""
-        if not self.busy:
+        if self.worker is None:
             return
         self.cancel_event.set()
         self.cancel_button.state(["disabled"])
@@ -534,6 +574,8 @@ class App:
             self.root.destroy()
             return
         self.closing = True
+        if self.worker is None:
+            return  # a dialog is open; the window closes after the dialog
         self.cancel()
         self.status_var.set("Stopping. The window closes when the current file stops.")
 
@@ -549,7 +591,8 @@ class App:
         try:
             open_folder(self.last_output)
         except OSError as e:
-            self.show_error(TITLE, f"Cannot open the folder: {e}", parent=self.root)
+            self._modal(self.show_error, TITLE, f"Cannot open the folder: {e}", parent=self.root)
+            self._close_if_asked()
 
     def _set_busy(self, busy: bool) -> None:
         state = ["disabled"] if busy else ["!disabled"]
@@ -626,11 +669,13 @@ class App:
             lines = self.errors[:MAX_LISTED]
             if len(self.errors) > MAX_LISTED:
                 lines.append(f"and {len(self.errors) - MAX_LISTED:,} more")
-            self.show_error(
+            self._modal(
+                self.show_error,
                 TITLE,
                 "The app did not convert these files:\n\n" + "\n".join(lines),
                 parent=self.root,
             )
+            self._close_if_asked()
 
     def _result_text(self, converted: int, cancelled: bool) -> str:
         if cancelled:
@@ -649,7 +694,10 @@ class App:
             import traceback
 
             traceback.print_exception(exc, value, tb)
-        self.show_error(TITLE, f"An unexpected error occurred:\n\n{value!r}", parent=self.root)
+        self._modal(
+            self.show_error, TITLE, f"An unexpected error occurred:\n\n{value!r}", parent=self.root
+        )
+        self._close_if_asked()
 
 
 # --- Start ---------------------------------------------------------------------------
