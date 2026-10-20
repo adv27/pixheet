@@ -402,13 +402,37 @@ def test_drop_while_busy_is_refused(harness, tmp_path, monkeypatch):
     assert h.app.cancel_button.winfo_manager() == "grid"
 
     assert h.drop(second) == "refuse_drop"
-    assert "in progress" in h.app.status_var.get()
+    assert h.app.note_var.get() == gui.BUSY_DROP_TEXT
+    h.app._handle(Progress(1, 3))  # a worker message does not replace the note
+    assert h.app.note_var.get() == gui.BUSY_DROP_TEXT
 
     gate.set()
     h.pump(lambda: not h.app.busy)
     assert (tmp_path / "first.xlsx").exists()
     assert not (tmp_path / "second.xlsx").exists()
     assert h.app.cancel_button.winfo_manager() == ""
+    assert h.app.note_var.get() == gui.BUSY_DROP_TEXT  # it stays true after the batch
+
+    h.run_batch(second)  # the next batch removes the note
+    assert h.app.note_var.get() == ""
+    assert (tmp_path / "second.xlsx").exists()
+
+
+@pytest.mark.parametrize("stop", ["cancel", "close"])
+def test_stopping_text_stays_until_the_worker_stops(harness, tmp_path, monkeypatch, stop):
+    gate = gate_convert(monkeypatch)
+    h = harness()
+    h.drop(image(tmp_path / "a.png"))
+    h.root.update()  # runs start(); the window reads the Started message later
+    getattr(h.app, stop)()
+    text = h.app.status_var.get()
+    assert text.startswith("Stopping.")
+
+    h.pump(lambda: h.app.title_var.get().startswith("File 1 of 1"))
+    assert h.app.status_var.get() == text
+
+    gate.set()
+    h.pump(lambda: not h.app.busy)
 
 
 def test_cancel_stops_the_batch(harness, tmp_path, monkeypatch):

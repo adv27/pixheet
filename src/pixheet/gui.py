@@ -41,6 +41,7 @@ MAX_LISTED = 10
 
 DROP_TEXT = "Drop images here"
 NO_DND_TEXT = "Drag and drop is not available. Use Browse."
+BUSY_DROP_TEXT = "The app did not accept the files that you dropped during a conversion."
 IMAGE_TYPES = [
     (
         "Images",
@@ -413,9 +414,12 @@ class App:
         self.status_label = ttk.Label(body, textvariable=self.status_var, justify="left")
         self.status_label.grid(row=4, column=0, sticky="ew")
         body.bind("<Configure>", self._wrap_status, add="+")
+        # A note that the worker messages do not replace, for example about a refused drop.
+        self.note_var = tk.StringVar(root, value="")
+        ttk.Label(body, textvariable=self.note_var).grid(row=5, column=0, sticky="w")
 
         buttons = ttk.Frame(body, padding=(0, 12, 0, 0))
-        buttons.grid(row=5, column=0, sticky="e")
+        buttons.grid(row=6, column=0, sticky="e")
         self.cancel_button = ttk.Button(buttons, text="Cancel", command=self.cancel)
         self.cancel_button.grid(row=0, column=0, padx=(0, 8))
         self.cancel_button.grid_remove()
@@ -445,7 +449,8 @@ class App:
     def on_drop(self, event: Any) -> str:
         """Handle a file drop. Return the drop action for tkdnd."""
         if self.busy or self.closing:
-            self.status_var.set("A conversion is in progress. Drop the files again after it.")
+            if not self.closing:
+                self.note_var.set(BUSY_DROP_TEXT)
             return "refuse_drop"
         files = parse_drop(event.data, self.root.tk.splitlist)
         # Return to tkdnd at once: the file manager waits until the drop handler ends.
@@ -484,6 +489,7 @@ class App:
         self.errors = list(plan.errors)
         self._inputs = len(sources)
         self._last_summary = ""
+        self.note_var.set("")
         self.cancel_event = threading.Event()
         self.worker = threading.Thread(
             target=run_batch,
@@ -581,8 +587,9 @@ class App:
         match message:
             case Started(index, count, src):
                 self.title_var.set(f"File {index:,} of {count:,}: {src.name}")
-                self.status_var.set("Reading the image.")
                 self.progress_var.set(0.0)
+                if not self.cancel_event.is_set():  # keep the text "Stopping."
+                    self.status_var.set("Reading the image.")
             case Progress(done, total):
                 self.progress_var.set(done / total)
                 if not self.cancel_event.is_set():
