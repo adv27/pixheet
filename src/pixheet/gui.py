@@ -288,15 +288,28 @@ def summary(dst: Path, result: ConvertResult) -> str:
     return f"{dst}  {w}x{h}  {result.colors:,} colors  {result.seconds:.2f} s"
 
 
-def open_folder(path: Path) -> None:
-    """Show the folder that holds ``path`` in the file manager of the system."""
+def open_folder(path: Path, platform: str | None = None) -> None:
+    """Show the folder that holds ``path`` in the file manager of the system.
+
+    The function does not wait for the file manager. Some openers, for example the
+    generic path of xdg-open, run until the user closes the file manager. Raise OSError
+    when the system has no opener.
+    """
     folder = path.parent
-    if sys.platform == "win32":
+    platform = platform or sys.platform
+    if platform == "win32":
         os.startfile(folder)
-    elif sys.platform == "darwin":
-        subprocess.run(["open", folder], check=False)
-    else:
-        subprocess.run(["xdg-open", folder], check=False)
+        return
+    opener = "open" if platform == "darwin" else "xdg-open"
+    process = subprocess.Popen(
+        [opener, os.fspath(folder)],
+        stdin=subprocess.DEVNULL,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+        start_new_session=True,
+    )
+    # Collect the exit status when the opener ends. This prevents a zombie process.
+    threading.Thread(target=process.wait, name="pixheet-opener", daemon=True).start()
 
 
 # --- The window ----------------------------------------------------------------------

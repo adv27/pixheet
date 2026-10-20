@@ -222,6 +222,39 @@ def test_enable_dnd_falls_back(monkeypatch, error):
     assert gui.enable_dnd(object()) is None
 
 
+@pytest.mark.parametrize(("platform", "opener"), [("linux", "xdg-open"), ("darwin", "open")])
+def test_open_folder_does_not_wait_for_the_opener(tmp_path, monkeypatch, platform, opener):
+    started = []
+    real_popen = subprocess.Popen
+
+    def popen(command, **kwargs):
+        started.append((command, kwargs))
+        # An opener that runs for some time, as xdg-open can.
+        return real_popen([sys.executable, "-c", "import time; time.sleep(1)"], **kwargs)
+
+    monkeypatch.setattr(gui.subprocess, "Popen", popen)
+    t0 = time.monotonic()
+    gui.open_folder(tmp_path / "a.xlsx", platform=platform)
+    assert time.monotonic() - t0 < 0.5
+
+    [(command, kwargs)] = started
+    assert command == [opener, str(tmp_path)]
+    assert kwargs["start_new_session"] is True
+    assert kwargs["stdout"] == kwargs["stderr"] == kwargs["stdin"] == subprocess.DEVNULL
+    waiter = next(t for t in threading.enumerate() if t.name == "pixheet-opener")
+    waiter.join(10)
+    assert not waiter.is_alive()
+
+
+def test_open_folder_without_an_opener_raises(tmp_path, monkeypatch):
+    def popen(command, **kwargs):
+        raise FileNotFoundError(2, "No such file", command[0])
+
+    monkeypatch.setattr(gui.subprocess, "Popen", popen)
+    with pytest.raises(FileNotFoundError, match="xdg-open"):  # App shows it in a dialog
+        gui.open_folder(tmp_path / "a.xlsx", platform="linux")
+
+
 # --- The window ----------------------------------------------------------------------
 
 
