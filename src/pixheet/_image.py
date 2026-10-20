@@ -136,32 +136,100 @@ def _cap_size(w: int, h: int, max_side: int) -> tuple[int, int]:
     )
 
 
-def _largest_passing(
-    lo: int, hi: int, attempt: Callable[[int], Image.Image | None]
-) -> Image.Image | None:
-    """Binary-search ``lo..hi`` for the largest side whose ``attempt`` succeeds.
+# With one tested end and no measured slope above _MIN_SLOPE, guess that colors grow
+# as side ** 1.6. This is about what the sample photos show between 250 and 1000 px.
+_GROWTH = 1.6
+_MIN_SLOPE = 0.2
 
-    The color count is not strictly monotonic in size, so this returns the result of
-    the last attempt that passed, never an untested or failed midpoint.
+
+def _largest_passing(
+    lo: int,
+    hi: int,
+    attempt: Callable[[int], tuple[Image.Image, int]],
+    first: int,
+) -> Image.Image | None:
+    """Find the largest side in ``lo..hi`` whose image has at most MAX_COLORS colors.
+
+    ``lo`` passes and ``hi`` fails without a test. ``attempt(side)`` gives the image
+    and its color count (see ``_color_count``).
+
+    The color counts guide each next probe. Colors grow about as a power of the side.
+    The estimate is the side where a line through the two bracket ends crosses
+    MAX_COLORS on a log-log scale. With only one tested end, the line goes through its
+    two newest probes when their slope is more than _MIN_SLOPE. If not, the line goes
+    through the newest probe with the slope _GROWTH.
+
+    After a pass, the search tests just above the estimate. After a fail, it tests
+    just below it. Thus the bracket closes from both ends. When the results repeat on
+    one side, the estimate is off in one direction, so each next probe goes 1, 2, 4,
+    ... sides further. If a tested bracket does not halve in four probes, the next
+    probe bisects it. So the search needs a few probes when the estimates are good. On
+    unusual color curves, it needs up to about 3 times as many probes as a binary
+    search.
+
+    The result is the image of the largest side that passed, and the side after it
+    failed. The color count is not strictly monotonic in size, so the search never
+    returns an untested or failed side.
     """
     best = None
-    while lo <= hi:
-        mid = (lo + hi) // 2
-        result = attempt(mid)
-        if result is None:
-            hi = mid - 1
+    # (log side, log(colors / MAX_COLORS)) of the tested probes on each side, newest
+    # last: passes (<= 0) and fails (> 0).
+    passes: list[tuple[float, float]] = []
+    fails: list[tuple[float, float]] = []
+    widths = [hi - lo]
+    side = first
+    last_passed: bool | None = None
+    streak = 0
+    while hi - lo > 1:
+        stalled = passes and fails and len(widths) > 4 and widths[-1] * 2 > widths[-5]
+        if not lo < side < hi or stalled:
+            side = (lo + hi) // 2
+            widths = [hi - lo]
+        image, colors = attempt(side)
+        passed = colors <= MAX_COLORS
+        point = (math.log(side), math.log(colors / MAX_COLORS))
+        if passed:
+            best, lo = image, side
+            passes.append(point)
         else:
-            best, lo = result, mid + 1
+            hi = side
+            fails.append(point)
+        widths.append(hi - lo)
+        streak = streak + 1 if passed == last_passed else 1
+        last_passed = passed
+
+        if passes and fails:
+            (x0, f0), (x1, f1) = passes[-1], fails[-1]
+        else:
+            known = passes or fails
+            (x0, f0), (x1, f1) = known[-2:] if len(known) > 1 else (known[0], known[0])
+            slope = (f1 - f0) / (x1 - x0) if x1 != x0 else 0.0
+            x0, f0, x1 = x1, f1, x1 + 1.0
+            f1 = f0 + (slope if slope > _MIN_SLOPE else _GROWTH)
+        estimate = math.floor(math.exp(x0 - f0 * (x1 - x0) / (f1 - f0)))
+        step = 2 ** (streak - 1)
+        side = max(estimate + 1, lo + step) if passed else min(estimate, hi - step)
     return best
+
+
+# getcolors() makes a hash table as large as its limit. A limit of w * h would use a lot
+# of memory on a large probe, and a count far above MAX_COLORS fails anyway.
+_COUNT_CAP = 4 * MAX_COLORS
+
+
+def _color_count(im: Image.Image) -> int:
+    """The number of colors in ``im``: exact up to _COUNT_CAP, _COUNT_CAP + 1 above it."""
+    colors = im.getcolors(min(_COUNT_CAP, im.width * im.height))
+    return _COUNT_CAP + 1 if colors is None else len(colors)
 
 
 def fit(im: Image.Image, max_side: int) -> Image.Image:
     """Shrink an RGB image until it fits the sheet grid, ``max_side`` and MAX_COLORS.
 
-    First one LANCZOS resize caps the size; then a binary search finds the largest
-    longest side (to the pixel) whose color count is within MAX_COLORS. Every search
-    step resizes the capped image, never the (possibly much larger) original.
-    Can return ``im`` itself.
+    First one LANCZOS resize caps the size. Then a search that the color counts guide
+    finds the largest longest side, to the pixel, whose color count is within
+    MAX_COLORS. Every search step resizes the capped image, never the (possibly much
+    larger) original. Can return ``im`` itself.
     """
     check_max_side(max_side)
     if 0 in im.size:
@@ -177,11 +245,14 @@ def fit(im: Image.Image, max_side: int) -> Image.Image:
         out.thumbnail((side, side), Image.Resampling.LANCZOS)
         return out
 
-    def attempt(side: int) -> Image.Image | None:
+    def attempt(side: int) -> tuple[Image.Image, int]:
         candidate = shrunk(side)
-        return candidate if candidate.getcolors(MAX_COLORS) is not None else None
+        return candidate, _color_count(candidate)
 
-    best = _largest_passing(_ALWAYS_FITS_SIDE + 1, max(im.size) - 1, attempt)
+    # Start at the side that gives about 2 * MAX_COLORS pixels: most photos fit there.
+    w, h = im.size
+    first = round(max(w, h) * math.sqrt(2 * MAX_COLORS / (w * h)))
+    best = _largest_passing(_ALWAYS_FITS_SIDE, max(w, h), attempt, first)
     return best if best is not None else shrunk(_ALWAYS_FITS_SIDE)
 
 

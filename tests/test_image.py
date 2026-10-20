@@ -3,8 +3,10 @@ from images import MODE_CASES, busy, encoded, exif_rotated, many_colors, noise
 from PIL import Image
 
 from pixheet._image import (
+    _COUNT_CAP,
     MAX_COLORS,
     _cap_size,
+    _color_count,
     _largest_passing,
     fit,
     normalize,
@@ -110,27 +112,72 @@ def test_cap_size(size, max_side, expected):
     assert _cap_size(*size, max_side) == expected
 
 
-def test_largest_passing_keeps_last_pass_not_midpoint():
-    # Not monotonic: 7 passes, 8 fails, 9 passes, 10+ fail.
-    def passes(side):
-        return side <= 7 or side == 9
-
+def search(colors, lo=252, hi=1000, first=413):
+    """Run the search on a made-up color curve. Return the answer and the probed sides."""
     tried = []
 
     def attempt(side):
         tried.append(side)
-        return side if passes(side) else None
+        return side, colors(side)
 
-    side = _largest_passing(1, 20, attempt)
+    return _largest_passing(lo, hi, attempt, first), tried
+
+
+# Made-up color curves: smooth like a photo, steep, flat, not monotonic, a jump, exactly
+# MAX_COLORS up to a side, and a kink where the slope changes from 0.1 to 4.
+CURVES = {
+    "photo": lambda s: round(1.9 * s**1.6),
+    "steep": lambda s: round(s**3 / 1500),
+    "flat": lambda s: 60_000 + s,
+    "bumpy": lambda s: round(1.9 * s**1.6) + (9_000 if s % 7 == 0 else 0),
+    "step": lambda s: 10 if s < 700 else 10**6,
+    "at-limit": lambda s: MAX_COLORS if s <= 600 else MAX_COLORS + 1,
+    "kinked": lambda s: round(MAX_COLORS * (s / 865) ** (0.1 if s <= 865 else 4)),
+}
+
+
+@pytest.mark.parametrize("curve", CURVES)
+def test_largest_passing_finds_an_edge(curve):
+    colors = CURVES[curve]
+    side, tried = search(colors)
+    # The answer passed, and the side after it failed: tested, or the failing hi.
     assert side in tried
-    assert passes(side)
-    # Everything tried above the answer failed.
-    assert all(s <= side or not passes(s) for s in tried)
+    assert colors(side) <= MAX_COLORS
+    assert side + 1 == 1000 or (side + 1 in tried and colors(side + 1) > MAX_COLORS)
+    # A loose bound for these curves: 3 times log2(1000 - 252) = 3 * 9.5.
+    assert len(tried) <= 3 * 10
+
+
+def test_largest_passing_needs_few_probes_on_a_photo_curve():
+    _, tried = search(CURVES["photo"])
+    assert len(tried) <= 5  # binary search needs 10 here
+
+
+def test_largest_passing_accepts_exactly_max_colors():
+    assert search(CURVES["at-limit"])[0] == 600
+
+
+def test_largest_passing_bisects_when_the_estimates_stall():
+    side, tried = search(CURVES["kinked"])
+    assert side == 865
+    assert len(tried) <= 20  # without the bisection safeguard: 31
+
+
+def test_largest_passing_keeps_last_pass_not_midpoint():
+    # Not monotonic: 7 passes, 8 fails, 9 passes, 10+ fail.
+    def colors(side):
+        return 1 if side <= 7 or side == 9 else 10**6
+
+    side, tried = search(colors, lo=1, hi=21, first=10)
+    assert side in tried
+    assert colors(side) == 1
+    # Every side tried above the answer failed.
+    assert all(s <= side or colors(s) > MAX_COLORS for s in tried)
 
 
 def test_largest_passing_none():
-    assert _largest_passing(5, 4, lambda side: "x") is None
-    assert _largest_passing(1, 10, lambda side: None) is None
+    assert search(lambda s: 1, lo=5, hi=6)[0] is None  # nothing to test
+    assert search(lambda s: 10**6, lo=1, hi=11, first=5)[0] is None  # nothing passes
 
 
 def test_fit_keeps_small_images(rgb_gradient):
@@ -171,14 +218,68 @@ def test_fit_too_many_colors(rgb_many_colors):
     assert out.size == (252, 252)
 
 
-def test_fit_is_exact_to_the_pixel():
-    im = noise(400, 300, 70_000, seed=1)
+def binary_search_fit(im: Image.Image) -> tuple[int, int]:
+    """The fitted size that a plain binary search of the longest side finds."""
+    lo, hi = 252, max(im.size)  # lo always fits, hi does not
+    best = (lo, lo)
+    while hi - lo > 1:
+        mid = (lo + hi) // 2
+        candidate = im.copy()
+        candidate.thumbnail((mid, mid), Image.Resampling.LANCZOS)
+        if candidate.getcolors(MAX_COLORS) is None:
+            hi = mid
+        else:
+            lo, best = mid, candidate.size
+    return best
+
+
+@pytest.mark.parametrize(
+    "make",
+    [
+        lambda: noise(400, 300, 70_000, seed=1),
+        lambda: busy(1000, 750),
+        lambda: busy(600, 900),
+        lambda: noise(300, 330, 64_500, seed=2),
+        lambda: noise(300, 214, 64_200, seed=3),  # fits at 299: the side before hi
+    ],
+    ids=["noise", "busy-wide", "busy-tall", "just-over", "fits-at-max-minus-1"],
+)
+def test_fit_matches_binary_search(make, monkeypatch):
+    import pixheet._image as image_module
+
+    im = make()
+    counts = []
+    real = image_module._color_count
+    monkeypatch.setattr(image_module, "_color_count", lambda c: counts.append(c) or real(c))
     out = fit(im, 1000)
+    assert len(counts) <= 8  # the search steps; a binary search needs 9 or 10 here
     side = max(out.size)
     assert out.getcolors(MAX_COLORS) is not None
     bigger = im.copy()
     bigger.thumbnail((side + 1, side + 1), Image.Resampling.LANCZOS)
-    assert bigger.getcolors(MAX_COLORS) is None
+    assert bigger.getcolors(MAX_COLORS) is None  # exact to the pixel
+    assert out.size == binary_search_fit(im)
+
+
+@pytest.mark.parametrize(("size", "first"), [((1000, 750), 413), ((600, 900), 438)])
+def test_fit_first_probe_gives_about_two_times_max_colors_pixels(monkeypatch, size, first):
+    import pixheet._image as image_module
+
+    probes = []
+    real = image_module._color_count
+    monkeypatch.setattr(
+        image_module, "_color_count", lambda c: probes.append(max(c.size)) or real(c)
+    )
+    fit(busy(*size), 1000)
+    assert probes[0] == first
+
+
+def test_color_count_is_capped():
+    assert _COUNT_CAP < 260_000
+    im = noise(600, 500, 260_000, seed=4)
+    assert _color_count(im) == _COUNT_CAP + 1
+    small = noise(50, 40, 300)
+    assert _color_count(small) == 300
 
 
 def test_fit_searches_capped_image_not_original(monkeypatch):

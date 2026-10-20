@@ -80,9 +80,9 @@ write, one pixel per cell, without writing anything.
 2. **Size cap.** If the image is larger than `max_side` or the sheet grid, it is resized
    once (LANCZOS, aspect ratio kept).
 3. **Color fit.** If the image still has more distinct colors than a sheet can style, a
-   binary search finds the largest longest side, to the pixel, whose resized image fits.
-   Fewer pixels means fewer colors, so the search shrinks the image only as much as it
-   has to.
+   search finds the largest longest side whose resized image fits. The result is exact
+   to the pixel. The color count of each test size tells the search where to look
+   next. For a photo, the search needs about 4 tests. A binary search needs about 9.
 
 ## Limits
 
