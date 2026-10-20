@@ -1,7 +1,5 @@
-import io
-
 import pytest
-from images import MODE_CASES, busy, noise
+from images import MODE_CASES, busy, encoded, exif_rotated, many_colors, noise
 from PIL import Image
 
 from pixheet._image import (
@@ -87,11 +85,8 @@ def test_normalize_keeps_rgb_as_is(rgb_gradient):
 
 
 def test_normalize_applies_exif_orientation():
-    exif = Image.Exif()
-    exif[0x0112] = 6  # rotate 90 degrees clockwise to display
-    buf = io.BytesIO()
-    Image.new("RGB", (40, 20), (200, 10, 10)).save(buf, "JPEG", exif=exif)
-    with Image.open(buf) as im:
+    # Orientation 6: rotate 90 degrees clockwise to display.
+    with Image.open(exif_rotated((40, 20), 6)) as im:
         assert im.size == (40, 20)
         assert normalize(im, WHITE).size == (20, 40)
 
@@ -124,11 +119,9 @@ def test_largest_passing_keeps_last_pass_not_midpoint():
 
     def attempt(side):
         tried.append(side)
-        return f"img{side}" if passes(side) else None
+        return side if passes(side) else None
 
-    best = _largest_passing(1, 20, attempt)
-    assert best is not None
-    side = int(best.removeprefix("img"))
+    side = _largest_passing(1, 20, attempt)
     assert side in tried
     assert passes(side)
     # Everything tried above the answer failed.
@@ -189,7 +182,7 @@ def test_fit_is_exact_to_the_pixel():
 
 
 def test_fit_searches_capped_image_not_original(monkeypatch):
-    big = busy(4000, 3000)
+    big = busy(1600, 1200)
     assert big.getcolors(MAX_COLORS) is None
     sizes = []
     real = Image.Image.thumbnail
@@ -199,31 +192,30 @@ def test_fit_searches_capped_image_not_original(monkeypatch):
         return real(self, size, *args, **kwargs)
 
     monkeypatch.setattr(Image.Image, "thumbnail", spy)
-    out = fit(big, 1000)
-    assert max(out.size) <= 1000
-    assert all(max(s) <= 1000 for s in sizes)
+    out = fit(big, 400)
+    assert max(out.size) <= 400
+    assert sizes  # the search ran
+    assert all(max(s) <= 400 for s in sizes)
 
 
-def sixteen_bit_png(values, transparency=None) -> Image.Image:
-    """A 16-bit grayscale PNG (opens as I;16), round-tripped through the codec."""
+def sixteen_bit(values, fmt="PNG", transparency=None) -> Image.Image:
+    """A 16-bit grayscale file, decoded again. PNG opens as I;16, PGM ("PPM") as I."""
     im = Image.new("I;16", (len(values), 1))
-    for x, v in enumerate(values):
-        im.putpixel((x, 0), v)
+    im.putdata(values)
     if transparency is not None:
         im.info["transparency"] = transparency
-    buf = io.BytesIO()
-    im.save(buf, "PNG")
-    buf.seek(0)
-    out = Image.open(buf)
+    out = Image.open(encoded(im, fmt))
     out.load()
-    assert out.mode == "I;16"
     return out
 
 
-def test_16_bit_scaling_does_not_depend_on_content():
-    alone = normalize(sixteen_bit_png([255, 255]), WHITE).getpixel((0, 0))
-    with_brighter = normalize(sixteen_bit_png([255, 256]), WHITE).getpixel((0, 0))
-    assert alone == with_brighter == (0, 0, 0)
+@pytest.mark.parametrize(("fmt", "mode"), [("PNG", "I;16")])
+def test_16_bit_scaling_does_not_depend_on_content(fmt, mode):
+    alone = sixteen_bit([255, 255], fmt)
+    assert alone.mode == mode
+    with_brighter = sixteen_bit([255, 256], fmt)
+    assert normalize(alone, WHITE).getpixel((0, 0)) == (0, 0, 0)
+    assert normalize(with_brighter, WHITE).getpixel((0, 0)) == (0, 0, 0)
 
 
 @pytest.mark.parametrize(
@@ -237,16 +229,14 @@ def test_16_bit_scaling_does_not_depend_on_content():
     ],
 )
 def test_16_bit_transparency_key(values, key, expected):
-    out = normalize(sixteen_bit_png(values, key), (0, 255, 0))
+    out = normalize(sixteen_bit(values, transparency=key), (0, 255, 0))
     assert [out.getpixel((x, 0)) for x in range(len(values))] == expected
 
 
 @pytest.mark.parametrize("exif", [b"Exif\x00\x00garbage-not-tiff", b"II*\x00", b"MM\x00*"])
 @pytest.mark.parametrize("fmt", ["PNG", "JPEG", "WEBP"])
 def test_unreadable_exif_is_ignored(fmt, exif):
-    buf = io.BytesIO()
-    Image.new("RGB", (40, 20), (9, 9, 9)).save(buf, fmt, exif=exif, dpi=(300, 300))
-    buf.seek(0)
+    buf = encoded(Image.new("RGB", (40, 20), (9, 9, 9)), fmt, exif=exif, dpi=(300, 300))
     with Image.open(buf) as im:
         assert normalize(im, WHITE).size == (40, 20)
 
@@ -255,3 +245,9 @@ def test_unreadable_exif_is_ignored(fmt, exif):
 def test_fit_rejects_empty_image(size):
     with pytest.raises(ValueError, match="no pixels"):
         fit(Image.new("RGB", size), 1000)
+
+
+def test_many_colors_builder():
+    im = many_colors()
+    assert len(im.getcolors(1 << 16)) == 1 << 16
+    assert im.getpixel((10, 200)) == (10, 200, 0)

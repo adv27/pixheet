@@ -28,7 +28,7 @@ package, except in tests and in `bench/bench.py`, which times each stage.
 
 ```console
 uv sync                                       # install; Python 3.15 per .python-version
-uv run pytest                                 # about 30 s
+uv run pytest                                 # about 10 s
 uv run ruff check && uv run ruff format --check
 uv run pixheet --help
 ```

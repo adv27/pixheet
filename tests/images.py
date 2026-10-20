@@ -1,8 +1,10 @@
 """Synthetic test images. Never use real photos as test data."""
 
+import io
 import random
+from collections.abc import Callable
 
-from PIL import Image
+from PIL import ExifTags, Image
 
 
 def noise(w: int, h: int, colors: int, seed: int = 0) -> Image.Image:
@@ -36,8 +38,9 @@ def busy(w: int, h: int) -> Image.Image:
 
 def many_colors() -> Image.Image:
     """256x256 with R = x and G = y: 65,536 colors, more than a sheet allows."""
-    data = bytes(c for y in range(256) for x in range(256) for c in (x, y, 0))
-    return Image.frombytes("RGB", (256, 256), data)
+    ramp = Image.linear_gradient("L")  # 256x256, value = y
+    black = Image.new("L", ramp.size)
+    return Image.merge("RGB", (ramp.transpose(Image.Transpose.TRANSPOSE), ramp, black))
 
 
 def palette_with_transparency() -> Image.Image:
@@ -48,6 +51,30 @@ def palette_with_transparency() -> Image.Image:
     im.info["transparency"] = 0  # red is transparent, blue is opaque
     return im
 
+
+def encoded(im: Image.Image, fmt: str, **params) -> io.BytesIO:
+    """``im`` saved in ``fmt`` to an in-memory file, rewound to the start."""
+    buf = io.BytesIO()
+    im.save(buf, fmt, **params)
+    buf.seek(0)
+    return buf
+
+
+def exif_rotated(size: tuple[int, int], orientation: int, fmt: str = "JPEG") -> io.BytesIO:
+    """An image file whose EXIF orientation tells viewers to rotate it."""
+    exif = Image.Exif()
+    exif[ExifTags.Base.Orientation] = orientation
+    return encoded(Image.new("RGB", size, (200, 10, 10)), fmt, exif=exif)
+
+
+# The standard images that most tests use, by name.
+SAMPLES: dict[str, Callable[[], Image.Image]] = {
+    "gradient": lambda: gradient(64, 48),
+    "noise": lambda: noise(50, 40, 300),  # exactly 300 colors
+    "one-pixel": lambda: Image.new("RGB", (1, 1), (1, 2, 3)),
+    "many-colors": many_colors,
+    "palette-transparent": palette_with_transparency,
+}
 
 # Every mode that the converter must accept, and the RGB that it gives on white.
 MODE_CASES = {

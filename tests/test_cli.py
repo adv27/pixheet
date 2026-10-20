@@ -228,3 +228,11 @@ def test_version_without_package_metadata(monkeypatch):
 
     monkeypatch.setattr(cli, "version", missing)
     assert cli._version() == "unknown"
+
+
+def test_background_none(tmp_path, capsys):
+    src = tmp_path / "t.png"
+    Image.new("RGBA", (3, 2), (10, 20, 30, 0)).save(src)
+    assert main([str(src), "--background", "none"]) == 0
+    with zipfile.ZipFile(src.with_suffix(".xlsx")) as zf:
+        assert 'rgb="FF0A141E"' in zf.read("xl/styles.xml").decode()

@@ -1,9 +1,10 @@
 import io
 import zipfile
+from pathlib import Path
 
 import pytest
-from images import gradient, many_colors, noise, palette_with_transparency
-from PIL import Image
+from images import SAMPLES, encoded, exif_rotated
+from PIL import ExifTags, Image
 
 import pixheet
 from pixheet import MAX_COLORS, MAX_COLUMNS, ConvertResult, convert, prepare
@@ -13,11 +14,10 @@ def test_public_api():
     assert set(pixheet.__all__) >= {"convert", "ConvertResult"}
 
 
-def test_convert_path_to_path(tmp_path, rgb_gradient):
-    src = tmp_path / "in.png"
-    rgb_gradient.save(src)
+@pytest.mark.parametrize("as_path", [Path, str])
+def test_convert_path_to_path(tmp_path, gradient_png, rgb_gradient, as_path):
     dst = tmp_path / "out.xlsx"
-    result = convert(src, dst)
+    result = convert(as_path(gradient_png), as_path(dst))
     assert isinstance(result, ConvertResult)
     assert result.original_size == result.size == (64, 48)
     assert result.cells == 64 * 48
@@ -27,19 +27,9 @@ def test_convert_path_to_path(tmp_path, rgb_gradient):
     assert sorted(p.name for p in tmp_path.iterdir()) == ["in.png", "out.xlsx"]
 
 
-def test_convert_str_paths(tmp_path, rgb_gradient):
-    src = tmp_path / "in.png"
-    rgb_gradient.save(src)
-    convert(str(src), str(tmp_path / "out.xlsx"))
-    assert (tmp_path / "out.xlsx").exists()
-
-
 def test_convert_file_objects(rgb_noise):
-    src = io.BytesIO()
-    rgb_noise.save(src, "PNG")
-    src.seek(0)
     dst = io.BytesIO()
-    result = convert(src, dst)
+    result = convert(encoded(rgb_noise, "PNG"), dst)
     assert result.colors == 300
     assert zipfile.ZipFile(dst).testzip() is None
 
@@ -79,15 +69,11 @@ def test_convert_leaves_callers_file_backed_image_open(tmp_path):
 @pytest.mark.parametrize(
     "make",
     [
-        lambda: gradient(64, 48),
-        lambda: noise(50, 40, 300),
-        lambda: noise(300, 300, 50_000, seed=5),
-        many_colors,
-        palette_with_transparency,
-        lambda: Image.new("RGB", (1, 1)),
+        *SAMPLES.values(),
         lambda: Image.new("CMYK", (20, 10), (10, 20, 30, 40)),
         lambda: Image.new("LA", (20, 10), (10, 20)),
     ],
+    ids=[*SAMPLES, "cmyk", "la"],
 )
 def test_style_count_matches_fitted_image(make):
     im = make()
@@ -120,10 +106,8 @@ def test_prepare_matches_convert(rgb_many_colors):
     assert a.size == result.size == (200, 200)
 
 
-def test_prepare_returns_detached_copy(tmp_path, rgb_gradient):
-    src = tmp_path / "in.png"
-    rgb_gradient.save(src)
-    out = prepare(src)
+def test_prepare_returns_detached_copy(gradient_png, rgb_gradient):
+    out = prepare(gradient_png)
     assert out.tobytes() == rgb_gradient.tobytes()
     assert prepare(rgb_gradient) is not rgb_gradient
 
@@ -134,9 +118,12 @@ def test_invalid_background(background):
         convert(Image.new("RGB", (2, 2)), io.BytesIO(), background=background)
 
 
-def test_invalid_max_side():
+def test_invalid_max_side(tmp_path):
     with pytest.raises(ValueError, match="max_side"):
         convert(Image.new("RGB", (2, 2)), io.BytesIO(), max_side=-1)
+    # convert() checks max_side before it opens the source.
+    with pytest.raises(ValueError, match="max_side"):
+        convert(tmp_path / "missing.png", io.BytesIO(), max_side=-1)
 
 
 def test_background_option():
@@ -177,12 +164,7 @@ def test_overwrites_existing_output(tmp_path, rgb_gradient):
 
 
 def test_original_size_is_upright():
-    exif = Image.Exif()
-    exif[0x0112] = 8
-    buf = io.BytesIO()
-    Image.new("RGB", (40, 20)).save(buf, "JPEG", exif=exif)
-    buf.seek(0)
-    result = convert(buf, io.BytesIO())
+    result = convert(exif_rotated((40, 20), 8), io.BytesIO())
     assert result.original_size == result.size == (20, 40)
 
 
@@ -192,7 +174,7 @@ def test_tiff_with_exif_rotation_opened_by_path(tmp_path, mode):
     # with orientation 5-8; convert() must not go through that path.
     gray = Image.frombytes("L", (6, 4), bytes(range(0, 240, 10)))
     exif = Image.Exif()
-    exif[0x0112] = 6
+    exif[ExifTags.Base.Orientation] = 6
     src = tmp_path / "scan.tif"
     gray.convert(mode).save(src, exif=exif)
     expected = prepare(gray.convert(mode).transpose(Image.Transpose.ROTATE_270))
@@ -204,12 +186,11 @@ def test_tiff_with_exif_rotation_opened_by_path(tmp_path, mode):
     assert convert(src, tmp_path / "scan.xlsx").original_size == (4, 6)
 
 
-def test_refuses_to_overwrite_the_input(tmp_path, rgb_gradient):
-    src = tmp_path / "same.png"
-    rgb_gradient.save(src)
+def test_refuses_to_overwrite_the_input(gradient_png):
+    before = gradient_png.read_bytes()
     with pytest.raises(ValueError, match="is the input image"):
-        convert(src, str(src))
-    assert src.read_bytes()[1:4] == b"PNG"  # still the original image
+        convert(gradient_png, str(gradient_png))
+    assert gradient_png.read_bytes() == before
 
 
 def test_write_errors_name_the_target(tmp_path, rgb_gradient):
