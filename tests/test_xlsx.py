@@ -128,7 +128,7 @@ def test_styles_follow_first_appearance():
 
 
 def test_style_count_matches_getcolors():
-    # Guards the RGBX padding byte: equal colors must share one key and one style.
+    # Guards the padding byte of _KEY_LAYOUT: equal colors must share one key and one style.
     im = noise(64, 64, 1000, seed=3)
     styles = ElementTree.fromstring(write(im).read(STYLES))
     assert len(styles.findall("m:cellXfs/m:xf", NS)) - 1 == len(im.getcolors(64 * 64)) == 1000

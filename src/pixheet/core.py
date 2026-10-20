@@ -1,7 +1,6 @@
 """The public conversion API."""
 
 import os
-import secrets
 import time
 from dataclasses import dataclass
 from pathlib import Path
@@ -113,7 +112,7 @@ def _write(im: Image.Image, dst: Destination, compact: bool) -> int:
     path = Path(dst)
     # Write next to the target, then rename over it. The name has a fixed length so a
     # long but valid target name cannot push it past the file-name limit.
-    tmp = path.with_name(f".pixheet-{secrets.token_hex(8)}.tmp")
+    tmp = path.with_name(f".pixheet-{os.urandom(8).hex()}.tmp")
     try:
         with tmp.open("xb") as f:
             colors = write_xlsx(im, f, compact=compact)

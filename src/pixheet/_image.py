@@ -8,7 +8,10 @@ from contextlib import contextmanager
 from pathlib import Path
 from typing import IO
 
-from PIL import ExifTags, Image, ImageColor, ImageMath, ImageOps
+from PIL import ExifTags, Image, ImageColor
+
+# Only images with 16-bit transparency or an EXIF rotation use these.
+lazy from PIL import ImageMath, ImageOps
 
 from pixheet._xlsx import MAX_COLORS, MAX_COLUMNS, MAX_ROWS
 
@@ -111,7 +114,7 @@ def normalize(im: Image.Image, background: RGB | None) -> Image.Image:
     if im.has_transparency_data:
         if im.mode == "La":
             im = im.convert("LA")
-        rgba = im.convert("RGBA")
+        rgba = im if im.mode == "RGBA" else im.convert("RGBA")  # paste only reads it
         if background is None:
             return rgba.convert("RGB")
         out = Image.new("RGB", rgba.size, background)

@@ -8,15 +8,19 @@ docProps parts it adds are optional and left out.
 
 import shutil
 import sys
-import tempfile
 import zipfile
 from array import array
 from typing import IO
+lazy import tempfile
 
 from PIL import Image
 
 # One pixel per array item; the key scheme below relies on 4-byte items.
 assert array("I").itemsize == 4
+# Pillow's raw packer that puts the pixels in memory so that each 4-byte item, read in
+# the native byte order, is 0x00RRGGBB. The packer writes 0 in the padding byte of
+# every pixel, so equal colors always get equal keys.
+_KEY_LAYOUT = "BGRX" if sys.byteorder == "little" else "XRGB"
 
 MAX_COLUMNS = 16_384
 MAX_ROWS = 1_048_576
@@ -102,17 +106,27 @@ def column_name(index: int) -> str:
     return name
 
 
+class _StyleIds(dict[int, str]):
+    """Pixel key -> style id text, numbered 1, 2, ... by first appearance.
+
+    Each id is made into text one time, when its color first comes, not for each cell.
+    """
+
+    def __missing__(self, key: int) -> str:
+        style_id = self[key] = str(len(self) + 1)
+        return style_id
+
+
 def styles_xml(keys) -> str:
-    """Build styles.xml for pixel keys numbered 1, 2, ... in iteration order.
+    """Build styles.xml for 0xRRGGBB pixel keys numbered 1, 2, ... in iteration order.
 
     Fills 0 and 1 are reserved (``none`` and ``gray125``) and format 0 is the default
     style, so color ``i`` (1-based) uses ``fillId = i + 1`` and is format ``i``.
     """
-    byteorder = sys.byteorder
     fills = "".join(
         [
             '<fill><patternFill patternType="solid">'
-            f'<fgColor rgb="FF{key.to_bytes(4, byteorder)[:3].hex().upper()}"/>'
+            f'<fgColor rgb="FF{key:06X}"/>'
             '<bgColor indexed="64"/></patternFill></fill>'
             for key in keys
         ]
@@ -156,13 +170,9 @@ def write_xlsx(im: Image.Image, dst: IO[bytes], *, compact: bool = False) -> int
             shutil.copyfileobj(tmp, dst)
         return colors
 
-    # One int per pixel. RGBX pads every pixel with the same byte, so equal colors
-    # always get equal keys.
-    pixels = array("I", im.convert("RGBX").tobytes())
+    pixels = array("I", im.tobytes("raw", _KEY_LAYOUT))  # one 0xRRGGBB key per pixel
     columns = [column_name(x) for x in range(w)]
-    # Pixel key -> style id, numbered by first appearance.
-    style_ids: dict[int, int] = {}
-    style_id = style_ids.setdefault
+    style_ids = _StyleIds()
 
     with zipfile.ZipFile(dst, "w", zipfile.ZIP_DEFLATED) as zf:
         zf.writestr("[Content_Types].xml", CONTENT_TYPES_XML)
@@ -176,13 +186,13 @@ def write_xlsx(im: Image.Image, dst: IO[bytes], *, compact: bool = False) -> int
             write(SHEET_HEADER_XML.format(ref=ref, width=w).encode())
             for y in range(h):
                 row = pixels[y * w : (y + 1) * w]
-                r = y + 1
+                r = str(y + 1)  # text one time per row, not one time per cell
                 if compact:
-                    cells = "".join([f'<c s="{style_id(p, len(style_ids) + 1)}"/>' for p in row])
+                    cells = "".join([f'<c s="{style_ids[p]}"/>' for p in row])
                 else:
                     cells = "".join(
                         [
-                            f'<c r="{col}{r}" s="{style_id(p, len(style_ids) + 1)}"/>'
+                            f'<c r="{col}{r}" s="{style_ids[p]}"/>'
                             for col, p in zip(columns, row, strict=True)
                         ]
                     )

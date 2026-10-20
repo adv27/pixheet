@@ -1,12 +1,14 @@
 """Command-line tool: ``pixheet INPUT [INPUT ...] [-o OUTPUT] ...``."""
 
 import argparse
-import glob
 import os
 import sys
 from collections.abc import Sequence
-from importlib.metadata import PackageNotFoundError, version
 from pathlib import Path
+
+# Most runs use neither of these, and both take time to import.
+lazy import glob
+lazy from importlib.metadata import PackageNotFoundError, version
 
 from pixheet._image import RGB, check_max_side, parse_background
 from pixheet.core import DEFAULT_BACKGROUND, DEFAULT_MAX_SIDE, ConvertResult, convert
@@ -38,6 +40,17 @@ def _version() -> str:
         return version("pixheet")
     except PackageNotFoundError:  # running from a source tree that is not installed
         return "unknown"
+
+
+class _VersionAction(argparse.Action):
+    """Like action="version", but reads the version only when the user gives --version."""
+
+    def __init__(self, option_strings, dest=argparse.SUPPRESS, **kwargs):
+        super().__init__(option_strings, dest, nargs=0, default=argparse.SUPPRESS, **kwargs)
+
+    def __call__(self, parser, namespace, values, option_string=None):
+        print(f"{parser.prog} {_version()}")  # to stdout, as action="version" does
+        parser.exit()
 
 
 def _build_parser() -> argparse.ArgumentParser:
@@ -78,7 +91,7 @@ def _build_parser() -> argparse.ArgumentParser:
         help="leave out cell references: smaller and faster, verified in Excel and openpyxl only",
     )
     parser.add_argument("-q", "--quiet", action="store_true", help="only print errors")
-    parser.add_argument("--version", action="version", version=f"%(prog)s {_version()}")
+    parser.add_argument("--version", action=_VersionAction, help="show the version and exit")
     return parser
 
 
