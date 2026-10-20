@@ -11,6 +11,8 @@ dependencies = ["pillow>=13.0.0"]
 keywords = ["image", "xlsx", "spreadsheet", "pixel-art", "converter"]
 classifiers = [
     "Environment :: Console",
+    "Environment :: Win32 (MS Windows)",
+    "Environment :: X11 Applications",
     "Operating System :: OS Independent",
     "Programming Language :: Python :: 3",
     "Programming Language :: Python :: 3 :: Only",
@@ -20,16 +22,26 @@ classifiers = [
     "Typing :: Typed",
 ]
 
+[project.optional-dependencies]
+# The desktop app: tkinterdnd2 adds the drop of files from the file manager.
+gui = ["tkinterdnd2>=0.6.4,<0.7"]
+
 [project.scripts]
 pixheet = "pixheet.cli:main"
+
+[project.gui-scripts]
+pixheet-gui = "pixheet.gui:main"
 
 [dependency-groups]
 dev = [
     "openpyxl>=3.1.5",
     "pytest>=9.1.1",
     "ruff>=0.17.1",
+    "tkinterdnd2>=0.6.4,<0.7",
     "xlsxwriter>=3.2.9",
 ]
+# The Windows executable of the desktop app.
+build = ["pyinstaller>=6.22.3", "pyinstaller-hooks-contrib>=2026.8"]
 
 [build-system]
 requires = ["uv_build>=0.13.1,<0.14"]

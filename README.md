@@ -43,6 +43,42 @@ time. If an input fails, Pixheet reports it, carries on with the rest, and exits
 status 1. Wildcards such as `photos\*.jpg` are expanded even in shells that don't do it
 themselves (cmd, PowerShell). `python -m pixheet` works too.
 
+## Desktop app
+
+Pixheet also has a desktop app. Drop images on its window, and the app converts each
+image to an `.xlsx` file in the same folder. Install the app with the `gui` extra:
+
+```console
+$ uv tool install ".[gui]"     # or: pip install ".[gui]"
+$ pixheet-gui                  # or: uv run --extra gui pixheet-gui from the checkout
+```
+
+- To convert images, drop them on the window, or click **Browse...**.
+- Set the maximum side, the background, and compact mode before you start.
+- A progress bar shows the progress of the current file. **Cancel** stops the batch.
+- When an output file exists, the app asks one time for each batch. If you click
+  **No**, the app does not convert those images.
+- When a file has an error, the app converts the other files. At the end, it shows a
+  list of the errors.
+- **Open folder** shows the folder of the last output file.
+
+The app uses Tkinter from the Python standard library. The `gui` extra adds
+[tkinterdnd2](https://pypi.org/project/tkinterdnd2/) for the drop of files. Without
+tkinterdnd2, the app opens without the drop function, and **Browse...** still works.
+You can also give image paths as arguments: `pixheet-gui photo.jpg`.
+
+To build a Windows app that does not need Python, use PyInstaller:
+
+```console
+$ uv sync --extra gui --group build
+$ uv run pyinstaller --noconfirm --clean --windowed --onedir --name Pixheet --specpath build packaging/pixheet_gui.py
+$ dist\Pixheet\Pixheet.exe --smoke     # opens the window and closes it after 0.2 s
+```
+
+The result is the folder `dist\Pixheet\`, about 40 MB. To make one file of about 19 MB,
+use `--onefile` instead of `--onedir`. The single file starts more slowly, because it
+extracts itself each time.
+
 ## Python API
 
 ```python

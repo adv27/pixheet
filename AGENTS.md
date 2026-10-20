@@ -15,12 +15,14 @@ Read [README.md](README.md) for usage, the Python API, and the Excel limits.
 | `src/pixheet/__init__.py` | The public API. The `__all__` list is the public surface. |
 | `src/pixheet/core.py` | `convert()`, `prepare()`, `ConvertResult`. |
 | `src/pixheet/cli.py` | The `pixheet` command. |
+| `src/pixheet/gui.py` | The `pixheet-gui` desktop app (Tkinter, with tkinterdnd2 for the file drop). |
 | `src/pixheet/_image.py` | Private. Opens, normalizes, and fits the image. |
 | `src/pixheet/_xlsx.py` | Private. Writes the `.xlsx` XML by hand. |
 | `src/pixheet/_threads.py` | Private. Runs the resize and the zip compression on several threads. The resize helpers give the same pixels as the one-thread calls. The zip members decompress to the same bytes. The compressed bytes can differ. |
 | `tests/` | Pytest suite. `tests/images.py` generates all test images. No real photos. |
 | `bench/bench.py` | Benchmark on local sample photos. |
 | `scripts/` | `excel_check.ps1` (Excel COM check, Windows) and `sample_pixels.py`. |
+| `packaging/` | `pixheet_gui.py`, the entry script that PyInstaller freezes into `Pixheet.exe`. |
 
 Modules with a leading underscore are private. Do not import them from outside the
 package, except in tests and in `bench/bench.py`, which times each stage.
@@ -32,7 +34,18 @@ uv sync                                       # install; Python 3.15 per .python
 uv run pytest                                 # about 20 s
 uv run ruff check && uv run ruff format --check
 uv run pixheet --help
+uv run pixheet-gui                            # the desktop app
 ```
+
+To build the desktop app for Windows into `dist/Pixheet/`, run these commands:
+
+```console
+uv sync --extra gui --group build
+uv run pyinstaller --noconfirm --clean --windowed --onedir --name Pixheet --specpath build packaging/pixheet_gui.py
+dist/Pixheet/Pixheet.exe --smoke              # opens the window and closes it after 0.2 s
+```
+
+The GUI tests in `tests/test_gui.py` need a display. Without a display, they skip.
 
 Run the tests, the lint, and the format check before you report a change as complete.
 
@@ -48,8 +61,11 @@ Run the tests, the lint, and the format check before you report a change as comp
   If you change the report format, update that test.
 - The line length is 100. Ruff ignores `E501` only in `_xlsx.py`.
 - Add a test for each change in behavior.
-- Do not commit `samples/`, `*.xlsx`, or `profiles/`. The `.gitignore` file
-  excludes them.
+- Do not commit `samples/`, `*.xlsx`, `profiles/`, `build/`, or `dist/`. The
+  `.gitignore` file excludes them.
+- In `gui.py`, only the main thread can call Tk. The worker thread sends messages
+  through a queue. A Tk object that Python collects on the worker thread causes an
+  error, so the GUI tests collect garbage on the main thread after each test.
 - The primary development OS is Windows. Keep paths and shell examples portable.
 
 ## Commits
@@ -86,7 +102,8 @@ Rules:
 
 - Use the Unicode emoji, not the `:shortcode:`. Use one gitmoji per commit.
 - For a gitmoji that is not in the table, use the list at <https://gitmoji.dev>.
-- Scopes: `cli`, `core`, `image`, `xlsx`, `tests`, `bench`, `scripts`, `docs`.
+- Scopes: `cli`, `core`, `image`, `xlsx`, `gui`, `packaging`, `tests`, `bench`,
+  `scripts`, `docs`.
   Omit the scope when a commit touches several areas.
 - Write the subject in the imperative, in lower case, and without a final period.
 - Keep the first line, with the prefix, to 72 characters or fewer.
