@@ -76,8 +76,12 @@ def test_raising_callback_keeps_existing_output(tmp_path, rgb_gradient):
 
 
 def test_raising_callback_with_stream(rgb_gradient):
+    """The stream then holds an incomplete file, as the docs say."""
+    stream = io.BytesIO()
     with pytest.raises(Stop):
-        convert(rgb_gradient, io.BytesIO(), progress=stop_at(3))
+        convert(rgb_gradient, stream, progress=stop_at(3))
+    with zipfile.ZipFile(stream) as z:
+        assert "xl/styles.xml" not in z.namelist()
 
 
 @pytest.mark.parametrize("compact", [False, True], ids=["full", "compact"])

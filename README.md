@@ -112,6 +112,7 @@ Use `progress` to show the progress of a conversion, for example in a progress b
 - The last call is `(rows_total, rows_total)`.
 - An exception from `progress` stops the conversion, and `convert` raises it again.
   When `dst` is a path, an existing file at `dst` does not change.
+  When `dst` is a stream, the stream then holds an incomplete file. Discard it.
 - `convert` does not limit the number of calls. A slow `progress` function makes the
   conversion slow.
 

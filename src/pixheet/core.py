@@ -67,12 +67,13 @@ def convert(
             the alpha channel without compositing.
         compact: Leave out the optional ``r="A1"`` cell references. Smaller and
             faster, but only verified in Excel and openpyxl.
-        progress: A function that gets ``(rows_done, rows_total)`` while the sheet is
-            written. It runs on the calling thread. The first call is ``(0, rows_total)``,
-            then one call comes after each row, and the last call is
+        progress: A function that gets ``(rows_done, rows_total)`` while ``convert``
+            writes the sheet. It runs on the calling thread. The first call is
+            ``(0, rows_total)``, then one call comes after each row, and the last call is
             ``(rows_total, rows_total)``. An exception from this function stops the
             conversion and goes to the caller. When ``dst`` is a path, an existing
-            file there does not change.
+            file there does not change. When ``dst`` is a stream, the stream then
+            holds an incomplete file. Discard it.
 
     The image is shrunk, keeping its aspect ratio, to the largest size that fits
     ``max_side``, the sheet grid and 63,999 distinct colors (Excel's cell-format limit).
