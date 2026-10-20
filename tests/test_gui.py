@@ -1,6 +1,7 @@
 """Tests of the desktop app. The widget tests skip when no display is available."""
 
 import gc
+import importlib.util
 import subprocess
 import sys
 import threading
@@ -236,10 +237,9 @@ def new_root():
 class Harness:
     """An App on a hidden root, with dialogs that record their calls."""
 
-    def __init__(self, real_dnd=False, answer=True):
+    def __init__(self, answer=True):
         self.root = new_root()
-        dnd_type = gui.enable_dnd(self.root) if real_dnd else None
-        self.app = gui.App(self.root, dnd_type=dnd_type)
+        self.app = gui.App(self.root, dnd_type=None)
         self.errors = []
         self.questions = []
         self.app.show_error = lambda title, message, **kw: self.errors.append(message)
@@ -498,20 +498,9 @@ def test_open_folder_error_is_shown(harness, tmp_path, monkeypatch):
 
 
 def test_window_without_dnd_says_so(harness):
-    h = harness(real_dnd=False)
+    h = harness()
     assert not h.app.dnd
     assert h.app.status_var.get() == gui.NO_DND_TEXT
-
-
-def test_real_tkdnd_registers_the_drop_zone(harness, tmp_path):
-    pytest.importorskip("tkinterdnd2")
-    h = harness(real_dnd=True)
-    assert h.app.dnd
-    assert h.app.status_var.get() == ""
-    for widget in (h.app.body, h.app.zone):
-        assert "on_drop" in h.root.tk.call("bind", widget, "<<Drop>>")
-    h.run_batch(image(tmp_path / "a.png"))  # the handler that tkdnd calls
-    assert (tmp_path / "a.xlsx").exists()
 
 
 def test_callback_error_is_shown_in_a_dialog(harness, capsys):
@@ -540,14 +529,44 @@ def test_main_starts_the_files_in_argv(monkeypatch):
     assert started == [[Path("a b.png"), Path("c.png")]]
 
 
+def has_tkinterdnd2() -> bool:
+    return importlib.util.find_spec("tkinterdnd2") is not None
+
+
+def run_python(*args: str) -> subprocess.CompletedProcess[str]:
+    """Run Python in a new process. Tk loads tkdnd reliably only in a new interpreter."""
+    return subprocess.run(
+        [sys.executable, *args], capture_output=True, text=True, timeout=60, check=False
+    )
+
+
 def test_python_m_pixheet_gui_smoke():
     new_root().destroy()
-    result = subprocess.run(
-        [sys.executable, "-m", "pixheet.gui", "--smoke"],
-        capture_output=True,
-        text=True,
-        timeout=60,
-        check=False,
-    )
+    result = run_python("-m", "pixheet.gui", "--smoke")
     assert result.returncode == 0, result.stderr
-    assert "drag and drop" in result.stdout
+    state = "on" if has_tkinterdnd2() else "off"
+    assert f"pixheet-gui: drag and drop {state}" in result.stdout
+
+
+REGISTER_DROP = """
+import tkinter as tk
+from pixheet import gui
+
+root = tk.Tk()
+root.withdraw()
+app = gui.App(root, dnd_type=gui.enable_dnd(root))
+print(app.dnd)
+print(repr(app.status_var.get()))
+for widget in (app.body, app.zone):
+    print("on_drop" in root.tk.call("bind", widget, "<<Drop>>"))
+root.destroy()
+"""
+
+
+def test_real_tkdnd_registers_the_drop_zone():
+    if not has_tkinterdnd2():
+        pytest.skip("tkinterdnd2 is not installed")
+    new_root().destroy()
+    result = run_python("-c", REGISTER_DROP)
+    assert result.returncode == 0, result.stderr
+    assert result.stdout.split() == ["True", "''", "True", "True"]
