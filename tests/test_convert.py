@@ -1,4 +1,5 @@
 import io
+import os
 import zipfile
 from pathlib import Path
 
@@ -190,7 +191,22 @@ def test_refuses_to_overwrite_the_input(gradient_png):
     before = gradient_png.read_bytes()
     with pytest.raises(ValueError, match="is the input image"):
         convert(gradient_png, str(gradient_png))
+    with gradient_png.open("rb") as f, pytest.raises(ValueError, match="is the input image"):
+        convert(f, gradient_png)
+    with Image.open(gradient_png) as im, pytest.raises(ValueError, match="is the input image"):
+        convert(im, gradient_png)
+    # Pillow and open() keep a bytes path as bytes.
+    raw = os.fsencode(gradient_png)
+    with Image.open(raw) as im, pytest.raises(ValueError, match="is the input image"):
+        convert(im, gradient_png)
+    with open(raw, "rb") as f, pytest.raises(ValueError, match="is the input image"):  # noqa: PTH123
+        convert(f, gradient_png)
     assert gradient_png.read_bytes() == before
+
+
+def test_image_opened_from_a_bytes_path(gradient_png, tmp_path):
+    with Image.open(os.fsencode(gradient_png)) as im:
+        assert convert(im, tmp_path / "out.xlsx").size == (64, 48)
 
 
 def test_write_errors_name_the_target(tmp_path, rgb_gradient):

@@ -85,12 +85,24 @@ def convert(
     )
 
 
+def _source_path(src: Source) -> str | os.PathLike[str] | None:
+    """Return the path of the file that ``src`` comes from, or None if ``src`` gives no path."""
+    if isinstance(src, (str, os.PathLike)):
+        return src
+    # An Image that Pillow opened by name has a file name ("" when Pillow read a stream).
+    # An open file has a name. Both can be bytes.
+    name = getattr(src, "filename" if isinstance(src, Image.Image) else "name", None)
+    if isinstance(name, bytes):
+        name = os.fsdecode(name)
+    return name if isinstance(name, (str, os.PathLike)) and name else None
+
+
 def _same_file(src: Source, dst: Destination) -> bool:
-    paths = (str, os.PathLike)
-    if not (isinstance(src, paths) and isinstance(dst, paths)):
+    source = _source_path(src)
+    if source is None or not isinstance(dst, (str, os.PathLike)):
         return False
     try:
-        return Path(src).samefile(dst)
+        return Path(source).samefile(dst)
     except OSError, ValueError:  # a path that does not exist, or that is not valid
         return False
 
