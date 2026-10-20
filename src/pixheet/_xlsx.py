@@ -160,7 +160,7 @@ def write_xlsx(
     dst: IO[bytes],
     *,
     compact: bool = False,
-    progress: Callable[[int, int], None] | None = None,
+    progress: Callable[[int, int], object] | None = None,
 ) -> int:
     """Write ``im`` (mode RGB) to the binary file ``dst`` as an .xlsx, one cell per pixel.
 

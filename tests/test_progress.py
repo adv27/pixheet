@@ -91,3 +91,16 @@ def test_output_does_not_change(rgb_noise, compact):
     assert a.namelist() == b.namelist()
     for name in a.namelist():
         assert a.read(name) == b.read(name), name
+
+
+def test_callback_can_return_a_value(rgb_gradient):
+    """The writer ignores the return value, for example the bool of a tqdm update."""
+    h = rgb_gradient.height
+    calls: list[tuple[int, int]] = []
+
+    def step(done: int, total: int) -> bool:
+        calls.append((done, total))
+        return True
+
+    convert(rgb_gradient, io.BytesIO(), progress=step)
+    assert calls == [(i, h) for i in range(h + 1)]

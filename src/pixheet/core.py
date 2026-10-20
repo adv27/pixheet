@@ -51,7 +51,7 @@ def convert(
     max_side: int = DEFAULT_MAX_SIDE,
     background: str | RGB | None = DEFAULT_BACKGROUND,
     compact: bool = False,
-    progress: Callable[[int, int], None] | None = None,
+    progress: Callable[[int, int], object] | None = None,
 ) -> ConvertResult:
     """Convert an image into an .xlsx spreadsheet where every cell is one pixel.
 
@@ -118,7 +118,7 @@ def _write(
     im: Image.Image,
     dst: Destination,
     compact: bool,
-    progress: Callable[[int, int], None] | None,
+    progress: Callable[[int, int], object] | None,
 ) -> int:
     if not isinstance(dst, (str, os.PathLike)):
         return write_xlsx(im, dst, compact=compact, progress=progress)
