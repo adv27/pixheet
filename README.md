@@ -60,6 +60,7 @@ convert(
     max_side=1000,          # 0 = no cap; only the sheet limits apply
     background="white",     # "white", "black", "#RRGGBB", (r, g, b), or "none"
     compact=False,
+    progress=None,          # function that gets (rows_done, rows_total)
 ) -> ConvertResult
 ```
 
@@ -67,6 +68,24 @@ convert(
 `seconds`. When `src` is a `PIL.Image.Image`, it is left open and unchanged. When `dst`
 is a path, the file is written next to it and renamed into place, so a failed conversion
 never leaves a half-written file and keeps any previous file.
+
+Use `progress` to show the progress of a conversion, for example in a progress bar:
+
+- `convert` calls `progress(rows_done, rows_total)` on the thread that called `convert`.
+- The first call is `(0, rows_total)`. Then one call comes after each row of the sheet.
+- The last call is `(rows_total, rows_total)`.
+- An exception from `progress` stops the conversion, and `convert` raises it again.
+  When `dst` is a path, an existing file at `dst` does not change.
+- `convert` does not limit the number of calls. A slow `progress` function makes the
+  conversion slow.
+
+```python
+def show(done, total):
+    print(f"\r{done * 100 // total}%", end="")
+
+
+convert("photo.jpg", "photo.xlsx", progress=show)
+```
 
 `prepare(src, max_side=..., background=...)` returns the RGB image that `convert` would
 write, one pixel per cell, without writing anything.

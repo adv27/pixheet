@@ -10,6 +10,7 @@ import shutil
 import sys
 import zipfile
 from array import array
+from collections.abc import Callable
 from typing import IO
 lazy import tempfile
 
@@ -154,10 +155,18 @@ def _seekable(f: IO[bytes]) -> bool:
     return True
 
 
-def write_xlsx(im: Image.Image, dst: IO[bytes], *, compact: bool = False) -> int:
+def write_xlsx(
+    im: Image.Image,
+    dst: IO[bytes],
+    *,
+    compact: bool = False,
+    progress: Callable[[int, int], None] | None = None,
+) -> int:
     """Write ``im`` (mode RGB) to the binary file ``dst`` as an .xlsx, one cell per pixel.
 
     With ``compact=True`` the optional ``r="A1"`` cell references are left out.
+    When ``progress`` is not None, the writer calls ``progress(rows_done, rows_total)``
+    one time before the first row and one time after each row.
     Returns the number of colors.
     """
     if im.mode != "RGB":
@@ -170,7 +179,7 @@ def write_xlsx(im: Image.Image, dst: IO[bytes], *, compact: bool = False) -> int
         # A stream that cannot seek gets a zip64 entry with a data descriptor, and
         # Excel refuses those. Build the file on disk, then copy it out.
         with tempfile.TemporaryFile() as tmp:
-            colors = write_xlsx(im, tmp, compact=compact)
+            colors = write_xlsx(im, tmp, compact=compact, progress=progress)
             tmp.seek(0)
             shutil.copyfileobj(tmp, dst)
         return colors
@@ -190,6 +199,8 @@ def write_xlsx(im: Image.Image, dst: IO[bytes], *, compact: bool = False) -> int
             write = sheet.write
             ref = "A1" if w == h == 1 else f"A1:{columns[-1]}{h}"
             write(SHEET_HEADER_XML.format(ref=ref, width=w).encode())
+            if progress is not None:
+                progress(0, h)
             for y in range(h):
                 row = pixels[y * w : (y + 1) * w]
                 r = str(y + 1)  # text one time per row, not one time per cell
@@ -203,6 +214,8 @@ def write_xlsx(im: Image.Image, dst: IO[bytes], *, compact: bool = False) -> int
                         ]
                     )
                 write(f'<row r="{r}" ht="0.75" customHeight="1">{cells}</row>'.encode())
+                if progress is not None:
+                    progress(y + 1, h)
             write(SHEET_FOOTER_XML.encode())
 
         # Written after the sheet, once every color is known.
