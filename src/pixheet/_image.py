@@ -21,7 +21,7 @@ from pixheet._xlsx import MAX_COLORS, MAX_COLUMNS, MAX_ROWS
 _ALWAYS_FITS_SIDE = math.isqrt(MAX_COLORS)
 
 type RGB = tuple[int, int, int]
-type Source = str | os.PathLike[str] | IO[bytes] | Image.Image
+type Source = str | bytes | os.PathLike[str] | IO[bytes] | Image.Image
 
 
 @contextmanager
@@ -30,19 +30,19 @@ def opened(src: Source) -> Generator[Image.Image]:
     if isinstance(src, Image.Image):
         yield src
         return
-    if not isinstance(src, (str, os.PathLike)):
+    if not isinstance(src, (str, bytes, os.PathLike)):
         with Image.open(src) as im:
             im.load()
             yield im
         return
     # Open the file here: given a file name, Pillow 13 memory-maps uncompressed TIFFs
     # and then scrambles those with an EXIF rotation (orientation 5-8).
-    with Path(src).open("rb") as f:
+    with Path(os.fsdecode(src)).open("rb") as f:
         try:
             im = Image.open(f)
         except Image.UnidentifiedImageError:
             raise Image.UnidentifiedImageError(
-                f"cannot identify image file {os.fspath(src)!r}"
+                f"cannot identify image file {os.fsdecode(src)!r}"
             ) from None
         with im:
             im.load()

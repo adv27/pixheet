@@ -180,7 +180,7 @@ def test_tiff_with_exif_rotation_opened_by_path(tmp_path, mode):
     gray.convert(mode).save(src, exif=exif)
     expected = prepare(gray.convert(mode).transpose(Image.Transpose.ROTATE_270))
     assert expected.size == (4, 6)
-    for opened in (src, str(src)):
+    for opened in (src, str(src), os.fsencode(src)):
         out = prepare(opened)
         assert out.size == (4, 6)
         assert out.tobytes() == expected.tobytes()
@@ -201,7 +201,19 @@ def test_refuses_to_overwrite_the_input(gradient_png):
         convert(im, gradient_png)
     with open(raw, "rb") as f, pytest.raises(ValueError, match="is the input image"):  # noqa: PTH123
         convert(f, gradient_png)
+    with pytest.raises(ValueError, match="is the input image"):
+        convert(raw, gradient_png)  # a bytes path as the source
     assert gradient_png.read_bytes() == before
+
+
+def test_bytes_path_source(gradient_png, tmp_path):
+    raw = os.fsencode(gradient_png)
+    assert convert(raw, tmp_path / "out.xlsx").size == (64, 48)
+    assert prepare(raw).size == (64, 48)
+    bad = tmp_path / "notes.txt"
+    bad.write_text("hello")
+    with pytest.raises(Image.UnidentifiedImageError, match=r"notes\.txt'$"):
+        prepare(os.fsencode(bad))
 
 
 def test_image_opened_from_a_bytes_path(gradient_png, tmp_path):

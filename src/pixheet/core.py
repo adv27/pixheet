@@ -86,8 +86,8 @@ def convert(
 
 def _source_path(src: Source) -> str | os.PathLike[str] | None:
     """Return the path of the file that ``src`` comes from, or None if ``src`` gives no path."""
-    if isinstance(src, (str, os.PathLike)):
-        return src
+    if isinstance(src, (str, bytes, os.PathLike)):
+        return os.fsdecode(src)
     # An Image that Pillow opened by name has a file name ("" when Pillow read a stream).
     # An open file has a name. Both can be bytes.
     name = getattr(src, "filename" if isinstance(src, Image.Image) else "name", None)
