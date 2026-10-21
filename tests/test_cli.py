@@ -236,3 +236,12 @@ def test_background_none(tmp_path, capsys):
     assert main([str(src), "--background", "none"]) == 0
     with zipfile.ZipFile(src.with_suffix(".xlsx")) as zf:
         assert 'rgb="FF0A141E"' in zf.read("xl/styles.xml").decode()
+
+
+def test_error_without_a_message(images, monkeypatch, capsys):
+    def fail(*args, **kwargs):
+        raise MemoryError
+
+    monkeypatch.setattr(cli, "convert", fail)
+    assert main([str(images[0])]) == 1
+    assert capsys.readouterr().err.strip().endswith(": MemoryError")

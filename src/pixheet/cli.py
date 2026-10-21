@@ -150,7 +150,8 @@ def main(argv: Sequence[str] | None = None) -> int:
             )
         except Exception as e:
             failed += 1
-            print(f"pixheet: {name}: {e}", file=sys.stderr)
+            # Some errors have no message, for example MemoryError: give the type then.
+            print(f"pixheet: {name}: {str(e) or type(e).__name__}", file=sys.stderr)
             continue
         written[key] = name
         if not args.quiet:
