@@ -15,6 +15,8 @@ lazy import tempfile
 
 from PIL import Image
 
+from pixheet import _threads
+
 # One pixel per array item; the key scheme below relies on 4-byte items.
 assert array("I").itemsize == 4
 # Pillow's raw packer that puts the pixels in memory so that each 4-byte item, read in
@@ -174,7 +176,8 @@ def write_xlsx(im: Image.Image, dst: IO[bytes], *, compact: bool = False) -> int
     columns = [column_name(x) for x in range(w)]
     style_ids = _StyleIds()
 
-    with zipfile.ZipFile(dst, "w", zipfile.ZIP_DEFLATED) as zf:
+    # The sheet and styles parts are large: compress them on several threads.
+    with _threads.ZipFile(dst, "w", zipfile.ZIP_DEFLATED) as zf:
         zf.writestr("[Content_Types].xml", CONTENT_TYPES_XML)
         zf.writestr("_rels/.rels", ROOT_RELS_XML)
         zf.writestr("xl/workbook.xml", WORKBOOK_XML)

@@ -12,10 +12,13 @@ SHEET = "xl/worksheets/sheet1.xml"
 STYLES = "xl/styles.xml"
 
 
-def write(im: Image.Image, **kwargs) -> zipfile.ZipFile:
-    buf = io.BytesIO()
-    write_xlsx(im, buf, **kwargs)
-    return zipfile.ZipFile(buf)
+def write(im: Image.Image, dst=None, **kwargs) -> zipfile.ZipFile:
+    """Write ``im`` to ``dst`` (a new BytesIO by default) and open the result."""
+    dst = io.BytesIO() if dst is None else dst
+    write_xlsx(im, dst, **kwargs)
+    zf = zipfile.ZipFile(io.BytesIO(dst.getvalue()))
+    assert zf.testzip() is None
+    return zf
 
 
 def part(zf: zipfile.ZipFile, name: str) -> str:
@@ -44,3 +47,6 @@ class Unseekable(io.RawIOBase):
     def write(self, b):
         self.data += b
         return len(b)
+
+    def getvalue(self):
+        return bytes(self.data)

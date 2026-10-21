@@ -13,6 +13,7 @@ from PIL import ExifTags, Image, ImageColor
 # Only images with 16-bit transparency or an EXIF rotation use these.
 lazy from PIL import ImageMath, ImageOps
 
+from pixheet import _threads
 from pixheet._xlsx import MAX_COLORS, MAX_COLUMNS, MAX_ROWS
 
 # Any image whose longest side is at most this has at most 252 * 252 = 63,504
@@ -236,14 +237,12 @@ def fit(im: Image.Image, max_side: int) -> Image.Image:
         raise ValueError(f"the image has no pixels ({im.size[0]}x{im.size[1]})")
     size = _cap_size(*im.size, max_side)
     if size != im.size:
-        im = im.resize(size, Image.Resampling.LANCZOS)
+        im = _threads.resize(im, size)  # the same as im.resize(size, LANCZOS)
     if im.getcolors(MAX_COLORS) is not None:
         return im
 
     def shrunk(side: int) -> Image.Image:
-        out = im.copy()
-        out.thumbnail((side, side), Image.Resampling.LANCZOS)
-        return out
+        return _threads.thumbnail(im, side)  # a copy after thumbnail((side, side))
 
     def attempt(side: int) -> tuple[Image.Image, int]:
         candidate = shrunk(side)

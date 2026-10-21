@@ -2,6 +2,7 @@ import pytest
 from images import MODE_CASES, busy, encoded, exif_rotated, many_colors, noise
 from PIL import Image
 
+from pixheet import _threads
 from pixheet._image import (
     _COUNT_CAP,
     MAX_COLORS,
@@ -286,13 +287,13 @@ def test_fit_searches_capped_image_not_original(monkeypatch):
     big = busy(1600, 1200)
     assert big.getcolors(MAX_COLORS) is None
     sizes = []
-    real = Image.Image.thumbnail
+    real = _threads.thumbnail
 
-    def spy(self, size, *args, **kwargs):
-        sizes.append(self.size)
-        return real(self, size, *args, **kwargs)
+    def spy(im, side):
+        sizes.append(im.size)  # the image that each search step shrinks
+        return real(im, side)
 
-    monkeypatch.setattr(Image.Image, "thumbnail", spy)
+    monkeypatch.setattr(_threads, "thumbnail", spy)
     out = fit(big, 400)
     assert max(out.size) <= 400
     assert sizes  # the search ran

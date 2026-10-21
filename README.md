@@ -84,6 +84,10 @@ write, one pixel per cell, without writing anything.
    to the pixel. The color count of each test size tells the search where to look
    next. For a photo, the search needs about 4 tests. A binary search needs about 9.
 
+Pixheet uses up to 8 threads, one for each CPU, to resize the image and to compress
+the sheet. The result is the same as with one thread: the same pixels and the same
+cells. Only the compressed bytes in the file can differ a little.
+
 ## Limits
 
 | Limit | Value | Why |

@@ -17,6 +17,7 @@ Read [README.md](README.md) for usage, the Python API, and the Excel limits.
 | `src/pixheet/cli.py` | The `pixheet` command. |
 | `src/pixheet/_image.py` | Private. Opens, normalizes, and fits the image. |
 | `src/pixheet/_xlsx.py` | Private. Writes the `.xlsx` XML by hand. |
+| `src/pixheet/_threads.py` | Private. Runs the resize and the zip compression on several threads. Each helper gives the same result as the one-thread call. |
 | `tests/` | Pytest suite. `tests/images.py` generates all test images. No real photos. |
 | `bench/bench.py` | Benchmark on local sample photos. |
 | `scripts/` | `excel_check.ps1` (Excel COM check, Windows) and `sample_pixels.py`. |
