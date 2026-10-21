@@ -105,8 +105,8 @@ logos, pixel art and screenshots keep their full size up to `max_side`.
 
 `--compact` (`compact=True`) leaves out the optional `r="A1"` reference on every cell.
 The spreadsheet format allows this: a reader puts each cell right after the previous one.
-On the sample photos, writing the sheet took about a third less time and files were 25 to
-50% smaller.
+On the sample photos, files were 25 to 50% smaller. Writing the sheet took 13% less time
+with 8 threads, and 23% less with one thread.
 
 It is off by default because it has only been verified in Excel 16 and openpyxl. Don't
 rely on it for Google Sheets, LibreOffice or Numbers until it has been tested there.
@@ -133,7 +133,8 @@ $ uv run python bench/bench.py --samples path\to\photos -n 3 --stages
 
 Folders come from `--samples` (repeatable), else `PIXHEET_SAMPLES` (several separated by
 `;` on Windows), else `./samples`. Keep sample photos out of the repository: `samples/`
-is git-ignored.
+is git-ignored. The last line of the output gives the number of worker threads. To time
+one thread, add `-X cpu_count=1`: `uv run python -X cpu_count=1 bench/bench.py ...`.
 
 **Profiling.** Python 3.15's sampling profiler works on the benchmark as is:
 

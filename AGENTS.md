@@ -17,7 +17,7 @@ Read [README.md](README.md) for usage, the Python API, and the Excel limits.
 | `src/pixheet/cli.py` | The `pixheet` command. |
 | `src/pixheet/_image.py` | Private. Opens, normalizes, and fits the image. |
 | `src/pixheet/_xlsx.py` | Private. Writes the `.xlsx` XML by hand. |
-| `src/pixheet/_threads.py` | Private. Runs the resize and the zip compression on several threads. Each helper gives the same result as the one-thread call. |
+| `src/pixheet/_threads.py` | Private. Runs the resize and the zip compression on several threads. The resize helpers give the same pixels as the one-thread calls. The zip members decompress to the same bytes. The compressed bytes can differ. |
 | `tests/` | Pytest suite. `tests/images.py` generates all test images. No real photos. |
 | `bench/bench.py` | Benchmark on local sample photos. |
 | `scripts/` | `excel_check.ps1` (Excel COM check, Windows) and `sample_pixels.py`. |
@@ -29,7 +29,7 @@ package, except in tests and in `bench/bench.py`, which times each stage.
 
 ```console
 uv sync                                       # install; Python 3.15 per .python-version
-uv run pytest                                 # about 10 s
+uv run pytest                                 # about 20 s
 uv run ruff check && uv run ruff format --check
 uv run pixheet --help
 ```
