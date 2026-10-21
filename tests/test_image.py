@@ -320,12 +320,11 @@ def test_16_bit_scaling_does_not_depend_on_content(fmt, mode):
     assert normalize(with_brighter, WHITE).getpixel((0, 0)) == (0, 0, 0)
 
 
-@pytest.mark.parametrize("fmt", ["TIFF"])
-def test_32_bit_file_with_8_bit_values_keeps_them(fmt):
-    # Pillow writes mode I as 32-bit samples here; values up to 255 stay as they are.
-    im = Image.open(encoded(Image.new("I", (3, 2), 100), fmt))
+def test_32_bit_file_with_8_bit_values_keeps_them():
+    # Pillow writes mode I as 32-bit samples in a TIFF; values up to 255 stay as they are.
+    im = Image.open(encoded(Image.new("I", (3, 2), 100), "TIFF"))
     im.load()
-    assert (im.mode, im.format) == ("I", fmt)
+    assert (im.mode, im.format) == ("I", "TIFF")
     assert normalize(im, WHITE).getpixel((0, 0)) == (100, 100, 100)
 
 

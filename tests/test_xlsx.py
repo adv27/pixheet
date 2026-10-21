@@ -160,10 +160,7 @@ def test_destinations(rgb_gradient, monkeypatch, dst_type, zip64):
     if zip64:
         # A tiny sheet now counts as "over 2 GiB", so the zip64 path runs.
         monkeypatch.setattr(zipfile, "ZIP64_LIMIT", 50_000)
-    out = dst_type()
-    write_xlsx(rgb_gradient, out)
-    data = out.getvalue() if isinstance(out, io.BytesIO) else bytes(out.data)
-    zf = zipfile.ZipFile(io.BytesIO(data))
+    zf = write(rgb_gradient, dst_type())
     assert zf.namelist() == PARTS
     assert zf.testzip() is None
     if zip64:
