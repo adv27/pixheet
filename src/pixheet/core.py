@@ -17,7 +17,7 @@ DEFAULT_MAX_SIDE = 1000
 DEFAULT_BACKGROUND = "white"
 
 
-@dataclass(frozen=True, slots=True)
+@dataclass(frozen=True)
 class ConvertResult:
     """What :func:`convert` did."""
 
