@@ -15,7 +15,7 @@ from pathlib import Path
 
 from PIL import Image
 
-from pixheet import convert
+from pixheet import _threads, convert
 from pixheet._image import fit, normalize, opened
 from pixheet.cli import background_arg, max_side_arg
 from pixheet.core import DEFAULT_BACKGROUND, DEFAULT_MAX_SIDE, _write
@@ -116,7 +116,8 @@ def main() -> int:
     print(summary)
     print(
         f"Python {sys.version.split()[0]}, Pillow {Image.__version__}, "
-        f"max_side={args.max_side}, compact={args.compact}, best of {args.repeat}"
+        f"max_side={args.max_side}, compact={args.compact}, best of {args.repeat}, "
+        f"workers={_threads.WORKERS}"
     )
     return 0
 
