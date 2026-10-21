@@ -38,7 +38,14 @@ build-backend = "uv_build"
 [tool.pytest]
 testpaths = ["tests"]
 addopts = ["-ra", "--strict-markers"]
-filterwarnings = ["error"]
+filterwarnings = [
+    "error",
+    # With -p no:faulthandler, pytest does not know the faulthandler options below.
+    "ignore:Unknown config option. faulthandler_(timeout|exit_on_timeout)$:pytest.PytestConfigWarning",
+]
+# After 60 s, a hung test prints the stack of each thread, and the run stops with an error.
+faulthandler_timeout = "60"
+faulthandler_exit_on_timeout = true
 
 [tool.ruff]
 line-length = 100
