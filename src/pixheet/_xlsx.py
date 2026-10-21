@@ -119,27 +119,30 @@ class _StyleIds(dict[int, str]):
         return style_id
 
 
+_FILL_HEAD = '<fill><patternFill patternType="solid"><fgColor rgb="FF'
+_FILL_TAIL = '"/><bgColor indexed="64"/></patternFill></fill>'
+_XF_HEAD = '<xf numFmtId="0" fontId="0" fillId="'
+_XF_TAIL = '" borderId="0" xfId="0" applyFill="1"/>'
+
+
 def styles_xml(keys) -> str:
     """Build styles.xml for 0xRRGGBB pixel keys numbered 1, 2, ... in iteration order.
 
     Fills 0 and 1 are reserved (``none`` and ``gray125``) and format 0 is the default
     style, so color ``i`` (1-based) uses ``fillId = i + 1`` and is format ``i``.
     """
-    fills = "".join(
-        [
-            '<fill><patternFill patternType="solid">'
-            f'<fgColor rgb="FF{key:06X}"/>'
-            '<bgColor indexed="64"/></patternFill></fill>'
-            for key in keys
-        ]
-    )
     count = len(keys)
-    xfs = "".join(
-        [
-            f'<xf numFmtId="0" fontId="0" fillId="{i + 1}" borderId="0" xfId="0" applyFill="1"/>'
-            for i in range(1, count + 1)
-        ]
-    )
+    fills = xfs = ""
+    if count:
+        # A photo has about 64k colors: make all the hex text in one call. In big-endian
+        # order each key is the bytes 00 RR GG BB, so hex() gives "00RRGGBB" for each
+        # key. Each group starts with the padding byte, so each "|00" starts a fill.
+        rgb = array("I", keys)
+        if sys.byteorder == "little":
+            rgb.byteswap()
+        text = rgb.tobytes().hex("|", 4).upper()
+        fills = _FILL_HEAD + text[2:].replace("|00", _FILL_TAIL + _FILL_HEAD) + _FILL_TAIL
+        xfs = _XF_HEAD + (_XF_TAIL + _XF_HEAD).join(map(str, range(2, count + 2))) + _XF_TAIL
     return STYLES_XML.format(fill_count=count + 2, fills=fills, xf_count=count + 1, xfs=xfs)
 
 
