@@ -1,0 +1,122 @@
+# Build Pixheet.exe on the self-hosted Windows runner of the project.
+#
+# Security: the repository is public. A pull request from a fork must never run code on
+# the self-hosted runner. Thus this workflow has no pull_request trigger and no
+# pull_request_target trigger. Do not add them. Only a push to master, a push of a v*
+# tag, and a manual start run it.
+#
+# A push of a tag "v<version>" also publishes the exe in a GitHub release. A
+# GitHub-hosted runner does that step, so the token that can write never goes to the
+# self-hosted runner.
+name: Windows exe
+
+on:
+  push:
+    branches: [master]
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions: {}
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  build:
+    name: Build Pixheet.exe
+    runs-on: [self-hosted, Windows, X64]
+    timeout-minutes: 45
+    permissions:
+      contents: read # check out the code
+    defaults:
+      run:
+        # Windows PowerShell 5.1 is on each Windows machine. pwsh is not always there.
+        shell: powershell
+    steps:
+      # A self-hosted runner keeps its files from the last job.
+      - name: Clean the workspace
+        run: |
+          Get-ChildItem -LiteralPath $env:GITHUB_WORKSPACE -Force |
+            Remove-Item -Recurse -Force
+
+      - name: Check out the repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      # uv reads the uv version from pyproject.toml and the Python version from
+      # .python-version. No cache: this workflow publishes releases.
+      - name: Install uv
+        uses: astral-sh/setup-uv@18d369b23da25a81e9458561248e1aafff6a70fa # v10.3.1
+        with:
+          enable-cache: false
+
+      - name: Check that the tag agrees with the package version
+        if: startsWith(github.ref, 'refs/tags/v')
+        env:
+          TAG: ${{ github.ref_name }}
+        run: |
+          $version = uv version --short
+          if ($LASTEXITCODE -ne 0) { exit 1 }
+          if ($env:TAG -ne "v$version") {
+            Write-Host "::error::The tag $env:TAG does not agree with the version $version in pyproject.toml."
+            exit 1
+          }
+
+      - name: Install the dependencies
+        run: uv sync --locked --extra gui --group build
+
+      - name: Run the tests
+        run: uv run --locked --extra gui --group build pytest
+
+      - name: Build and test the exe
+        run: powershell -NoProfile -ExecutionPolicy Bypass -File packaging\build.ps1
+
+      - name: Upload the exe
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: Pixheet-windows-x64
+          path: |
+            dist/Pixheet.exe
+            dist/Pixheet.exe.sha256
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: Clean the workspace
+        if: always()
+        run: |
+          foreach ($name in 'dist', 'build', '.venv') {
+            $path = Join-Path $env:GITHUB_WORKSPACE $name
+            if (Test-Path -LiteralPath $path) { Remove-Item -LiteralPath $path -Recurse -Force }
+          }
+
+  release:
+    name: Publish the release
+    needs: build
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write # create the release and upload the files
+    steps:
+      - name: Download the exe
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: Pixheet-windows-x64
+          path: dist
+
+      - name: Create the release, or add the files to it
+        working-directory: dist
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          sha256sum -c Pixheet.exe.sha256
+          if gh release view "$TAG" --repo "$REPO" > /dev/null 2>&1; then
+            gh release upload "$TAG" Pixheet.exe Pixheet.exe.sha256 --repo "$REPO" --clobber
+          else
+            gh release create "$TAG" Pixheet.exe Pixheet.exe.sha256 --repo "$REPO" \
+              --verify-tag --title "Pixheet $TAG" --generate-notes
+          fi
