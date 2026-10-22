@@ -99,10 +99,22 @@ To build Pixheet.exe from a checkout, run this command in PowerShell:
 > powershell -ExecutionPolicy Bypass -File packaging\build.ps1
 ```
 
-The script builds `dist\Pixheet.exe`, about 19 MB, and tests it. Add `-OneDir` to build
-the folder `dist\Pixheet\`. The folder starts faster, because the exe does not extract
-itself each time. [packaging/README.md](packaging/README.md) gives more data about the
-build and the CI.
+The script builds `dist\Pixheet.exe`, about 13.7 MB, and tests it. Add `-OneDir` to
+build the folder `dist\Pixheet\`. The folder starts faster, because the exe does not
+extract itself each time. [packaging/README.md](packaging/README.md) gives more data
+about the build and the CI.
+
+The exe has all the features of the app, but it does not have these parts:
+
+- The Python modules for network, crypto, mail, XML, processes, and the command line,
+  and the OpenSSL DLLs. The app does not use them.
+- The Pillow modules that pixheet never calls, for example `ImageTk` and `ImageShow`.
+- The docstrings and the `assert` statements in the bytecode.
+- The Tcl and Tk files that the app does not use on Windows, for example the time
+  zone data, most encodings, and the messages for other languages.
+
+These changes make the exe about 6 MB smaller. The exe does not use UPX, because
+antivirus programs flag UPX-packed exes.
 
 ## Python API
 

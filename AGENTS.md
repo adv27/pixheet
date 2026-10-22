@@ -22,7 +22,7 @@ Read [README.md](README.md) for usage, the Python API, and the Excel limits.
 | `tests/` | Pytest suite. `tests/images.py` generates all test images. No real photos. |
 | `bench/bench.py` | Benchmark on local sample photos. |
 | `scripts/` | `excel_check.ps1` (Excel COM check, Windows) and `sample_pixels.py`. |
-| `packaging/` | The build of `Pixheet.exe`: the PyInstaller spec `pixheet.spec`, the entry script, the icon and `make_icon.py`, `build.ps1`, `check_exe.py`, and the runner hook `runner_job_started.ps1`. Read `packaging/README.md`. |
+| `packaging/` | The build of `Pixheet.exe`: the PyInstaller spec `pixheet.spec`, the Tcl and Tk trim `trim_tcltk.py`, the entry script, the icon and `make_icon.py`, `build.ps1`, `check_exe.py`, and the runner hook `runner_job_started.ps1`. Read `packaging/README.md`. |
 | `.github/workflows/` | `ci.yml`: tests and lint on GitHub-hosted Windows. `windows-exe.yml`: the exe build on the self-hosted runner, and the release. |
 
 Modules with a leading underscore are private. Do not import them from outside the
@@ -69,6 +69,9 @@ Run the tests, the lint, and the format check before you report a change as comp
   through a queue. A Tk object that Python collects on the worker thread causes an
   error, so the GUI tests collect garbage on the main thread after each test.
 - The primary development OS is Windows. Keep paths and shell examples portable.
+- `packaging/pixheet.spec` leaves many modules out of `Pixheet.exe`. A new import of
+  such a module can break the exe while the tests pass. After a change to the imports in
+  `src/pixheet`, run `packaging/build.ps1`.
 - `windows-exe.yml` runs on a self-hosted runner, and the repository is public. Never
   add a `pull_request` or `pull_request_target` trigger to it. Pin each action to a
   full commit SHA.
