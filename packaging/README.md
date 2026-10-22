@@ -65,6 +65,17 @@ To make a release, do these steps:
 2. Commit the change, and push it to `master`.
 3. Push a tag: `git tag v0.2.0`, then `git push origin v0.2.0`.
 
+The release job never replaces a file of a published release. Users can have
+downloaded the file already, and a new build gives a different exe, also from the same
+commit. When the job runs again for a tag, for example after a re-run, it fails if the
+release already has `Pixheet.exe` or `Pixheet.exe.sha256`. To replace a file, delete it
+in the release on GitHub, and then run the job again.
+
+You can also protect the releases in the settings of the repository:
+
+- Turn on immutable releases.
+- Add a tag ruleset for `v*` that lets only you make and delete these tags.
+
 The workflows pin each action to a full commit SHA. The comment after the SHA gives the
 version. When you update an action, update the SHA and the comment together. Then run
 these linters:
