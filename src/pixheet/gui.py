@@ -323,6 +323,39 @@ def _load_tkdnd() -> tuple[Any, str]:
     return TkinterDnD, DND_FILES
 
 
+ICON_NAME = "pixheet.ico"
+
+
+def icon_path() -> Path | None:
+    """Return the path of the window icon, or None when the app has no icon file.
+
+    The built app has the icon in its own folder. From a checkout, the icon is in
+    ``packaging/``. An installed package does not include the icon.
+    """
+    if getattr(sys, "frozen", False):
+        folder = Path(getattr(sys, "_MEIPASS", Path(sys.executable).parent))
+    else:
+        folder = Path(__file__).resolve().parents[2] / "packaging"
+    path = folder / ICON_NAME
+    return path if path.is_file() else None
+
+
+def set_icon(root: tk.Tk, platform: str | None = None) -> bool:
+    """Show the Pixheet icon on ``root`` and on all windows that come later.
+
+    Return True when the window has the icon. Only Tk on Windows can read an .ico file.
+    On other systems, and when the icon file is not found, the window keeps the Tk icon.
+    """
+    path = icon_path()
+    if path is None or (platform or sys.platform) != "win32":
+        return False
+    try:
+        root.iconbitmap(default=os.fspath(path))
+    except tk.TclError:
+        return False
+    return True
+
+
 def enable_dnd(root: tk.Tk) -> str | None:
     """Load the tkdnd extension into ``root``. Return the drop type for files.
 
@@ -363,6 +396,7 @@ class App:
         self.ask_files: Callable[..., Sequence[str]] = filedialog.askopenfilenames
 
         self._build()
+        self.has_icon = set_icon(root)
         self.dnd = dnd_type is not None and self._register_drop(dnd_type)
         if not self.dnd:
             self.zone_label.configure(text="Choose images to convert")

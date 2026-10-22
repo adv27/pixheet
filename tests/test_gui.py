@@ -706,6 +706,69 @@ def test_main_starts_the_files_in_argv(monkeypatch):
     assert started == [[Path("a b.png"), Path("c.png")]]
 
 
+# --- The window icon -----------------------------------------------------------------
+
+REPO_ICON = Path(__file__).resolve().parents[1] / "packaging" / gui.ICON_NAME
+
+
+def test_icon_path_from_a_checkout():
+    assert gui.icon_path() == REPO_ICON
+    assert REPO_ICON.is_file()
+
+
+def test_icon_path_of_a_built_app(tmp_path, monkeypatch):
+    monkeypatch.setattr(sys, "frozen", True, raising=False)
+    monkeypatch.setattr(sys, "_MEIPASS", str(tmp_path), raising=False)
+    assert gui.icon_path() is None
+    (tmp_path / gui.ICON_NAME).write_bytes(REPO_ICON.read_bytes())
+    assert gui.icon_path() == tmp_path / gui.ICON_NAME
+
+
+def test_icon_path_of_an_installed_package(tmp_path, monkeypatch):
+    monkeypatch.setattr(gui, "__file__", str(tmp_path / "site-packages" / "pixheet" / "gui.py"))
+    assert gui.icon_path() is None
+
+
+class IconRoot:
+    """A root that records the calls of iconbitmap."""
+
+    def __init__(self):
+        self.calls = []
+
+    def iconbitmap(self, **kwargs):
+        self.calls.append(kwargs)
+
+
+def test_set_icon_sets_the_default_icon_on_windows():
+    root = IconRoot()
+    assert gui.set_icon(root, platform="win32")
+    assert root.calls == [{"default": str(REPO_ICON)}]
+
+
+def test_set_icon_does_nothing_on_other_systems_or_without_the_file(monkeypatch):
+    root = IconRoot()
+    assert not gui.set_icon(root, platform="linux")
+    monkeypatch.setattr(gui, "icon_path", lambda: None)
+    assert not gui.set_icon(root, platform="win32")
+    assert root.calls == []
+
+
+@pytest.mark.skipif(sys.platform != "win32", reason="Tk reads .ico files only on Windows")
+def test_set_icon_on_a_real_window(tmp_path, monkeypatch):
+    root = new_root()
+    try:
+        assert gui.set_icon(root)
+        # The file goes away after the check: Tk raises an error, and the app continues.
+        monkeypatch.setattr(gui, "icon_path", lambda: tmp_path / gui.ICON_NAME)
+        assert not gui.set_icon(root)
+    finally:
+        root.destroy()
+
+
+def test_window_has_the_icon_on_windows(harness):
+    assert harness().app.has_icon == (sys.platform == "win32")
+
+
 def has_tkinterdnd2() -> bool:
     return importlib.util.find_spec("tkinterdnd2") is not None
 
