@@ -5,6 +5,8 @@ __pycache__/
 build/
 dist/
 *.spec
+# The spec of the Windows app is a source file.
+!packaging/*.spec
 *.egg-info/
 
 # Tools

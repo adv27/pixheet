@@ -1,6 +1,7 @@
-"""Tests of the scripts in packaging/."""
+"""Tests of the scripts in packaging/: the icon and the version resource of the exe."""
 
 import importlib.util
+import tomllib
 from pathlib import Path
 
 import pytest
@@ -18,6 +19,7 @@ def load(name: str):
 
 
 make_icon = load("make_icon")
+version_info = load("version_info")
 
 
 def frames(path: Path) -> dict[int, bytes]:
@@ -57,3 +59,46 @@ def test_icon_has_grid_lines_only_from_48_pixels():
 def test_draw_refuses_a_size_that_does_not_fit_the_grid():
     with pytest.raises(ValueError, match="multiple of 8"):
         make_icon.draw(20)
+
+
+@pytest.mark.parametrize(
+    ("version", "numbers"),
+    [
+        ("0.1.0", (0, 1, 0, 0)),
+        ("1", (1, 0, 0, 0)),
+        ("2.3.4.5.6", (2, 3, 4, 5)),
+        ("1.2.0rc1", (1, 2, 0, 0)),
+        ("0.2.0.dev3", (0, 2, 0, 0)),
+        ("1.0+local.7", (1, 0, 0, 0)),
+        ("v1.4", (1, 4, 0, 0)),
+    ],
+)
+def test_numeric_version(version, numbers):
+    assert version_info.numeric_version(version) == numbers
+
+
+@pytest.mark.parametrize("version", ["", "dev", "1.70000"])
+def test_numeric_version_refuses_bad_text(version):
+    with pytest.raises(ValueError, match="version"):
+        version_info.numeric_version(version)
+
+
+def test_metadata_comes_from_pyproject():
+    with (PACKAGING.parent / "pyproject.toml").open("rb") as f:
+        project = tomllib.load(f)["project"]
+    metadata = version_info.read_metadata()
+    strings = metadata.strings("Pixheet.exe")
+    assert metadata.version == project["version"]
+    assert strings["ProductName"] == "Pixheet"
+    assert strings["FileVersion"] == strings["ProductVersion"] == project["version"]
+    assert strings["CompanyName"] == "Dinh-Anh Vu"
+    assert strings["LegalCopyright"].startswith("Copyright (c) ")
+    assert strings["LegalCopyright"].endswith("Dinh-Anh Vu")
+    assert "License: MIT." in strings["Comments"]
+    assert strings["OriginalFilename"] == "Pixheet.exe"
+
+
+def test_spec_is_not_ignored_by_git():
+    gitignore = (PACKAGING.parent / ".gitignore").read_text(encoding="utf-8").splitlines()
+    assert "!packaging/*.spec" in gitignore
+    assert gitignore.index("!packaging/*.spec") > gitignore.index("*.spec")
