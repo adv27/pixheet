@@ -6,9 +6,10 @@ Build the Pixheet desktop app for Windows and test the result.
 The script does these steps:
   1. Install the locked dependencies with uv: the gui extra and the build group.
   2. Build dist\Pixheet.exe with PyInstaller from packaging\pixheet.spec.
-  3. Test the exe with packaging\check_exe.py. The exe must pass the smoke test (--smoke)
-     and convert a test image correctly. check_exe.py stops the exe and all processes
-     that it started if the exe does not stop in time.
+  3. Test the exe with packaging\check_exe.py. The exe must pass the smoke test (--smoke),
+     convert a test image correctly, and convert images of many formats to the same
+     sheets as pixheet in Python. check_exe.py stops the exe and all processes that it
+     started if the exe does not stop in time.
   4. Write dist\Pixheet.exe.sha256.
 The script stops with exit code 1 when a step fails. It runs on Windows PowerShell 5.1.
 

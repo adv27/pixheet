@@ -21,6 +21,7 @@
 #
 # If new code in pixheet or in the GUI imports a module in EXCLUDES, the tests pass, but
 # the exe stops with ModuleNotFoundError. After such a change, run packaging/build.ps1.
+# Its check_exe.py step converts many image formats with the exe.
 
 import argparse
 import fnmatch

@@ -1,5 +1,5 @@
 """Tests of the scripts in packaging/: the icon, the version resource, the spec, the Tcl and
-Tk trim, and the runner hook."""
+Tk trim, the exe check, and the runner hook."""
 
 import ast
 import importlib.util
@@ -16,6 +16,8 @@ from pathlib import Path
 
 import pytest
 from PIL import Image
+
+import pixheet
 
 PACKAGING = Path(__file__).resolve().parents[1] / "packaging"
 SPEC = PACKAGING / "pixheet.spec"
@@ -567,3 +569,50 @@ def test_trim_binaries_stops_for_an_other_number_of_dlls(tmp_path, names):
     binaries = [(name, str(tmp_path / "dll"), "BINARY") for name in names]
     with pytest.raises(SystemExit, match="expected the DLLs"):
         trim_tcltk.trim_binaries(binaries, tmp_path / "trim")
+
+
+# The format check of the exe
+
+
+def test_format_images_have_the_formats_and_modes_of_the_check(tmp_path):
+    expected, problems = check_exe.make_format_images(tmp_path / check_exe.FORMATS_FOLDER)
+    assert problems == []
+    assert len(expected) == len(check_exe.format_cases()) == 11
+    assert len({path.stem for path in expected}) == len(expected)
+    found = {}
+    for path in expected:
+        with Image.open(path) as image:
+            found[path.name] = (image.format, image.mode)
+            if path.name == "exif rotated jpg.jpg":
+                assert image.getexif()[0x0112] == 6
+            if path.name == "cmyk icc jpg.jpg":
+                assert image.info["icc_profile"]
+    assert found == {
+        "rgba png.png": ("PNG", "RGBA"),
+        "palette transparent png.png": ("PNG", "P"),
+        "i16 png.png": ("PNG", "I;16"),
+        "cmyk icc jpg.jpg": ("JPEG", "CMYK"),
+        "exif rotated jpg.jpg": ("JPEG", "RGB"),
+        "rgba webp.webp": ("WEBP", "RGBA"),
+        "rgba avif.avif": ("AVIF", "RGBA"),
+        "palette gif.gif": ("GIF", "P"),
+        "lzw tif.tif": ("TIFF", "RGB"),
+        "lab tif.tif": ("TIFF", "LAB"),
+        "rgb bmp.bmp": ("BMP", "RGB"),
+    }
+
+
+def test_output_problems_finds_a_missing_or_different_sheet(tmp_path):
+    expected, problems = check_exe.make_format_images(tmp_path)
+    assert problems == []
+    for path in expected:
+        pixheet.convert(path, path.with_suffix(".xlsx"))
+    assert check_exe.output_problems(expected) == []
+
+    paths = list(expected)
+    paths[0].with_suffix(".xlsx").unlink()
+    pixheet.convert(paths[2], paths[1].with_suffix(".xlsx"))
+    assert check_exe.output_problems(expected) == [
+        f"The exe did not write {paths[0].stem}.xlsx.",
+        f"The exe wrote a different xl/worksheets/sheet1.xml, xl/styles.xml for {paths[1].name}.",
+    ]
