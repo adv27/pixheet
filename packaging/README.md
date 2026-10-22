@@ -13,7 +13,7 @@ for maintainers.
 | `pixheet.ico` | The icon of the exe and of the window, in 7 sizes from 16 to 256 pixels. |
 | `make_icon.py` | Draws `pixheet.ico` with Pillow. |
 | `build.ps1` | Builds the exe and tests it. |
-| `check_exe.py` | Makes sure that a built exe converts a test image correctly. |
+| `check_exe.py` | Makes sure that a built exe starts and converts a test image correctly. |
 | `runner_job_started.ps1` | The job-started hook of the self-hosted runner. It refuses each job that is not a trusted build. |
 
 ## Build on your computer
@@ -28,9 +28,10 @@ The script does these steps:
 
 1. It installs the locked dependencies with the `gui` extra and the `build` group.
 2. It builds `dist\Pixheet.exe` from `pixheet.spec`.
-3. It starts `Pixheet.exe --smoke`. The exit code must be 0.
-4. It runs `check_exe.py`, which converts a test image with the exe.
-5. It writes `dist\Pixheet.exe.sha256`.
+3. It runs `check_exe.py`. The exe must pass the smoke test, and it must convert a test
+   image correctly. If the exe does not stop in 120 seconds, `check_exe.py` stops it and
+   all processes that it started.
+4. It writes `dist\Pixheet.exe.sha256`.
 
 Add `-OneDir` to build the folder `dist\Pixheet\` in place of one file. To run
 PyInstaller without the script, use these commands:

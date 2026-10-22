@@ -4,6 +4,8 @@ import importlib.util
 import os
 import shutil
 import subprocess
+import sys
+import time
 import tomllib
 from pathlib import Path
 
@@ -23,6 +25,7 @@ def load(name: str):
 
 make_icon = load("make_icon")
 version_info = load("version_info")
+check_exe = load("check_exe")
 
 
 def frames(path: Path) -> dict[int, bytes]:
@@ -181,3 +184,39 @@ def test_runner_hook_refuses_an_untrusted_job(repository, event, ref):
     result = run_hook(**{k: v for k, v in variables.items() if v})
     assert result.returncode == 1, result.stdout
     assert "refuse the job" in result.stdout
+
+
+def test_run_exe_returns_the_exit_code_and_the_output():
+    code, output = check_exe.run_exe([sys.executable, "-c", "print('converted')"], timeout=60)
+    assert code == 0
+    assert "converted" in output
+
+
+# A one-file exe that shows an error dialog: a parent process that waits for a child
+# process that does not stop. The child keeps the output pipe open.
+HUNG_EXE = """
+import subprocess, sys, time
+subprocess.Popen(
+    [sys.executable, "-c", "import time; time.sleep(120)"], stdout=sys.stdout, stderr=sys.stderr
+)
+print("started", flush=True)
+time.sleep(120)
+"""
+
+
+def test_run_exe_stops_the_whole_process_tree_after_the_timeout():
+    start = time.monotonic()
+    code, output = check_exe.run_exe([sys.executable, "-c", HUNG_EXE], timeout=5)
+    seconds = time.monotonic() - start
+    assert code is None
+    assert "started" in output
+    # If the child still ran, its open pipe would block run_exe for KILL_WAIT more seconds.
+    assert seconds < 5 + check_exe.KILL_WAIT / 2
+
+
+def test_result_problems():
+    assert check_exe.result_problems(0, 120) == []
+    assert check_exe.result_problems(1, 120) == ["The exe stopped with exit code 1."]
+    assert check_exe.result_problems(None, 120) == [
+        "The exe did not stop in 120 s. The script stopped it."
+    ]

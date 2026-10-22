@@ -1,14 +1,18 @@
-"""Test a built Pixheet.exe: it must convert an image, and each cell must have its color.
+"""Test a built Pixheet.exe: it must start, convert an image, and give each cell its color.
 
-The script makes a test image in a temporary folder and runs the exe with ``--smoke``
-and the image path. The exe converts the image and closes. Then the script reads the
-.xlsx file with openpyxl, compares each cell with its pixel, and deletes the folder.
+First the script runs the exe with ``--smoke``. The exit code must be 0. Then the script
+makes a test image in a temporary folder and runs the exe with ``--smoke`` and the image
+path. The exe converts the image and closes. Then the script reads the .xlsx file with
+openpyxl, compares each cell with its pixel, and deletes the folder. If the exe does not
+stop in time, the script stops the exe and all processes that the exe started.
 Run it from the repository root:
 
     uv run python packaging/check_exe.py dist/Pixheet.exe
 """
 
 import argparse
+import os
+import signal
 import subprocess
 import sys
 import tempfile
@@ -21,6 +25,8 @@ from PIL import Image
 WIDTH, HEIGHT = 48, 32
 TIMEOUT = 120
 """The maximum time for the exe, in seconds. The first start of a one-file exe is slow."""
+KILL_WAIT = 10
+"""The maximum time to wait for the output after the script stops the exe, in seconds."""
 
 
 def make_image(path: Path) -> Image.Image:
@@ -35,18 +41,72 @@ def make_image(path: Path) -> Image.Image:
     return Image.alpha_composite(background, image).convert("RGB")
 
 
-def check(exe: Path) -> list[str]:
-    """Run ``exe`` on a test image. Return the problems, or an empty list."""
+def kill_tree(process: subprocess.Popen[bytes]) -> None:
+    """Stop ``process`` and all processes that it started.
+
+    A one-file exe is two processes: the bootloader and the app. When the app shows an
+    error dialog, it does not stop. If the script stops only the bootloader, the app
+    keeps the exe locked and keeps the output pipe open.
+    """
+    if sys.platform == "win32":
+        subprocess.run(
+            ["taskkill", "/PID", str(process.pid), "/T", "/F"], capture_output=True, check=False
+        )
+    else:
+        os.killpg(process.pid, signal.SIGKILL)
+    process.kill()
+
+
+def run_exe(command: list[str], timeout: float = TIMEOUT) -> tuple[int | None, str]:
+    """Run ``command``, and return its exit code and its output (stdout and stderr).
+
+    If the command does not stop in ``timeout`` seconds, stop it and all processes that it
+    started. Then the exit code is None.
+    """
+    # On POSIX, a new session lets kill_tree stop the child processes too.
+    new_session = sys.platform != "win32"
+    process = subprocess.Popen(
+        command, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, start_new_session=new_session
+    )
+    try:
+        # communicate() closes the pipe and waits for the process.
+        output, _ = process.communicate(timeout=timeout)
+    except subprocess.TimeoutExpired:
+        kill_tree(process)
+        try:
+            output, _ = process.communicate(timeout=KILL_WAIT)
+        except subprocess.TimeoutExpired:
+            # A process that kill_tree did not stop keeps the pipe open. Do not close the
+            # pipe here, because the close waits until a read in a different thread ends.
+            process.wait()
+            output = b""
+        return None, output.decode("utf-8", errors="replace")
+    return process.returncode, output.decode("utf-8", errors="replace")
+
+
+def result_problems(code: int | None, timeout: float) -> list[str]:
+    """Return the problems of a run of the exe with the exit code ``code``."""
+    if code is None:
+        return [f"The exe did not stop in {timeout:g} s. The script stopped it."]
+    if code != 0:
+        return [f"The exe stopped with exit code {code}."]
+    return []
+
+
+def check(exe: Path, timeout: float = TIMEOUT) -> list[str]:
+    """Run ``exe``, then run it on a test image. Return the problems, or an empty list."""
+    code, _output = run_exe([str(exe), "--smoke"], timeout)
+    if problems := result_problems(code, timeout):
+        return problems
+    print("The exe passed the smoke test.")
     with tempfile.TemporaryDirectory(prefix="pixheet-check-") as folder:
         src = Path(folder) / "test image.png"
         expected = make_image(src)
         start = time.monotonic()
-        result = subprocess.run(
-            [str(exe), "--smoke", str(src)], timeout=TIMEOUT, capture_output=True, check=False
-        )
+        code, _output = run_exe([str(exe), "--smoke", str(src)], timeout)
         seconds = time.monotonic() - start
-        if result.returncode != 0:
-            return [f"The exe stopped with exit code {result.returncode}."]
+        if problems := result_problems(code, timeout):
+            return problems
         out = src.with_suffix(".xlsx")
         if not out.is_file():
             return [f"The exe did not write {out.name}."]
@@ -80,7 +140,7 @@ def main() -> int:
     for problem in problems:
         print(f"check_exe: {problem}", file=sys.stderr)
     if not problems:
-        print(f"check_exe: {args.exe} converts images correctly.")
+        print(f"check_exe: {args.exe} starts and converts images correctly.")
     return 1 if problems else 0
 
 

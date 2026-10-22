@@ -6,9 +6,10 @@ Build the Pixheet desktop app for Windows and test the result.
 The script does these steps:
   1. Install the locked dependencies with uv: the gui extra and the build group.
   2. Build dist\Pixheet.exe with PyInstaller from packaging\pixheet.spec.
-  3. Start the exe with --smoke, and make sure that it stops with exit code 0.
-  4. Make sure that the exe converts a test image correctly (packaging\check_exe.py).
-  5. Write dist\Pixheet.exe.sha256.
+  3. Test the exe with packaging\check_exe.py. The exe must pass the smoke test (--smoke)
+     and convert a test image correctly. check_exe.py stops the exe and all processes
+     that it started if the exe does not stop in time.
+  4. Write dist\Pixheet.exe.sha256.
 The script stops with exit code 1 when a step fails. It runs on Windows PowerShell 5.1.
 
 .PARAMETER OneDir
@@ -61,15 +62,9 @@ if (-not (Test-Path -LiteralPath $exe -PathType Leaf)) {
     exit 1
 }
 
-Write-Host '==> Smoke test'
-# A windowed exe does not block the console. Start-Process -Wait waits for it.
-$process = Start-Process -FilePath $exe -ArgumentList '--smoke' -Wait -PassThru
-if ($process.ExitCode -ne 0) {
-    Write-Host "build.ps1: '$exe --smoke' stopped with exit code $($process.ExitCode)."
-    exit 1
-}
-
-Invoke-Step 'Convert a test image' {
+# A windowed exe that shows an error dialog does not stop. check_exe.py has a time limit,
+# and then it stops the whole process tree. Thus the build cannot hang here.
+Invoke-Step 'Test the exe: smoke test and conversion' {
     uv run --locked --extra gui --group build python packaging\check_exe.py $exe
 }
 
