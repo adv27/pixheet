@@ -534,12 +534,72 @@ def test_trim_stops_for_a_signed_dll(tmp_path):
         trim_tcltk.trim(source, tmp_path / "out.dll")
 
 
-@pytest.mark.parametrize("data", [b"PK\x03\x04" + bytes(200), b"MZ" + bytes(0x200)])
+def test_trim_of_a_trimmed_dll_changes_nothing(tmp_path):
+    source = tmp_path / "tcl90.dll"
+    source.write_bytes(fake_dll())
+    first = tmp_path / "first" / "tcl90.dll"
+    second = tmp_path / "second" / "tcl90.dll"
+    trim_tcltk.trim(source, first)
+    numbers = trim_tcltk.trim(first, second)
+    assert numbers["removed"] == 0
+    assert numbers["before"] == numbers["after"]
+    assert second.read_bytes() == first.read_bytes()
+
+
+def test_trim_gives_the_same_bytes_each_time(tmp_path):
+    source = tmp_path / "tcl90.dll"
+    source.write_bytes(fake_dll())
+    trim_tcltk.trim(source, tmp_path / "a.dll")
+    trim_tcltk.trim(source, tmp_path / "b.dll")
+    assert (tmp_path / "a.dll").read_bytes() == (tmp_path / "b.dll").read_bytes()
+
+
+def test_trim_stops_for_a_damaged_archive(tmp_path):
+    source = tmp_path / "tcl90.dll"
+    source.write_bytes(fake_dll()[:-20])  # This cuts the end of the central directory.
+    with pytest.raises(SystemExit, match=r"^trim_tcltk: the zip archive in .* is damaged"):
+        trim_tcltk.trim(source, tmp_path / "out.dll")
+    assert not (tmp_path / "out.dll").exists()
+
+
+def test_trim_stops_for_a_missing_file(tmp_path):
+    with pytest.raises(SystemExit, match=r"^trim_tcltk: cannot read .*missing\.dll"):
+        trim_tcltk.trim(tmp_path / "missing.dll", tmp_path / "out.dll")
+
+
+@pytest.mark.parametrize(
+    "data",
+    [
+        b"PK\x03\x04" + bytes(200),
+        b"MZ" + bytes(0x200),
+        b"MZ" + bytes(30),  # shorter than the DOS header
+        fake_dll()[: 0x80 + 24 + 20],  # cut in the optional header
+        fake_dll()[: 0x80 + 24 + 240 + 10],  # cut in the section table
+    ],
+)
 def test_trim_stops_for_a_file_that_is_not_a_pe_file(tmp_path, data):
     source = tmp_path / "tcl90.dll"
     source.write_bytes(data)
     with pytest.raises(SystemExit, match="is not a PE file"):
         trim_tcltk.trim(source, tmp_path / "out.dll")
+    assert not (tmp_path / "out.dll").exists()
+
+
+def test_trim_command_refuses_to_change_the_source_dll(tmp_path, monkeypatch):
+    source = tmp_path / "tcl90.dll"
+    source.write_bytes(fake_dll())
+    monkeypatch.chdir(tmp_path)
+    with pytest.raises(SystemExit, match="must not be the source DLL"):
+        trim_tcltk.main(source, Path("tcl90.dll"))
+    assert source.read_bytes() == fake_dll()
+
+
+def test_trim_command_shows_the_numbers(tmp_path, capsys):
+    source = tmp_path / "tcl90.dll"
+    source.write_bytes(fake_dll())
+    trim_tcltk.main(source, tmp_path / "out.dll")
+    assert "'removed': 5" in capsys.readouterr().out
+    assert (tmp_path / "out.dll").exists()
 
 
 def test_trim_binaries_replaces_the_tcl_and_tk_dlls(tmp_path, capsys):

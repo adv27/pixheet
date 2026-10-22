@@ -116,21 +116,25 @@ def pe_layout(data: bytes, name: str) -> tuple[int, int]:
     """
     if data[:2] != b"MZ":
         raise SystemExit(f"trim_tcltk: {name} is not a PE file.")
-    header = struct.unpack_from("<I", data, 0x3C)[0]
-    if data[header : header + 4] != b"PE\0\0":
-        raise SystemExit(f"trim_tcltk: {name} is not a PE file.")
-    sections, optional_size = struct.unpack_from("<H12xH", data, header + 6)
-    optional = header + 24
-    magic = struct.unpack_from("<H", data, optional)[0]
-    directories = optional + (112 if magic == PE32_PLUS else 96)
-    _address, size = struct.unpack_from("<II", data, directories + 8 * SECURITY_DIRECTORY)
-    if size:
-        raise SystemExit(f"trim_tcltk: {name} has a code signature. Do not change it.")
-    table = optional + optional_size
-    end = 0
-    for i in range(sections):
-        raw_size, raw_pointer = struct.unpack_from("<II", data, table + 40 * i + 16)
-        end = max(end, raw_pointer + raw_size)
+    # struct.error tells that the file stops before the end of its headers.
+    try:
+        header = struct.unpack_from("<I", data, 0x3C)[0]
+        if data[header : header + 4] != b"PE\0\0":
+            raise SystemExit(f"trim_tcltk: {name} is not a PE file.")
+        sections, optional_size = struct.unpack_from("<H12xH", data, header + 6)
+        optional = header + 24
+        magic = struct.unpack_from("<H", data, optional)[0]
+        directories = optional + (112 if magic == PE32_PLUS else 96)
+        _address, size = struct.unpack_from("<II", data, directories + 8 * SECURITY_DIRECTORY)
+        if size:
+            raise SystemExit(f"trim_tcltk: {name} has a code signature. Do not change it.")
+        table = optional + optional_size
+        end = 0
+        for i in range(sections):
+            raw_size, raw_pointer = struct.unpack_from("<II", data, table + 40 * i + 16)
+            end = max(end, raw_pointer + raw_size)
+    except struct.error:
+        raise SystemExit(f"trim_tcltk: {name} is not a PE file.") from None
     return end, optional + 64
 
 
@@ -156,18 +160,23 @@ def pe_checksum(data: bytes, offset: int) -> int:
 def trim(source: Path, target: Path) -> dict[str, int]:
     """Write ``source`` to ``target`` with a smaller archive. Return the numbers.
 
-    Stop the build if no zip archive follows the PE image of ``source``.
+    Stop the build if the tool cannot read ``source``. Also stop it if no correct zip
+    archive follows the PE image of ``source``.
     """
-    data = source.read_bytes()
+    try:
+        data = source.read_bytes()
+    except OSError as error:
+        raise SystemExit(f"trim_tcltk: cannot read {source}: {error.strerror or error}.") from None
     end, checksum_offset = pe_layout(data, source.name)
     if data[end : end + 4] != ZIP_MAGIC:
         raise SystemExit(f"trim_tcltk: no zip archive follows the PE image of {source}.")
+    try:
+        old = zipfile.ZipFile(io.BytesIO(data[end:]))
+    except zipfile.BadZipFile as error:
+        raise SystemExit(f"trim_tcltk: the zip archive in {source} is damaged: {error}") from None
     removed = kept = 0
     archive = io.BytesIO()
-    with (
-        zipfile.ZipFile(io.BytesIO(data[end:])) as old,
-        zipfile.ZipFile(archive, "w") as new,
-    ):
+    with old, zipfile.ZipFile(archive, "w") as new:
         gone = {info.filename for info in old.infolist() if dropped(info.filename)}
         for info in old.infolist():
             if info.filename in gone:
@@ -213,7 +222,18 @@ def trim_binaries(binaries: Iterable[tuple[str, str, str]], folder: Path) -> lis
     return result
 
 
+def main(source: Path, target: Path) -> None:
+    """Trim ``source`` into ``target`` from the command line, and show the numbers.
+
+    Refuse a target that is the source. Thus a run by hand cannot change the DLL of a
+    Python installation or of a virtual environment.
+    """
+    if target.resolve() == source.resolve():
+        raise SystemExit("trim_tcltk: the target DLL must not be the source DLL.")
+    print(trim(source, target))
+
+
 if __name__ == "__main__":
     if len(sys.argv) != 3:
         raise SystemExit("usage: python trim_tcltk.py <source DLL> <target DLL>")
-    print(trim(Path(sys.argv[1]), Path(sys.argv[2])))
+    main(Path(sys.argv[1]), Path(sys.argv[2]))
