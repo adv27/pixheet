@@ -1,6 +1,9 @@
-"""Tests of the scripts in packaging/: the icon and the version resource of the exe."""
+"""Tests of the scripts in packaging/: the icon, the version resource, and the runner hook."""
 
 import importlib.util
+import os
+import shutil
+import subprocess
 import tomllib
 from pathlib import Path
 
@@ -102,3 +105,79 @@ def test_spec_is_not_ignored_by_git():
     gitignore = (PACKAGING.parent / ".gitignore").read_text(encoding="utf-8").splitlines()
     assert "!packaging/*.spec" in gitignore
     assert gitignore.index("!packaging/*.spec") > gitignore.index("*.spec")
+
+
+HOOK = PACKAGING / "runner_job_started.ps1"
+FOLDER = "adv27/pixheet/.github/workflows"
+WORKFLOW = f"{FOLDER}/windows-exe.yml"
+
+
+def run_hook(**variables: str) -> subprocess.CompletedProcess[str]:
+    """Run the job-started hook of the runner with these GitHub variables."""
+    env = {k: v for k, v in os.environ.items() if not k.startswith("GITHUB_")}
+    env |= variables
+    return subprocess.run(
+        ["powershell", "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", str(HOOK)],
+        env=env,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        timeout=60,
+        check=False,
+    )
+
+
+needs_powershell = pytest.mark.skipif(
+    shutil.which("powershell") is None, reason="needs Windows PowerShell"
+)
+
+
+@needs_powershell
+@pytest.mark.parametrize(
+    ("event", "ref"),
+    [
+        ("push", f"{WORKFLOW}@refs/heads/master"),
+        ("push", f"{WORKFLOW}@refs/tags/v0.2.0"),
+        ("workflow_dispatch", f"{WORKFLOW}@refs/heads/master"),
+        ("workflow_dispatch", f"{WORKFLOW}@refs/tags/v1.0.0"),
+    ],
+)
+def test_runner_hook_runs_a_trusted_job(event, ref):
+    result = run_hook(
+        GITHUB_REPOSITORY="adv27/pixheet", GITHUB_EVENT_NAME=event, GITHUB_WORKFLOW_REF=ref
+    )
+    assert result.returncode == 0, result.stdout
+    assert "run the job" in result.stdout
+
+
+@needs_powershell
+@pytest.mark.parametrize(
+    ("repository", "event", "ref"),
+    [
+        # A fork PR that adds a pull_request trigger to windows-exe.yml.
+        ("adv27/pixheet", "pull_request", f"{WORKFLOW}@refs/pull/7/merge"),
+        ("adv27/pixheet", "pull_request_target", f"{WORKFLOW}@refs/heads/master"),
+        # A fork PR that changes ci.yml, or adds a workflow, to use the runner labels.
+        ("adv27/pixheet", "pull_request", f"{FOLDER}/ci.yml@refs/pull/7/merge"),
+        ("adv27/pixheet", "push", f"{FOLDER}/ci.yml@refs/heads/master"),
+        ("adv27/pixheet", "push", f"{FOLDER}/evil.yml@refs/heads/master"),
+        # The trusted workflow from a branch that is not master, or from a tag without "v".
+        ("adv27/pixheet", "push", f"{WORKFLOW}@refs/heads/feature"),
+        ("adv27/pixheet", "workflow_dispatch", f"{WORKFLOW}@refs/heads/Master"),
+        ("adv27/pixheet", "push", f"{WORKFLOW}@refs/tags/0.2.0"),
+        ("adv27/pixheet", "schedule", f"{WORKFLOW}@refs/heads/master"),
+        # Another repository, and a job without the variables.
+        ("someone/pixheet", "push", f"{WORKFLOW}@refs/heads/master"),
+        ("", "", ""),
+    ],
+)
+def test_runner_hook_refuses_an_untrusted_job(repository, event, ref):
+    variables = {
+        "GITHUB_REPOSITORY": repository,
+        "GITHUB_EVENT_NAME": event,
+        "GITHUB_WORKFLOW_REF": ref,
+    }
+    result = run_hook(**{k: v for k, v in variables.items() if v})
+    assert result.returncode == 1, result.stdout
+    assert "refuse the job" in result.stdout

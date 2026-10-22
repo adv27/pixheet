@@ -1,6 +1,8 @@
 # Tests and lint on a GitHub-hosted Windows runner.
-# This workflow is safe for pull requests from forks: it runs on a new virtual machine
-# each time, and its token can only read the repository.
+# The job runs on a new virtual machine each time, and its token can only read the
+# repository. A pull request from a fork can change this file. Thus the self-hosted
+# runner is safe only because of its job-started hook, and because a maintainer reads
+# each change under .github/ before approving a fork run. Read packaging/README.md.
 name: CI
 
 on:

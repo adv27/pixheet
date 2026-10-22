@@ -5,6 +5,10 @@
 # pull_request_target trigger. Do not add them. Only a push to master, a push of a v*
 # tag, and a manual start run it.
 #
+# A pull request from a fork can change this file. Thus the runner itself must refuse
+# untrusted jobs: its job-started hook, packaging/runner_job_started.ps1, runs only this
+# workflow from master or from a v* tag. If you rename this file, change the hook too.
+#
 # A push of a tag "v<version>" also publishes the exe in a GitHub release. A
 # GitHub-hosted runner does that step, so the token that can write never goes to the
 # self-hosted runner.

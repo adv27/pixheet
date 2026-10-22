@@ -22,7 +22,7 @@ Read [README.md](README.md) for usage, the Python API, and the Excel limits.
 | `tests/` | Pytest suite. `tests/images.py` generates all test images. No real photos. |
 | `bench/bench.py` | Benchmark on local sample photos. |
 | `scripts/` | `excel_check.ps1` (Excel COM check, Windows) and `sample_pixels.py`. |
-| `packaging/` | The build of `Pixheet.exe`: the PyInstaller spec `pixheet.spec`, the entry script, the icon and `make_icon.py`, `build.ps1`, and `check_exe.py`. Read `packaging/README.md`. |
+| `packaging/` | The build of `Pixheet.exe`: the PyInstaller spec `pixheet.spec`, the entry script, the icon and `make_icon.py`, `build.ps1`, `check_exe.py`, and the runner hook `runner_job_started.ps1`. Read `packaging/README.md`. |
 | `.github/workflows/` | `ci.yml`: tests and lint on GitHub-hosted Windows. `windows-exe.yml`: the exe build on the self-hosted runner, and the release. |
 
 Modules with a leading underscore are private. Do not import them from outside the
@@ -71,6 +71,9 @@ Run the tests, the lint, and the format check before you report a change as comp
 - `windows-exe.yml` runs on a self-hosted runner, and the repository is public. Never
   add a `pull_request` or `pull_request_target` trigger to it. Pin each action to a
   full commit SHA.
+- The job-started hook `packaging/runner_job_started.ps1` lets the runner run only
+  `windows-exe.yml` from `master` or from a `v*` tag. If you rename the workflow or the
+  default branch, change the hook and its tests.
 
 ## Commits
 
