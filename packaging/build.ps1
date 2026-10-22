@@ -41,9 +41,20 @@ function Invoke-Step {
     }
 }
 
+# uv.lock pins the exact versions of PyInstaller, pyinstaller-hooks-contrib and
+# setuptools. The tests of the excludes and of the Tcl and Tk trim in the spec used these
+# versions. After an update of the lock, the spec guards and check_exe.py find most
+# problems. Also test the app by hand.
 Invoke-Step 'Install the dependencies' {
     uv sync --locked --extra gui --group build
 }
+
+# With --clean, PyInstaller deletes its cache folder. By default, all PyInstaller builds
+# of the user share that folder, %LOCALAPPDATA%\pyinstaller. A build with UPX keeps
+# processed DLLs there, and a build at the same time can delete them. Thus this build
+# uses its own folder in the git-ignored build folder. This spec does not use UPX or
+# strip, so PyInstaller keeps no files in it.
+$env:PYINSTALLER_CONFIG_DIR = Join-Path $root 'build\pyinstaller-config'
 
 $specArgs = @()
 if ($OneDir) {
