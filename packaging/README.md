@@ -94,14 +94,25 @@ of the job. Thus no file from an earlier job goes into a release.
 
 1. Make a local Windows account only for the runner. Do not use your own account or an
    administrator account. This page calls it the "runner account".
-2. On GitHub, open **Settings > Actions > Runners**, and click **New self-hosted runner**.
-3. Select **Windows** and **x64**.
-4. Run the download and configure commands that GitHub shows, in PowerShell.
-5. When `config.cmd` asks for labels, keep the default labels `self-hosted`, `Windows`,
+2. Let PowerShell run local scripts. Open PowerShell as an administrator, and run this
+   command:
+
+   ```console
+   > Set-ExecutionPolicy -ExecutionPolicy RemoteSigned -Scope LocalMachine
+   ```
+
+   Windows 10 and Windows 11 refuse all scripts by default. The runner runs each
+   `shell: powershell` step and the job-started hook as a script, so without this
+   command each job fails. As an alternative, run the command with `-Scope CurrentUser`
+   as the runner account.
+3. On GitHub, open **Settings > Actions > Runners**, and click **New self-hosted runner**.
+4. Select **Windows** and **x64**.
+5. Run the download and configure commands that GitHub shows, in PowerShell.
+6. When `config.cmd` asks for labels, keep the default labels `self-hosted`, `Windows`,
    and `X64`. The workflow needs these labels.
-6. When `config.cmd` asks to run the runner as a service, type `Y`. Give the runner
+7. When `config.cmd` asks to run the runner as a service, type `Y`. Give the runner
    account for the service.
-7. Install the job-started hook. Do this before the runner takes its first job.
+8. Install the job-started hook. Do this before the runner takes its first job.
 
 The smoke test opens a window. A service runs in session 0, which has no desktop that
 you can see. Tk can usually open a window there. If the step "Build and test the exe"
