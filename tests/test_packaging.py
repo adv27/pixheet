@@ -344,15 +344,60 @@ def test_spec_trims_tcl_and_tk_only_on_windows():
 
 
 def imports(path: Path) -> set[str]:
-    """Return the names of the absolute imports in the Python file ``path``."""
+    """Return the names of the imports in the Python file ``path``.
+
+    A relative import, for example ``from . import cli``, gives a name in the package
+    ``pixheet``, for example ``pixheet.cli``. The files in src/pixheet are all at the top
+    of the package.
+    """
     names = set()
     for node in ast.walk(ast.parse(path.read_text(encoding="utf-8"))):
         if isinstance(node, ast.Import):
             names |= {alias.name for alias in node.names}
-        elif isinstance(node, ast.ImportFrom) and node.level == 0 and node.module:
-            names.add(node.module)
-            names |= {f"{node.module}.{alias.name}" for alias in node.names}
+        elif isinstance(node, ast.ImportFrom):
+            if node.level == 0:
+                module = node.module
+            else:
+                module = ".".join(filter(None, ["pixheet", node.module]))
+            if module:
+                names.add(module)
+                names |= {f"{module}.{alias.name}" for alias in node.names}
     return names
+
+
+def test_imports_finds_absolute_and_relative_imports(tmp_path):
+    path = tmp_path / "x.py"
+    path.write_text(
+        "import os.path\nfrom zipfile import ZipFile\n"
+        "from . import cli\nfrom .core import convert\n",
+        encoding="utf-8",
+    )
+    assert imports(path) == {
+        "os.path",
+        "zipfile",
+        "zipfile.ZipFile",
+        "pixheet",
+        "pixheet.cli",
+        "pixheet.core",
+        "pixheet.core.convert",
+    }
+
+
+def test_only_the_main_module_imports_the_cli():
+    """The CLI imports argparse, and the exe does not have argparse.
+
+    Thus a module that the GUI can load must not import pixheet.cli.
+    """
+    files = [p for p in sorted(SOURCE.glob("*.py")) if p.name not in ("cli.py", "__main__.py")]
+    files.append(PACKAGING / "pixheet_gui.py")
+    found = {
+        f"{path.name}: {name}"
+        for path in files
+        for name in imports(path)
+        if excluded(name, ["pixheet.cli"])
+    }
+    assert found == set()
+    assert "pixheet.cli" in imports(SOURCE / "__main__.py")
 
 
 def test_app_code_does_not_import_an_excluded_module():
