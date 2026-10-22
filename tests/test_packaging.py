@@ -343,6 +343,19 @@ def test_spec_trims_tcl_and_tk_only_on_windows():
     assert text.index("trim_binaries(a.binaries") < text.index("pyz = PYZ(a.pure)")
 
 
+def test_build_script_makes_a_reproducible_build():
+    """PYTHONHASHSEED and SOURCE_DATE_EPOCH are set for PyInstaller, but not for the check."""
+    text = (PACKAGING / "build.ps1").read_text(encoding="utf-8")
+    build = text.index("pyinstaller --noconfirm --clean")
+    seed = text.index("$env:PYTHONHASHSEED = '0'")
+    epoch = text.index('$env:SOURCE_DATE_EPOCH = "$epoch"')
+    restore = text.index("$env:PYTHONHASHSEED = $oldHashSeed")
+    check = text.index(r"python packaging\check_exe.py")
+    assert seed < build < restore < check
+    assert epoch < build < text.index("$env:SOURCE_DATE_EPOCH = $oldEpoch") < check
+    assert "git -C $root log -1 --format=%ct" in text
+
+
 def imports(path: Path) -> set[str]:
     """Return the names of the imports in the Python file ``path``.
 

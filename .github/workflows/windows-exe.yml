@@ -140,8 +140,9 @@ jobs:
           path: dist
 
       # The job never replaces a file of a published release, because users can have
-      # downloaded it already. A new build gives a different exe, also from the same
-      # commit. To replace a file, delete it in the release by hand, then run again.
+      # downloaded it already. A new build of the same commit can also give a different
+      # exe, for example with a newer patch release of Python. To replace a file, delete
+      # it in the release by hand, then run again.
       - name: Create the release, or add the files to it
         working-directory: dist
         env:

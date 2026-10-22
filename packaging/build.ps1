@@ -5,7 +5,8 @@ Build the Pixheet desktop app for Windows and test the result.
 .DESCRIPTION
 The script does these steps:
   1. Install the locked dependencies with uv: the gui extra and the build group.
-  2. Build dist\Pixheet.exe with PyInstaller from packaging\pixheet.spec.
+  2. Build dist\Pixheet.exe with PyInstaller from packaging\pixheet.spec. Two builds of
+     one commit with the same tools give the same exe.
   3. Test the exe with packaging\check_exe.py. The exe must pass the smoke test (--smoke),
      convert a test image correctly, and convert images of many formats to the same
      sheets as pixheet in Python. check_exe.py stops the exe and all processes that it
@@ -60,8 +61,34 @@ $specArgs = @()
 if ($OneDir) {
     $specArgs = @('--', '--onedir')
 }
-Invoke-Step 'Build the exe' {
-    uv run --locked --extra gui --group build pyinstaller --noconfirm --clean packaging\pixheet.spec @specArgs
+# Make the build reproducible. Two builds of one commit with the same tools then give the
+# same exe, byte for byte. PYTHONHASHSEED=0 keeps the files in base_library.zip in the same
+# order. PyInstaller writes SOURCE_DATE_EPOCH as the time stamp in the PE header of the exe.
+# The script uses the time of the commit, or a value that the user sets.
+$epoch = $env:SOURCE_DATE_EPOCH
+if (-not $epoch) {
+    try {
+        $epoch = & git -C $root log -1 --format=%ct 2>$null
+    } catch {
+        $epoch = $null
+    }
+}
+if ("$epoch" -notmatch '^\d+$') {
+    # There is no git or no commit. Use 1980-01-01, the first date that a zip file can keep.
+    $epoch = '315532800'
+}
+$oldHashSeed = $env:PYTHONHASHSEED
+$oldEpoch = $env:SOURCE_DATE_EPOCH
+$env:PYTHONHASHSEED = '0'
+$env:SOURCE_DATE_EPOCH = "$epoch"
+try {
+    Invoke-Step 'Build the exe' {
+        uv run --locked --extra gui --group build pyinstaller --noconfirm --clean packaging\pixheet.spec @specArgs
+    }
+} finally {
+    # The exe check and the exe run without these values.
+    $env:PYTHONHASHSEED = $oldHashSeed
+    $env:SOURCE_DATE_EPOCH = $oldEpoch
 }
 
 if ($OneDir) {

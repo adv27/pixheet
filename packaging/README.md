@@ -40,6 +40,16 @@ The script sets `PYINSTALLER_CONFIG_DIR` to `build\pyinstaller-config`. With `--
 PyInstaller deletes its cache folder, so the build does not touch the cache folder that
 other PyInstaller builds share.
 
+The build is reproducible. Two builds of one commit with the same versions of Python, uv
+and the locked packages give the same exe, byte for byte. Thus they also give the same
+SHA256. For the PyInstaller step only, the script sets these two variables:
+
+- `PYTHONHASHSEED=0`. Without it, the order of the files in `base_library.zip` changes
+  from build to build. Then the size of the exe changes by about 1 KB.
+- `SOURCE_DATE_EPOCH`. PyInstaller writes it as the time stamp in the PE header of the
+  exe. The script uses the time of the last commit. When you set `SOURCE_DATE_EPOCH`
+  before you start the script, the script uses your value.
+
 Add `-OneDir` to build the folder `dist\Pixheet\` in place of one file. To run
 PyInstaller without the script, use these commands:
 
@@ -117,9 +127,10 @@ To make a release, do these steps:
 2. Commit the change, and push it to `master`.
 3. Push a tag: `git tag v0.2.0`, then `git push origin v0.2.0`.
 
-The release job never replaces a file of a published release. Users can have
-downloaded the file already, and a new build gives a different exe, also from the same
-commit. When the job runs again for a tag, for example after a re-run, it fails if the
+The release job never replaces a file of a published release, because users can have
+downloaded the file already. A new build of the same commit can also give a different
+exe. For example, each job installs the newest patch release of Python 3.15. When the
+job runs again for a tag, for example after a re-run, it fails if the
 release already has `Pixheet.exe` or `Pixheet.exe.sha256`. To replace a file, delete it
 in the release on GitHub, and then run the job again.
 
