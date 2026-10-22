@@ -15,7 +15,9 @@
 #   1. EXCLUDES removes standard library modules that the app never imports at run time.
 #   2. EXCLUDES also removes Pillow modules that pixheet never uses.
 #   3. optimize=2 removes the docstrings and the assert statements from the bytecode.
-# The spec does not use UPX or strip. See the comments at each change.
+#   4. trim_tcltk.py removes files that the app does not use from the Tcl and Tk DLLs.
+# The spec does not use UPX or strip. See the comments at each change. Together, the
+# changes make the one-file exe about 13.7 MB, from 19.6 MB.
 #
 # If new code in pixheet or in the GUI imports a module in EXCLUDES, the tests pass, but
 # the exe stops with ModuleNotFoundError. After such a change, run packaging/build.ps1.
@@ -41,6 +43,7 @@ options = parser.parse_args()
 
 HERE = Path(SPECPATH)
 sys.path.insert(0, str(HERE))
+from trim_tcltk import trim_binaries  # noqa: E402
 from version_info import read_metadata  # noqa: E402
 
 NAME = "Pixheet"
@@ -232,6 +235,13 @@ missing = [m for m in REQUIRED_MODULES if m.lower() not in modules]
 missing += [p for p in REQUIRED_FILES if not any(fnmatch.fnmatchcase(f, p) for f in files)]
 if missing:
     raise SystemExit(f"These modules or files are not in the bundle: {missing}")
+
+# Tcl 9 and Tk 9 keep their script library in a zip archive after the PE image of
+# tcl90.dll and tcl9tk90.dll. trim_tcltk.py writes a copy of each DLL with a smaller
+# archive: the exe gets about 1.08 MB smaller. The tool stops the build if a DLL has a
+# different layout. Read trim_tcltk.py for the list of the removed files.
+if sys.platform == "win32":
+    a.binaries = trim_binaries(a.binaries, Path(workpath) / "tcltk-trim")
 
 pyz = PYZ(a.pure)
 

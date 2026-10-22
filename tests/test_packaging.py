@@ -1,14 +1,17 @@
-"""Tests of the scripts in packaging/: the icon, the version resource, the spec, and the runner
-hook."""
+"""Tests of the scripts in packaging/: the icon, the version resource, the spec, the Tcl and
+Tk trim, and the runner hook."""
 
 import ast
 import importlib.util
+import io
 import os
 import shutil
+import struct
 import subprocess
 import sys
 import time
 import tomllib
+import zipfile
 from pathlib import Path
 
 import pytest
@@ -30,6 +33,7 @@ def load(name: str):
 make_icon = load("make_icon")
 version_info = load("version_info")
 check_exe = load("check_exe")
+trim_tcltk = load("trim_tcltk")
 
 
 def frames(path: Path) -> dict[int, bytes]:
@@ -331,6 +335,12 @@ def test_spec_optimizes_the_bytecode_and_does_not_use_upx_or_strip():
     assert len(strip) == 2
 
 
+def test_spec_trims_tcl_and_tk_only_on_windows():
+    text = SPEC.read_text(encoding="utf-8")
+    assert 'if sys.platform == "win32":\n    a.binaries = trim_binaries(a.binaries, ' in text
+    assert text.index("trim_binaries(a.binaries") < text.index("pyz = PYZ(a.pure)")
+
+
 def imports(path: Path) -> set[str]:
     """Return the names of the absolute imports in the Python file ``path``."""
     names = set()
@@ -355,3 +365,205 @@ def test_app_code_does_not_import_an_excluded_module():
         if excluded(name, excludes)
     }
     assert found == set()
+
+
+# The Tcl and Tk trim
+
+
+@pytest.mark.parametrize(
+    ("name", "dropped"),
+    [
+        ("tcl_library/tzdata/Europe/Paris", True),
+        ("tcl_library/msgs/de.msg", True),
+        ("tcl_library/http/http.tcl", True),
+        ("tcl_library/tcltest/tcltest.tcl", True),
+        ("tcl_library/opt/optparse.tcl", True),
+        ("tcl_library/encoding/cp932.enc", True),
+        ("tcl_library/encoding/cp1252.enc", False),
+        ("tcl_library/encoding/cp1258.enc", False),
+        ("tcl_library/init.tcl", False),
+        ("tcl_library/clock.tcl", False),
+        ("tcl_library/msgcat/msgcat.tcl", False),
+        ("tk_library/images/logo.gif", True),
+        ("tk_library/msgs/de.msg", True),
+        ("tk_library/msgs/en.msg", False),
+        ("tk_library/console.tcl", True),
+        ("tk_library/tkfbox.tcl", True),
+        ("tk_library/tk.tcl", False),
+        ("tk_library/button.tcl", False),
+        ("tk_library/ttk/vistaTheme.tcl", False),
+        ("tk_library/ttk/aquaTheme.tcl", True),
+    ],
+)
+def test_trim_drops_only_unused_files(name, dropped):
+    assert trim_tcltk.dropped(name) is dropped
+
+
+TCL_PKG_INDEX = """\
+    0 http            2.10.2 {http http.tcl}
+    1 opt             0.4.10 {opt optparse.tcl}
+    0 msgcat          1.7.1  {msgcat msgcat.tcl}
+"""
+TK_INDEX = """\
+set auto_index(::tk::ConsoleInit) [list source [file join $dir console.tcl]]
+set auto_index(::tk::ButtonEnter) [list source [file join $dir button.tcl]]
+"""
+ARCHIVE = {
+    "tcl_library/init.tcl": "# init\n",
+    "tcl_library/pkgIndex.tcl": TCL_PKG_INDEX,
+    "tcl_library/http/http.tcl": "# http\n",
+    "tcl_library/opt/optparse.tcl": "# opt\n",
+    "tcl_library/msgcat/msgcat.tcl": "# msgcat\n",
+    "tcl_library/tzdata/Europe/Paris": "# zone\n",
+    "tcl_library/encoding/cp1252.enc": "# cp1252\n",
+    "tcl_library/encoding/cp932.enc": "# cp932\n" * 100,
+    "tk_library/tclIndex": TK_INDEX,
+    "tk_library/console.tcl": "# console\n",
+    "tk_library/button.tcl": "# button\n",
+}
+IMAGE_END = 0x400
+CHECKSUM_OFFSET = 0x80 + 24 + 64
+
+
+def fake_dll(archive: dict[str, str] | None = ARCHIVE, signed: bool = False) -> bytes:
+    """Return a small PE32+ file with one section, followed by a zip archive.
+
+    The layout is the layout of tcl90.dll: the headers, the section data up to
+    IMAGE_END, and then the archive.
+    """
+    data = bytearray(IMAGE_END)
+    data[:2] = b"MZ"
+    header = 0x80
+    struct.pack_into("<I", data, 0x3C, header)
+    data[header : header + 4] = b"PE\0\0"
+    struct.pack_into("<HH", data, header + 4, 0x8664, 1)  # the machine, 1 section
+    struct.pack_into("<H", data, header + 20, 240)  # the size of the optional header
+    optional = header + 24
+    struct.pack_into("<H", data, optional, 0x20B)  # PE32+
+    struct.pack_into("<I", data, CHECKSUM_OFFSET, 0x12345678)  # an incorrect checksum
+    struct.pack_into("<I", data, optional + 108, 16)  # the number of data directories
+    if signed:
+        struct.pack_into("<II", data, optional + 112 + 8 * 4, 0x2000, 0x100)
+    table = optional + 240
+    struct.pack_into("<8sIIII", data, table, b".text", 0x200, 0x1000, 0x200, 0x200)
+    data[0x200:IMAGE_END] = bytes(range(256)) * 2
+    if archive is not None:
+        buffer = io.BytesIO()
+        with zipfile.ZipFile(buffer, "w", zipfile.ZIP_DEFLATED) as z:
+            for name, text in archive.items():
+                z.writestr(name, text)
+        data += buffer.getvalue()
+    return bytes(data)
+
+
+def reference_checksum(data: bytes, offset: int) -> int:
+    """The PE checksum, word by word, as the Windows function CheckSumMappedFile does it."""
+    total = 0
+    for i in range(0, len(data), 2):
+        if offset <= i < offset + 4:
+            continue
+        total += int.from_bytes(data[i : i + 2].ljust(2, b"\0"), "little")
+        total = (total & 0xFFFF) + (total >> 16)
+    return total + len(data)
+
+
+def test_pe_layout_finds_the_end_of_the_image_and_the_checksum():
+    assert trim_tcltk.pe_layout(fake_dll(), "x.dll") == (IMAGE_END, CHECKSUM_OFFSET)
+
+
+@pytest.mark.parametrize("extra", [b"", b"\x01", b"\xff" * 333])
+def test_pe_checksum_agrees_with_the_reference(extra):
+    data = fake_dll() + extra
+    assert trim_tcltk.pe_checksum(data, CHECKSUM_OFFSET) == reference_checksum(
+        data, CHECKSUM_OFFSET
+    )
+
+
+def test_pe_checksum_agrees_with_pefile():
+    pefile = pytest.importorskip("pefile")
+    data = fake_dll()
+    expected = pefile.PE(data=data, fast_load=True).generate_checksum()
+    assert trim_tcltk.pe_checksum(data, CHECKSUM_OFFSET) == expected
+
+
+def test_trim_keeps_the_image_and_removes_the_unused_files(tmp_path):
+    source = tmp_path / "tcl90.dll"
+    source.write_bytes(fake_dll())
+    numbers = trim_tcltk.trim(source, tmp_path / "out" / "tcl90.dll")
+    data = (tmp_path / "out" / "tcl90.dll").read_bytes()
+    assert numbers == {"before": source.stat().st_size, "after": len(data), "kept": 6, "removed": 5}
+    original = source.read_bytes()
+    # Only the checksum field of the PE image changes, and the new checksum is correct.
+    assert data[:CHECKSUM_OFFSET] == original[:CHECKSUM_OFFSET]
+    assert data[CHECKSUM_OFFSET + 4 : IMAGE_END] == original[CHECKSUM_OFFSET + 4 : IMAGE_END]
+    checksum = struct.unpack_from("<I", data, CHECKSUM_OFFSET)[0]
+    assert checksum == reference_checksum(data, CHECKSUM_OFFSET)
+    with zipfile.ZipFile(io.BytesIO(data[IMAGE_END:])) as z:
+        assert z.testzip() is None
+        assert sorted(z.namelist()) == [
+            "tcl_library/encoding/cp1252.enc",
+            "tcl_library/init.tcl",
+            "tcl_library/msgcat/msgcat.tcl",
+            "tcl_library/pkgIndex.tcl",
+            "tk_library/button.tcl",
+            "tk_library/tclIndex",
+        ]
+        assert {info.compress_type for info in z.infolist()} == {zipfile.ZIP_DEFLATED}
+        assert z.read("tcl_library/init.tcl") == b"# init\n"
+        # The indexes no longer name the removed files.
+        assert z.read("tcl_library/pkgIndex.tcl").decode() == (
+            "    0 msgcat          1.7.1  {msgcat msgcat.tcl}\n"
+        )
+        assert z.read("tk_library/tclIndex").decode() == TK_INDEX.splitlines(keepends=True)[1]
+
+
+def test_trim_stops_when_no_archive_follows_the_image(tmp_path):
+    source = tmp_path / "tcl90.dll"
+    source.write_bytes(fake_dll(archive=None) + b"\0" * 64)
+    with pytest.raises(SystemExit, match="no zip archive follows the PE image"):
+        trim_tcltk.trim(source, tmp_path / "out.dll")
+    assert not (tmp_path / "out.dll").exists()
+
+
+def test_trim_stops_for_a_signed_dll(tmp_path):
+    source = tmp_path / "tcl90.dll"
+    source.write_bytes(fake_dll(signed=True))
+    with pytest.raises(SystemExit, match="has a code signature"):
+        trim_tcltk.trim(source, tmp_path / "out.dll")
+
+
+@pytest.mark.parametrize("data", [b"PK\x03\x04" + bytes(200), b"MZ" + bytes(0x200)])
+def test_trim_stops_for_a_file_that_is_not_a_pe_file(tmp_path, data):
+    source = tmp_path / "tcl90.dll"
+    source.write_bytes(data)
+    with pytest.raises(SystemExit, match="is not a PE file"):
+        trim_tcltk.trim(source, tmp_path / "out.dll")
+
+
+def test_trim_binaries_replaces_the_tcl_and_tk_dlls(tmp_path, capsys):
+    for name in ("tcl90.dll", "tcl9tk90.dll"):
+        (tmp_path / name).write_bytes(fake_dll())
+    binaries = [
+        ("python315.dll", str(tmp_path / "python315.dll"), "BINARY"),
+        ("TCL90.DLL", str(tmp_path / "tcl90.dll"), "BINARY"),
+        ("tcl9tk90.dll", str(tmp_path / "tcl9tk90.dll"), "BINARY"),
+    ]
+    folder = tmp_path / "trim"
+    result = trim_tcltk.trim_binaries(binaries, folder)
+    assert result == [
+        binaries[0],
+        ("TCL90.DLL", str(folder / "TCL90.DLL"), "BINARY"),
+        ("tcl9tk90.dll", str(folder / "tcl9tk90.dll"), "BINARY"),
+    ]
+    assert (folder / "tcl9tk90.dll").stat().st_size < (tmp_path / "tcl9tk90.dll").stat().st_size
+    assert capsys.readouterr().out.count("5 files removed, 6 files kept") == 2
+
+
+@pytest.mark.parametrize(
+    "names", [[], ["tcl90.dll"], ["tcl90.dll", "tcl9tk90.dll", "sub/tcl90.dll"]]
+)
+def test_trim_binaries_stops_for_an_other_number_of_dlls(tmp_path, names):
+    (tmp_path / "dll").write_bytes(fake_dll())
+    binaries = [(name, str(tmp_path / "dll"), "BINARY") for name in names]
+    with pytest.raises(SystemExit, match="expected the DLLs"):
+        trim_tcltk.trim_binaries(binaries, tmp_path / "trim")
