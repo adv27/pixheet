@@ -77,8 +77,9 @@ these linters:
 ## Register the self-hosted runner
 
 The runner must be a Windows x64 computer. It needs Git. The workflow installs uv, and
-uv installs Python 3.15. The runner keeps the uv cache and the Python installation in
-the profile of its user.
+uv installs Python 3.15. Each job downloads uv and Python again, and keeps the uv cache
+and Python in the temporary folder of the job. The runner deletes that folder at the end
+of the job. Thus no file from an earlier job goes into a release.
 
 1. Make a local Windows account only for the runner. Do not use your own account or an
    administrator account. This page calls it the "runner account".
