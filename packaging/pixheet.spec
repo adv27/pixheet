@@ -253,8 +253,8 @@ common = dict(
     # strip has no effect on Windows: no strip tool is on PATH. A MinGW strip on PATH
     # would run on MSVC binaries, which is not supported.
     strip=False,
-    # UPX makes the exe about 4.5 MB smaller, but each start is about 0.4 s slower, the
-    # build is not reproducible, and antivirus programs flag UPX-packed exes.
+    # UPX makes the exe about 4.5 MB smaller. But each start is about 0.4 s slower, and
+    # antivirus programs flag UPX-packed exes.
     upx=False,
     console=False,  # a windowed app: no console window
     disable_windowed_traceback=False,

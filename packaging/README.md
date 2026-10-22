@@ -79,12 +79,12 @@ alone:
 | `EXCLUDES`: `multiprocessing`, `decimal`, `xml`, `lzma`, `bz2`, `compression.zstd`, `argparse` and more | about 1.8 MB | pixheet uses threads, not processes. The xlsx file uses only deflate. Pillow needs `xml` only in `Image.getxmp()`. Only the CLI uses `argparse`, and the exe has no CLI. |
 | `EXCLUDES`: `PIL.ImageTk`, `PIL.ImageQt`, `PIL.ImageShow`, `PIL.ImageWin`, `PIL.ImageFilter`, and the save-only PDF and Palm plugins | about 0.2 MB | pixheet never calls these modules. `PIL.ImageCms` stays, because LAB images need it. |
 | `optimize=2` | about 0.5 MB | It removes the docstrings and the `assert` statements from the bytecode. No code of the app reads `__doc__`. The one `assert`, in `_xlsx.py`, is always true on Windows. |
-| `trim_tcltk.py` | about 1.1 MB | It removes the time zone data, most encodings, the Tk demo images, the messages for other languages, and Tk scripts for X11 and macOS. |
+| `trim_tcltk.py` | about 1.1 MB | It removes the time zone data, most encodings, and the Tk demo images. It also removes the messages for other languages, and the Tk scripts for X11 and macOS. |
 
 These changes are not in the spec:
 
-- UPX makes the exe about 4.5 MB smaller, but each start is about 0.4 s slower, the
-  build is not reproducible, and antivirus programs flag UPX-packed exes.
+- UPX makes the exe about 4.5 MB smaller. But each start is about 0.4 s slower, and
+  antivirus programs flag UPX-packed exes.
 - AVIF support stays. `PIL._avif` is 4.3 MB, but AVIF is a real image format.
 
 The spec also stops the build in these conditions:
@@ -93,8 +93,10 @@ The spec also stops the build in these conditions:
   hook or a new import can bring back an excluded module.
 - A module in `REQUIRED_MODULES` or a file in `REQUIRED_FILES` is not in the bundle,
   for example `PIL._avif` or the tkdnd DLL.
-- `trim_tcltk.py` does not find a zip archive after the PE image of a Tcl or Tk DLL, or
-  it does not find each of the two DLLs one time.
+- `trim_tcltk.py` cannot read a Tcl or Tk DLL, or the DLL is not a PE file. A code
+  signature also stops the build.
+- `trim_tcltk.py` does not find a correct zip archive after the PE image of a DLL.
+- `trim_tcltk.py` does not find each of the two DLLs one time.
 
 ### Maintenance rule
 
@@ -109,6 +111,10 @@ PyInstaller:
    with the exe.
 2. If the exe needs an excluded module, remove the module from `EXCLUDES` and from
    `UNWANTED_MODULES`.
+
+When the exe cannot import a module, it does not stop. The windowed exe shows the
+traceback in a dialog, and the dialog stays open. Thus `check_exe.py` reports that the
+exe did not stop in 120 s. The output of the exe then shows the `ModuleNotFoundError`.
 
 ## The workflows
 

@@ -110,8 +110,8 @@ The exe has all the features of the app, but it does not have these parts:
   and the OpenSSL DLLs. The app does not use them.
 - The Pillow modules that pixheet never calls, for example `ImageTk` and `ImageShow`.
 - The docstrings and the `assert` statements in the bytecode.
-- The Tcl and Tk files that the app does not use on Windows, for example the time
-  zone data, most encodings, and the messages for other languages.
+- The Tcl and Tk files that the app does not use on Windows. Examples are the time zone
+  data, most encodings, and the messages for other languages.
 
 These changes make the exe about 6 MB smaller. The exe does not use UPX, because
 antivirus programs flag UPX-packed exes.

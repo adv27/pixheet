@@ -141,8 +141,8 @@ def pe_layout(data: bytes, name: str) -> tuple[int, int]:
 def pe_checksum(data: bytes, offset: int) -> int:
     """Return the PE checksum of ``data``. The checksum field is at ``offset``.
 
-    The checksum is the sum of the 16-bit words of the file, without the checksum field,
-    with each carry added back, plus the length of the file.
+    The checksum is the sum of the 16-bit words of the file, without the checksum field.
+    The sum adds each carry back. At the end, it adds the length of the file.
     """
     padded = bytearray(data)
     padded[offset : offset + 4] = bytes(4)
