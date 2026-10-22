@@ -1,5 +1,7 @@
-"""Tests of the scripts in packaging/: the icon, the version resource, and the runner hook."""
+"""Tests of the scripts in packaging/: the icon, the version resource, the spec, and the runner
+hook."""
 
+import ast
 import importlib.util
 import os
 import shutil
@@ -13,6 +15,8 @@ import pytest
 from PIL import Image
 
 PACKAGING = Path(__file__).resolve().parents[1] / "packaging"
+SPEC = PACKAGING / "pixheet.spec"
+SOURCE = PACKAGING.parent / "src" / "pixheet"
 
 
 def load(name: str):
@@ -237,3 +241,117 @@ def test_problem_includes_the_output_of_a_failed_exe():
     assert problem.startswith("The exe stopped with exit code 3. The output of the exe:\n")
     assert "pixheet-gui: drag and drop on" in problem
     assert "pixheet-gui: cannot open a window" in problem
+
+
+# The spec
+
+
+def spec_value(name: str):
+    """Return the value of the list ``name`` in the spec."""
+    for node in ast.parse(SPEC.read_text(encoding="utf-8")).body:
+        if isinstance(node, ast.Assign) and any(
+            isinstance(target, ast.Name) and target.id == name for target in node.targets
+        ):
+            return ast.literal_eval(node.value)
+    raise AssertionError(f"The spec has no {name}.")
+
+
+def spec_keywords(name: str) -> list:
+    """Return the values of each keyword argument ``name`` in the calls of the spec."""
+    tree = ast.parse(SPEC.read_text(encoding="utf-8"))
+    return [
+        ast.literal_eval(keyword.value)
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Call)
+        for keyword in node.keywords
+        if keyword.arg == name
+    ]
+
+
+def excluded(module: str, excludes: list[str]) -> bool:
+    """Return True if ``module`` is in ``excludes``, or in a package in ``excludes``."""
+    return any(f"{module}.".startswith(f"{name}.") for name in excludes)
+
+
+def test_spec_excludes_the_unused_modules():
+    excludes = spec_value("EXCLUDES")
+    assert {
+        "numpy",
+        "multiprocessing",
+        "concurrent.futures.process",
+        "ssl",
+        "_ssl",
+        "hashlib",
+        "_hashlib",
+        "urllib",
+        "http",
+        "email",
+        "xml",
+        "decimal",
+        "lzma",
+        "bz2",
+        "compression.zstd",
+        "argparse",
+        "PIL.ImageTk",
+        "PIL.ImageQt",
+        "PIL.ImageShow",
+        "PIL.ImageWin",
+        "PIL.ImageFilter",
+        "PIL.PdfImagePlugin",
+        "PIL.PalmImagePlugin",
+    } <= set(excludes)
+    assert len(excludes) == len(set(excludes))
+    # gzip needs compression. LAB images need ImageCms.
+    for module in ("compression", "gzip", "PIL.ImageCms", "PIL._imagingcms", "zipfile", "zlib"):
+        assert not excluded(module, excludes), module
+
+
+def test_spec_does_not_exclude_a_required_module():
+    excludes = spec_value("EXCLUDES")
+    required = spec_value("REQUIRED_MODULES")
+    assert {"PIL._avif", "PIL._webp", "PIL._imagingcms", "tkinterdnd2", "_tkinter"} <= set(required)
+    assert [module for module in required if excluded(module, excludes)] == []
+
+
+def test_spec_guards_the_excludes():
+    unwanted = set(spec_value("UNWANTED_MODULES"))
+    assert {"ssl", "_hashlib", "multiprocessing", "numpy", "tkinter.test", "test"} <= unwanted
+    assert unwanted.isdisjoint(spec_value("REQUIRED_MODULES"))
+    assert set(spec_value("UNWANTED_FILES")) == {"libcrypto-3-x64.dll", "libssl-3-x64.dll"}
+    assert "tkinterdnd2/tkdnd/win-x64-*/libtkdnd*.dll" in spec_value("REQUIRED_FILES")
+
+
+def test_spec_optimizes_the_bytecode_and_does_not_use_upx_or_strip():
+    assert spec_keywords("optimize") == [2]
+    upx = spec_keywords("upx")
+    assert upx == [False] * len(upx)
+    assert len(upx) == 2  # the EXE options and COLLECT
+    strip = spec_keywords("strip")
+    assert strip == [False] * len(strip)
+    assert len(strip) == 2
+
+
+def imports(path: Path) -> set[str]:
+    """Return the names of the absolute imports in the Python file ``path``."""
+    names = set()
+    for node in ast.walk(ast.parse(path.read_text(encoding="utf-8"))):
+        if isinstance(node, ast.Import):
+            names |= {alias.name for alias in node.names}
+        elif isinstance(node, ast.ImportFrom) and node.level == 0 and node.module:
+            names.add(node.module)
+            names |= {f"{node.module}.{alias.name}" for alias in node.names}
+    return names
+
+
+def test_app_code_does_not_import_an_excluded_module():
+    """The exe does not have the modules in EXCLUDES. Only cli.py and __main__.py can use them."""
+    excludes = spec_value("EXCLUDES")
+    files = [p for p in sorted(SOURCE.glob("*.py")) if p.name not in ("cli.py", "__main__.py")]
+    assert SOURCE / "gui.py" in files
+    found = {
+        f"{path.name}: {name}"
+        for path in files
+        for name in imports(path)
+        if excluded(name, excludes)
+    }
+    assert found == set()

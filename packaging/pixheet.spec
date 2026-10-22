@@ -10,8 +10,18 @@
 #     uv run --extra gui --group build pyinstaller --noconfirm --clean packaging/pixheet.spec -- --onedir
 #
 # packaging/build.ps1 runs the build and tests the result.
+#
+# This spec makes the exe smaller with these changes. Each change keeps all the features:
+#   1. EXCLUDES removes standard library modules that the app never imports at run time.
+#   2. EXCLUDES also removes Pillow modules that pixheet never uses.
+#   3. optimize=2 removes the docstrings and the assert statements from the bytecode.
+# The spec does not use UPX or strip. See the comments at each change.
+#
+# If new code in pixheet or in the GUI imports a module in EXCLUDES, the tests pass, but
+# the exe stops with ModuleNotFoundError. After such a change, run packaging/build.ps1.
 
 import argparse
+import fnmatch
 import sys
 from pathlib import Path
 
@@ -53,6 +63,133 @@ version = VSVersionInfo(
     ],
 )
 
+EXCLUDES = [
+    # Pillow imports numpy only for type checks. Pixheet does not use numpy. Without this
+    # line, the exe includes numpy when it is in the environment of the build.
+    "numpy",
+    # --- Standard library: multiprocessing ---
+    # pixheet uses only ThreadPoolExecutor. concurrent.futures imports .process only
+    # through __getattr__, when code asks for ProcessPoolExecutor. Without this chain, the
+    # multiprocessing and pkgutil runtime hooks also go.
+    "multiprocessing",
+    "concurrent.futures.process",
+    "_multiprocessing",
+    "xmlrpc",
+    "decimal",
+    "_decimal",
+    "_pydecimal",
+    "statistics",
+    "pickle",
+    "_compat_pickle",
+    "pprint",
+    "secrets",
+    "runpy",
+    "tracemalloc",
+    # --- Standard library: network, crypto and mail (with OpenSSL, about 2.5 MB of DLLs) ---
+    # pathlib imports urllib only in Path.as_uri() and Path.from_uri(). The app does not
+    # call them. This removes libcrypto-3-x64.dll and libssl-3-x64.dll.
+    "urllib",
+    "http",
+    "email",
+    "ftplib",
+    "netrc",
+    "mimetypes",
+    "ssl",
+    "_ssl",
+    "hashlib",
+    "_hashlib",
+    "hmac",
+    "importlib.metadata",
+    # --- Standard library: xml ---
+    # PIL.Image imports ElementTree only under TYPE_CHECKING and in Image.getxmp(). The
+    # app does not call getxmp(), and getxmp() needs defusedxml, which is not installed.
+    "xml",
+    "pyexpat",
+    "_elementtree",
+    # --- Standard library: zip compressors other than deflate ---
+    # The xlsx file uses ZIP_DEFLATED (zlib). zipfile and shutil import the other
+    # compressors in try/except ImportError.
+    "lzma",
+    "_lzma",
+    "bz2",
+    "_bz2",
+    "compression.zstd",  # do not exclude "compression": gzip (FITS) needs it
+    "_zstd",
+    "tarfile",
+    "py_compile",
+    # --- Standard library: command line helpers that only main() blocks import ---
+    "argparse",
+    "gettext",
+    "getopt",
+    "sysconfig",
+    "_aix_support",
+    # --- Pillow: modules that pixheet never uses ---
+    # Each one is imported only in a function that pixheet does not call, or is a plugin
+    # that only saves files. Keep PIL.ImageCms and PIL._imagingcms: Image.convert() uses
+    # them for LAB images, for example a LAB TIFF.
+    "PIL.ImageTk",  # Image to Tk PhotoImage; also removes PIL._imagingtk
+    "PIL._imagingtk",
+    "PIL.ImageQt",  # Qt conversion
+    "PIL.ImageShow",  # Image.show(); also removes shlex
+    "PIL.ImageWin",  # ImageCms.get_display_profile() and ImageGrab only
+    "PIL.ImageFilter",  # Image.filter() only
+    "PIL.PdfImagePlugin",  # PDF is save-only in Pillow
+    "PIL.PdfParser",
+    "PIL.PalmImagePlugin",  # Palm is save-only in Pillow
+]
+
+# The build stops if one of these modules, or a module in one of these packages, is in
+# the bundle. A new hook or a new import can bring them back.
+UNWANTED_MODULES = [
+    "numpy",
+    "multiprocessing",
+    "concurrent.futures.process",
+    "ssl",
+    "_ssl",
+    "hashlib",
+    "_hashlib",
+    "decimal",
+    "_decimal",
+    "urllib",
+    "http",
+    "email",
+    "xml",
+    "pyexpat",
+    "_elementtree",
+    "_lzma",
+    "_bz2",
+    "_zstd",
+    "test",
+    "tkinter.test",
+    "unittest",
+    "PIL.ImageTk",
+    "PIL._imagingtk",
+    "PIL.ImageQt",
+    "PIL.ImageShow",
+]
+# The build stops if one of these files is in the bundle.
+UNWANTED_FILES = ["libcrypto-3-x64.dll", "libssl-3-x64.dll"]
+
+# The build stops if one of these modules is not in the bundle. The image formats need
+# the Pillow extension modules. LAB images need PIL._imagingcms.
+REQUIRED_MODULES = [
+    "pixheet.gui",
+    "tkinter",
+    "_tkinter",
+    "tkinterdnd2",
+    "PIL._imaging",
+    "PIL._imagingcms",
+    "PIL.ImageCms",
+    "PIL._webp",
+    "PIL._avif",
+]
+# The build stops if no file in the bundle agrees with one of these patterns.
+REQUIRED_FILES = [
+    "tcl90.dll",
+    "tcl9tk90.dll",
+    "tkinterdnd2/tkdnd/win-x64-*/libtkdnd*.dll",
+]
+
 a = Analysis(
     [str(HERE / "pixheet_gui.py")],
     pathex=[],
@@ -63,11 +200,11 @@ a = Analysis(
     hookspath=[],
     hooksconfig={},
     runtime_hooks=[],
-    # Pillow imports numpy only for type checks. Pixheet does not use numpy. Without this
-    # line, the exe includes numpy when it is in the environment of the build.
-    excludes=["numpy"],
+    excludes=EXCLUDES,
     noarchive=False,
-    optimize=0,
+    # Remove the docstrings and the assert statements from the frozen bytecode. No code
+    # of the app reads __doc__. sys.flags.optimize stays 0 in the exe.
+    optimize=2,
 )
 
 # The tkinterdnd2 hook of pyinstaller-hooks-contrib collects only the tkdnd folder of
@@ -80,14 +217,33 @@ tkdnd = {
 if len(tkdnd) != 1 or not next(iter(tkdnd)).startswith("win-x64"):
     raise SystemExit(f"Expected one win-x64 tkdnd folder in the bundle. Found: {sorted(tkdnd)}")
 
+# Make sure that the excludes work, and that the bundle has all that the app needs.
+files = [dest.replace("\\", "/").lower() for dest, _source, _kind in a.binaries + a.datas]
+modules = {name.lower() for name, _source, _kind in a.pure}
+# An extension module, for example PIL/_avif.cp315-win_amd64.pyd, is the module PIL._avif.
+modules |= {f.rsplit(".", 2)[0].replace("/", ".") for f in files if f.endswith(".pyd")}
+unwanted = sorted(
+    {u for u in UNWANTED_MODULES for m in modules if f"{m}.".startswith(f"{u.lower()}.")}
+)
+unwanted += [f for f in files if Path(f).name in UNWANTED_FILES]
+if unwanted:
+    raise SystemExit(f"These excluded modules or files are in the bundle: {unwanted}")
+missing = [m for m in REQUIRED_MODULES if m.lower() not in modules]
+missing += [p for p in REQUIRED_FILES if not any(fnmatch.fnmatchcase(f, p) for f in files)]
+if missing:
+    raise SystemExit(f"These modules or files are not in the bundle: {missing}")
+
 pyz = PYZ(a.pure)
 
 common = dict(
     name=NAME,
     debug=False,
     bootloader_ignore_signals=False,
+    # strip has no effect on Windows: no strip tool is on PATH. A MinGW strip on PATH
+    # would run on MSVC binaries, which is not supported.
     strip=False,
-    # UPX makes the build slower and not reproducible, and antivirus programs flag it.
+    # UPX makes the exe about 4.5 MB smaller, but each start is about 0.4 s slower, the
+    # build is not reproducible, and antivirus programs flag UPX-packed exes.
     upx=False,
     console=False,  # a windowed app: no console window
     disable_windowed_traceback=False,
