@@ -43,6 +43,10 @@ dev = [
 # The Windows executable of the desktop app.
 build = ["pyinstaller>=6.22.3", "pyinstaller-hooks-contrib>=2026.8"]
 
+[tool.uv]
+# The CI workflows install the newest uv in this range.
+required-version = ">=0.13.1,<0.14"
+
 [build-system]
 requires = ["uv_build>=0.13.1,<0.14"]
 build-backend = "uv_build"
