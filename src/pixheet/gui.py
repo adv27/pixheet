@@ -2,7 +2,7 @@
 
 Start it with ``pixheet-gui`` or ``python -m pixheet.gui``. The app converts the image
 paths that you give as arguments when it starts. The option ``--smoke`` opens the window
-and closes it again. Use it to test a built app.
+and closes it when the app has nothing to do. Use it to test a built app.
 
 Each output file goes next to its image, with the suffix ``.xlsx``. A worker thread does
 the conversion, so the window stays responsive. The worker sends messages to a queue,
@@ -771,10 +771,42 @@ def _set_dpi_awareness() -> None:
         ctypes.windll.shcore.SetProcessDpiAwareness(2)  # per-monitor DPI aware
 
 
+def smoke_test(app: App) -> list[str]:
+    """Prepare ``app`` for a smoke test, and return the list that collects the problems.
+
+    The window closes 200 ms after the start, or later when a batch runs, after the
+    batch. The app does not show dialogs. It records each error message as a problem,
+    and it does not replace output files that exist. A built app must also have the
+    window icon and drag and drop.
+    """
+    problems: list[str] = []
+    if getattr(sys, "frozen", False):
+        if not app.has_icon:
+            problems.append("The window icon is missing.")
+        if not app.dnd:
+            problems.append("Drag and drop is not available.")
+
+    def record(title: str, message: str, **kwargs: Any) -> None:
+        problems.append(message)
+
+    app.show_error = record
+    app.ask_yes_no = lambda *args, **kwargs: False
+
+    def close_when_idle() -> None:
+        if app.busy:
+            app.root.after(POLL_MS, close_when_idle)
+        else:
+            app.close()
+
+    app.root.after(200, close_when_idle)
+    return problems
+
+
 def main(argv: Sequence[str] | None = None) -> int:
     """Open the window. Convert the image paths in ``argv``, if there are some.
 
-    ``--smoke`` closes the window after 200 ms.
+    With ``--smoke``, the window closes when it has nothing to do. Then the exit status is
+    1 if the app found a problem. See :func:`smoke_test`.
     """
     args = list(sys.argv[1:] if argv is None else argv)
     smoke = "--smoke" in args
@@ -789,14 +821,15 @@ def main(argv: Sequence[str] | None = None) -> int:
         _error(f"cannot open a window: {e}")
         return 1
     app = App(root, dnd_type=enable_dnd(root))
+    problems = smoke_test(app) if smoke else []
     if files:
         root.after_idle(app.start, files)
-    if smoke:
-        if sys.stdout is not None:
-            print(f"pixheet-gui: drag and drop {'on' if app.dnd else 'off'}", flush=True)
-        root.after(200, app.close)
+    if smoke and sys.stdout is not None:
+        print(f"pixheet-gui: drag and drop {'on' if app.dnd else 'off'}", flush=True)
     root.mainloop()
-    return 0
+    for problem in problems:
+        _error(problem.replace("\n", " "))
+    return 1 if problems else 0
 
 
 if __name__ == "__main__":

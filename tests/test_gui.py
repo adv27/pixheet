@@ -706,6 +706,54 @@ def test_main_starts_the_files_in_argv(monkeypatch):
     assert started == [[Path("a b.png"), Path("c.png")]]
 
 
+def sheet_size(path: Path) -> tuple[int, int]:
+    """Return the number of columns and rows of the sheet in ``path``."""
+    import openpyxl
+
+    workbook = openpyxl.load_workbook(path)
+    try:
+        return workbook.active.max_column, workbook.active.max_row
+    finally:
+        workbook.close()
+
+
+def test_main_smoke_waits_for_the_batch(tmp_path):
+    new_root().destroy()
+    src = image(tmp_path / "pic.png", 40, 30)
+    assert gui.main(["--smoke", str(src)]) == 0
+    assert sheet_size(default_output(src)) == (40, 30)
+    assert no_temp_files(tmp_path)
+
+
+def test_main_smoke_fails_when_a_file_fails(tmp_path, capsys):
+    new_root().destroy()
+    bad = tmp_path / "bad.png"
+    bad.write_text("not an image")
+    good = image(tmp_path / "good.png")
+    assert gui.main(["--smoke", str(bad), str(good)]) == 1
+    assert "bad.png" in capsys.readouterr().err
+    assert default_output(good).is_file()
+
+
+def test_main_smoke_does_not_replace_files(tmp_path):
+    new_root().destroy()
+    src = image(tmp_path / "pic.png")
+    default_output(src).write_bytes(b"old")
+    assert gui.main(["--smoke", str(src)]) == 0
+    assert default_output(src).read_bytes() == b"old"
+
+
+def test_main_smoke_of_a_built_app_needs_the_icon_and_dnd(tmp_path, monkeypatch, capsys):
+    new_root().destroy()
+    monkeypatch.setattr(sys, "frozen", True, raising=False)
+    monkeypatch.setattr(sys, "_MEIPASS", str(tmp_path), raising=False)  # no icon here
+    monkeypatch.setattr(gui, "enable_dnd", lambda root: None)
+    assert gui.main(["--smoke"]) == 1
+    err = capsys.readouterr().err
+    assert "The window icon is missing." in err
+    assert "Drag and drop is not available." in err
+
+
 # --- The window icon -----------------------------------------------------------------
 
 REPO_ICON = Path(__file__).resolve().parents[1] / "packaging" / gui.ICON_NAME
