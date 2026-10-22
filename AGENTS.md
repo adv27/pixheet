@@ -22,7 +22,8 @@ Read [README.md](README.md) for usage, the Python API, and the Excel limits.
 | `tests/` | Pytest suite. `tests/images.py` generates all test images. No real photos. |
 | `bench/bench.py` | Benchmark on local sample photos. |
 | `scripts/` | `excel_check.ps1` (Excel COM check, Windows) and `sample_pixels.py`. |
-| `packaging/` | `pixheet_gui.py`, the entry script that PyInstaller freezes into `Pixheet.exe`. |
+| `packaging/` | The build of `Pixheet.exe`: the PyInstaller spec `pixheet.spec`, the entry script, the icon and `make_icon.py`, `build.ps1`, and `check_exe.py`. Read `packaging/README.md`. |
+| `.github/workflows/` | `ci.yml`: tests and lint on GitHub-hosted Windows. `windows-exe.yml`: the exe build on the self-hosted runner, and the release. |
 
 Modules with a leading underscore are private. Do not import them from outside the
 package, except in tests and in `bench/bench.py`, which times each stage.
@@ -37,12 +38,12 @@ uv run pixheet --help
 uv run pixheet-gui                            # the desktop app
 ```
 
-To build the desktop app for Windows into `dist/Pixheet/`, run these commands:
+To build the desktop app for Windows into `dist/Pixheet.exe` and test it, run this
+command in PowerShell:
 
 ```console
-uv sync --extra gui --group build
-uv run pyinstaller --noconfirm --clean --windowed --onedir --name Pixheet --specpath build packaging/pixheet_gui.py
-dist/Pixheet/Pixheet.exe --smoke              # opens the window and closes it after 0.2 s
+powershell -ExecutionPolicy Bypass -File packaging/build.ps1   # add -OneDir for a folder
+uvx zizmor .github/workflows && uvx --from actionlint-py actionlint   # lint the workflows
 ```
 
 The GUI tests in `tests/test_gui.py` need a display. Without a display, they skip.
@@ -67,6 +68,9 @@ Run the tests, the lint, and the format check before you report a change as comp
   through a queue. A Tk object that Python collects on the worker thread causes an
   error, so the GUI tests collect garbage on the main thread after each test.
 - The primary development OS is Windows. Keep paths and shell examples portable.
+- `windows-exe.yml` runs on a self-hosted runner, and the repository is public. Never
+  add a `pull_request` or `pull_request_target` trigger to it. Pin each action to a
+  full commit SHA.
 
 ## Commits
 
@@ -102,7 +106,7 @@ Rules:
 
 - Use the Unicode emoji, not the `:shortcode:`. Use one gitmoji per commit.
 - For a gitmoji that is not in the table, use the list at <https://gitmoji.dev>.
-- Scopes: `cli`, `core`, `image`, `xlsx`, `gui`, `packaging`, `tests`, `bench`,
+- Scopes: `cli`, `core`, `image`, `xlsx`, `gui`, `packaging`, `ci`, `tests`, `bench`,
   `scripts`, `docs`.
   Omit the scope when a commit touches several areas.
 - Write the subject in the imperative, in lower case, and without a final period.

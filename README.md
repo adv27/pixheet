@@ -67,17 +67,42 @@ The app uses Tkinter from the Python standard library. The `gui` extra adds
 tkinterdnd2, the app opens without the drop function, and **Browse...** still works.
 You can also give image paths as arguments: `pixheet-gui photo.jpg`.
 
-To build a Windows app that does not need Python, use PyInstaller:
+To build the Windows app yourself, see [Windows app](#windows-app).
+
+## Windows app
+
+Pixheet.exe is the desktop app in one file. It does not need Python.
+
+To get Pixheet.exe, do one of these steps:
+
+- Download `Pixheet.exe` from the [Releases](https://github.com/adv27/pixheet/releases)
+  page.
+- Download the newest build from the
+  [Actions](https://github.com/adv27/pixheet/actions/workflows/windows-exe.yml) page.
+  Open a run, and download the artifact `Pixheet-windows-x64`. You must sign in to
+  GitHub to download an artifact.
+
+Each download includes the file `Pixheet.exe.sha256`. To compare the hash, run this
+command in PowerShell:
 
 ```console
-$ uv sync --extra gui --group build
-$ uv run pyinstaller --noconfirm --clean --windowed --onedir --name Pixheet --specpath build packaging/pixheet_gui.py
-$ dist\Pixheet\Pixheet.exe --smoke     # opens the window and closes it after 0.2 s
+> (Get-FileHash Pixheet.exe -Algorithm SHA256).Hash.ToLower()
 ```
 
-The result is the folder `dist\Pixheet\`, about 40 MB. To make one file of about 19 MB,
-use `--onefile` instead of `--onedir`. The single file starts more slowly, because it
-extracts itself each time.
+The exe does not have a code signature yet. Thus Windows SmartScreen can show the
+message "Windows protected your PC". To start the app, click **More info**, then
+**Run anyway**. If you do not want to run an exe without a signature, build it yourself.
+
+To build Pixheet.exe from a checkout, run this command in PowerShell:
+
+```console
+> powershell -ExecutionPolicy Bypass -File packaging\build.ps1
+```
+
+The script builds `dist\Pixheet.exe`, about 19 MB, and tests it. Add `-OneDir` to build
+the folder `dist\Pixheet\`. The folder starts faster, because the exe does not extract
+itself each time. [packaging/README.md](packaging/README.md) gives more data about the
+build and the CI.
 
 ## Python API
 
