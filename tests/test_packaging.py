@@ -215,8 +215,25 @@ def test_run_exe_stops_the_whole_process_tree_after_the_timeout():
 
 
 def test_result_problems():
-    assert check_exe.result_problems(0, 120) == []
-    assert check_exe.result_problems(1, 120) == ["The exe stopped with exit code 1."]
-    assert check_exe.result_problems(None, 120) == [
+    assert check_exe.result_problems(0, "pixheet-gui: drag and drop on\n", 120) == []
+    assert check_exe.result_problems(1, "", 120) == ["The exe stopped with exit code 1."]
+    assert check_exe.result_problems(None, "  \n", 120) == [
         "The exe did not stop in 120 s. The script stopped it."
     ]
+
+
+FAILED_EXE = """
+import sys
+print("pixheet-gui: drag and drop on")
+print("pixheet-gui: cannot open a window", file=sys.stderr)
+sys.exit(3)
+"""
+
+
+def test_problem_includes_the_output_of_a_failed_exe():
+    code, output = check_exe.run_exe([sys.executable, "-c", FAILED_EXE], timeout=60)
+    assert code == 3
+    [problem] = check_exe.result_problems(code, output, 60)
+    assert problem.startswith("The exe stopped with exit code 3. The output of the exe:\n")
+    assert "pixheet-gui: drag and drop on" in problem
+    assert "pixheet-gui: cannot open a window" in problem

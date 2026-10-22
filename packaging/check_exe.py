@@ -84,28 +84,35 @@ def run_exe(command: list[str], timeout: float = TIMEOUT) -> tuple[int | None, s
     return process.returncode, output.decode("utf-8", errors="replace")
 
 
-def result_problems(code: int | None, timeout: float) -> list[str]:
-    """Return the problems of a run of the exe with the exit code ``code``."""
+def result_problems(code: int | None, output: str, timeout: float) -> list[str]:
+    """Return the problems of a run of the exe with the exit code ``code``.
+
+    A problem includes the output of the exe, because the output tells the cause, for
+    example "cannot open a window".
+    """
     if code is None:
-        return [f"The exe did not stop in {timeout:g} s. The script stopped it."]
-    if code != 0:
-        return [f"The exe stopped with exit code {code}."]
-    return []
+        problem = f"The exe did not stop in {timeout:g} s. The script stopped it."
+    elif code != 0:
+        problem = f"The exe stopped with exit code {code}."
+    else:
+        return []
+    output = output.strip()
+    return [f"{problem} The output of the exe:\n{output}" if output else problem]
 
 
 def check(exe: Path, timeout: float = TIMEOUT) -> list[str]:
     """Run ``exe``, then run it on a test image. Return the problems, or an empty list."""
-    code, _output = run_exe([str(exe), "--smoke"], timeout)
-    if problems := result_problems(code, timeout):
+    code, output = run_exe([str(exe), "--smoke"], timeout)
+    if problems := result_problems(code, output, timeout):
         return problems
     print("The exe passed the smoke test.")
     with tempfile.TemporaryDirectory(prefix="pixheet-check-") as folder:
         src = Path(folder) / "test image.png"
         expected = make_image(src)
         start = time.monotonic()
-        code, _output = run_exe([str(exe), "--smoke", str(src)], timeout)
+        code, output = run_exe([str(exe), "--smoke", str(src)], timeout)
         seconds = time.monotonic() - start
-        if problems := result_problems(code, timeout):
+        if problems := result_problems(code, output, timeout):
             return problems
         out = src.with_suffix(".xlsx")
         if not out.is_file():
