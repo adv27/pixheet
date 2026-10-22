@@ -38,12 +38,13 @@ uv run pixheet --help
 uv run pixheet-gui                            # the desktop app
 ```
 
-To build the desktop app for Windows into `dist/Pixheet.exe` and test it, run this
-command in PowerShell:
+To build the desktop app for Windows into `dist/Pixheet.exe` and test it, and to lint
+the workflows, run these commands in PowerShell:
 
 ```console
 powershell -ExecutionPolicy Bypass -File packaging/build.ps1   # add -OneDir for a folder
-uvx zizmor .github/workflows && uvx --from actionlint-py actionlint   # lint the workflows
+uvx zizmor .github/workflows                                   # lint the workflows
+uvx --from actionlint-py actionlint
 ```
 
 The GUI tests in `tests/test_gui.py` need a display. Without a display, they skip.

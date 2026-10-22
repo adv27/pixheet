@@ -2,12 +2,12 @@
 #
 # Run it from the repository root. The default makes one file, dist/Pixheet.exe:
 #
-#     uv run pyinstaller --noconfirm --clean packaging/pixheet.spec
+#     uv run --extra gui --group build pyinstaller --noconfirm --clean packaging/pixheet.spec
 #
 # To make the folder dist/Pixheet/ with Pixheet.exe in it, add "-- --onedir". The folder
 # starts faster, because the exe does not extract itself each time:
 #
-#     uv run pyinstaller --noconfirm --clean packaging/pixheet.spec -- --onedir
+#     uv run --extra gui --group build pyinstaller --noconfirm --clean packaging/pixheet.spec -- --onedir
 #
 # packaging/build.ps1 runs the build and tests the result.
 
