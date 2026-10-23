@@ -754,6 +754,362 @@ def test_main_smoke_of_a_built_app_needs_the_icon_and_dnd(tmp_path, monkeypatch,
     assert "Drag and drop is not available." in err
 
 
+def test_main_smoke_of_a_built_app_needs_the_theme(monkeypatch, capsys):
+    new_root().destroy()
+    monkeypatch.setattr(sys, "frozen", True, raising=False)
+    monkeypatch.setattr(gui, "_load_sv_ttk", no_sv_ttk)
+    assert gui.main(["--smoke"]) == 1
+    assert "The Sun Valley theme is not available." in capsys.readouterr().err
+
+
+# --- The theme -----------------------------------------------------------------------
+
+
+def no_sv_ttk():
+    raise ImportError("No module named 'sv_ttk'")
+
+
+class FakeKey:
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *exc):
+        return False
+
+
+def fake_winreg(value=None, error=None):
+    """Return a fake winreg module. It has the value of AppsUseLightTheme, or raises."""
+
+    def open_key(root, path):
+        assert root == "HKCU"
+        assert path == gui.PERSONALIZE_KEY
+        if error is not None:
+            raise error
+        return FakeKey()
+
+    def query(key, name):
+        assert name == "AppsUseLightTheme"
+        return value, 4
+
+    return types.SimpleNamespace(HKEY_CURRENT_USER="HKCU", OpenKey=open_key, QueryValueEx=query)
+
+
+@pytest.mark.parametrize(
+    ("winreg", "theme"),
+    [
+        (fake_winreg(1), "light"),
+        (fake_winreg(0), "dark"),
+        (fake_winreg(error=FileNotFoundError(2, "The key does not exist")), "light"),
+        (fake_winreg(error=PermissionError(5, "Access is denied")), "light"),
+    ],
+)
+def test_system_theme_reads_the_windows_setting(monkeypatch, winreg, theme):
+    monkeypatch.setitem(sys.modules, "winreg", winreg)
+    assert gui.system_theme(platform="win32") == theme
+
+
+def test_system_theme_without_winreg(monkeypatch):
+    monkeypatch.setitem(sys.modules, "winreg", None)  # the import raises ImportError
+    assert gui.system_theme(platform="win32") == "light"
+
+
+def test_system_theme_on_other_systems_is_light(monkeypatch):
+    monkeypatch.setitem(sys.modules, "winreg", fake_winreg(0))
+    assert gui.system_theme(platform="linux") == "light"
+    assert gui.system_theme(platform="darwin") == "light"
+
+
+@pytest.mark.parametrize(
+    ("value", "theme"),
+    [("light", "light"), (" Dark ", "dark"), ("system", None), ("", None), ("blue", None)],
+)
+def test_theme_override(value, theme):
+    assert gui.theme_override({gui.THEME_ENV: value}) == theme
+    assert gui.theme_override({}) is None
+
+
+@pytest.mark.parametrize("mode", ["light", "dark"])
+def test_apply_theme_uses_sun_valley(mode):
+    pytest.importorskip("sv_ttk")
+    root = new_root()
+    try:
+        assert gui.apply_theme(root, mode) == f"sun-valley-{mode}"
+        assert gui.theme_name(root) == f"sun-valley-{mode}"
+    finally:
+        root.destroy()
+
+
+def test_disabled_accent_button_is_readable_in_the_light_theme():
+    pytest.importorskip("sv_ttk")
+    from tkinter import ttk
+
+    root = new_root()
+    try:
+        gui.apply_theme(root, "dark")  # the change stays when the theme changes later
+        gui.apply_theme(root, "light")
+        colors = [(str(s), str(c)) for s, c in ttk.Style(root).map("Accent.TButton", "foreground")]
+        assert ("disabled", gui.LIGHT_DISABLED_ACCENT_FG) in colors
+    finally:
+        root.destroy()
+
+
+def test_apply_theme_scales_the_fonts_for_the_screen():
+    pytest.importorskip("sv_ttk")
+    root = new_root()
+    try:
+        root.tk.call("tk", "scaling", 2.0)  # 144 dpi: 150 %
+        gui.apply_theme(root, "light")
+        assert root.tk.call("font", "configure", "SunValleyBodyFont", "-size") == -21
+        gui.apply_theme(root, "dark")  # only once
+        assert root.tk.call("font", "configure", "SunValleyBodyFont", "-size") == -21
+    finally:
+        root.destroy()
+
+
+@pytest.mark.parametrize("error", [ImportError, RuntimeError, OSError])
+def test_apply_theme_keeps_the_ttk_theme_when_sv_ttk_fails(monkeypatch, error):
+    def fail():
+        raise error("no sv_ttk")
+
+    monkeypatch.setattr(gui, "_load_sv_ttk", fail)
+    root = new_root()
+    try:
+        before = gui.theme_name(root)
+        assert gui.apply_theme(root, "dark") is None
+        assert gui.theme_name(root) == before
+    finally:
+        root.destroy()
+
+
+def test_window_without_sv_ttk_has_the_old_look(monkeypatch, harness):
+    monkeypatch.setattr(gui, "_load_sv_ttk", no_sv_ttk)
+    h = harness()
+    follower = gui.ThemeFollower(h.root, lambda: "dark")
+    assert follower.theme is None
+    assert follower._after_id is None
+    assert str(h.app.zone.cget("relief")) == "groove"
+    assert h.app.zone.cget("style") == ""
+
+
+def test_main_without_sv_ttk_starts(monkeypatch, capsys):
+    new_root().destroy()
+    monkeypatch.setattr(gui, "_load_sv_ttk", no_sv_ttk)
+    assert gui.main(["--smoke"]) == 0
+    out = capsys.readouterr().out
+    assert "pixheet-gui: theme " in out
+    assert "sun-valley" not in out
+
+
+@pytest.mark.parametrize("mode", ["light", "dark"])
+def test_main_smoke_shows_the_theme(monkeypatch, capsys, mode):
+    pytest.importorskip("sv_ttk")
+    new_root().destroy()
+    monkeypatch.setenv(gui.THEME_ENV, mode)
+    assert gui.main(["--smoke"]) == 0
+    assert f"pixheet-gui: theme sun-valley-{mode}\n" in capsys.readouterr().out
+
+
+def test_window_in_sun_valley_uses_the_card_and_the_accent_button():
+    pytest.importorskip("sv_ttk")
+    root = new_root()
+    try:
+        gui.apply_theme(root, "light")
+        app = gui.App(root, dnd_type=None)
+        assert app.zone.cget("style") == "Card.TFrame"
+        assert app.browse_button.cget("style") == "Accent.TButton"
+        assert str(app.zone_label.cget("font")) == "SunValleySubtitleFont"
+        app.dispose()
+    finally:
+        root.destroy()
+
+
+class ThemeSource:
+    """A fake system setting. It counts its reads."""
+
+    def __init__(self, mode):
+        self.mode = mode
+        self.reads = 0
+
+    def __call__(self):
+        self.reads += 1
+        return self.mode
+
+
+def test_follower_changes_the_theme_when_the_system_changes(monkeypatch):
+    pytest.importorskip("sv_ttk")
+    bars = []
+    monkeypatch.setattr(gui, "set_title_bar", lambda root, dark: bars.append(dark))
+    applied = []
+    real_apply = gui.apply_theme
+    monkeypatch.setattr(
+        gui, "apply_theme", lambda root, mode: applied.append(mode) or real_apply(root, mode)
+    )
+    root = new_root()
+    try:
+        source = ThemeSource("light")
+        follower = gui.ThemeFollower(root, source, interval=10_000)
+        assert follower.theme == "sun-valley-light"
+        follower.poll()  # no change: no new theme and no new title bar
+        assert applied == ["light"]
+        assert bars == []
+        source.mode = "dark"
+        follower.poll()
+        assert applied == ["light", "dark"]
+        assert bars == [True]
+        assert follower.mode == "dark"
+        assert follower.theme == "sun-valley-dark"
+        assert gui.theme_name(root) == "sun-valley-dark"
+        assert source.reads == 3
+    finally:
+        root.destroy()
+
+
+def test_follower_reads_the_source_on_a_timer():
+    pytest.importorskip("sv_ttk")
+    root = new_root()
+    try:
+        source = ThemeSource("light")
+        follower = gui.ThemeFollower(root, source, interval=1)
+        deadline = time.monotonic() + 10
+        while source.reads < 3:
+            assert time.monotonic() < deadline, "timeout"
+            root.update()
+            time.sleep(0.005)
+        follower.stop()
+        reads = source.reads
+        for _ in range(3):
+            time.sleep(0.01)
+            root.update()
+        assert source.reads == reads
+    finally:
+        root.destroy()
+
+
+def test_follower_sets_the_title_bar_when_the_window_shows(monkeypatch):
+    pytest.importorskip("sv_ttk")
+    bars = []
+    monkeypatch.setattr(gui, "set_title_bar", lambda root, dark: bars.append(dark))
+    root = new_root()
+    try:
+        gui.ThemeFollower(root, ThemeSource("dark"), follow=False)
+        frame = tk.Frame(root)
+        frame.pack()
+        root.update()
+        assert bars == []  # the window is hidden, and a child does not count
+        root.deiconify()
+        root.update()
+        assert bars == [True]
+    finally:
+        root.destroy()
+
+
+def test_follower_stops_when_the_window_closes():
+    pytest.importorskip("sv_ttk")
+    root = new_root()
+    follower = gui.ThemeFollower(root, ThemeSource("dark"), interval=10_000)
+    assert follower._after_id is not None
+    root.destroy()
+    assert follower._after_id is None
+
+
+def test_follower_with_a_fixed_theme_does_not_read_again():
+    pytest.importorskip("sv_ttk")
+    root = new_root()
+    try:
+        source = ThemeSource("dark")
+        follower = gui.ThemeFollower(root, source, follow=False)
+        assert follower.theme == "sun-valley-dark"
+        assert follower._after_id is None
+        assert source.reads == 1
+    finally:
+        root.destroy()
+
+
+def test_follow_theme_uses_the_environment(monkeypatch):
+    pytest.importorskip("sv_ttk")
+    monkeypatch.setenv(gui.THEME_ENV, "light")
+    monkeypatch.setattr(gui, "system_theme", lambda: pytest.fail("reads the system"))
+    root = new_root()
+    try:
+        follower = gui.follow_theme(root)
+        assert follower.theme == "sun-valley-light"
+        assert follower._after_id is None
+    finally:
+        root.destroy()
+
+
+def test_set_title_bar_does_nothing_on_other_systems():
+    assert not gui.set_title_bar(object(), dark=True, platform="linux")
+
+
+def test_set_title_bar_does_not_raise_without_a_window():
+    class NoWindow:
+        def winfo_id(self):
+            raise tk.TclError("bad window path name")
+
+    assert not gui.set_title_bar(NoWindow(), dark=True, platform="win32")
+
+
+@pytest.mark.skipif(sys.platform != "win32", reason="the title bar color is a Windows feature")
+def test_set_title_bar_on_a_real_window():
+    root = new_root()
+    try:
+        assert not gui.set_title_bar(root, dark=True)  # Tk did not show the window yet
+        root.deiconify()
+        root.update()
+        assert gui.set_title_bar(root, dark=True)
+        assert gui.set_title_bar(root, dark=False)
+    finally:
+        root.destroy()
+
+
+# --- The size of the window ----------------------------------------------------------
+
+
+def test_minimum_size_is_at_least_the_requested_size(harness):
+    root = harness().root
+    width, height = root.minsize()
+    assert width >= max(gui.MIN_WIDTH, root.winfo_reqwidth())
+    assert height >= max(gui.MIN_HEIGHT, root.winfo_reqheight())
+
+
+@pytest.mark.parametrize("percent", [100, 125, 150])
+@pytest.mark.parametrize("themed", [True, False])
+def test_nothing_is_cut_off_at_the_minimum_size(percent, themed):
+    if themed:
+        pytest.importorskip("sv_ttk")
+    root = new_root()
+    try:
+        root.tk.call("tk", "scaling", 96 * percent / 100 / 72)
+        if themed:
+            assert gui.apply_theme(root, "light") is not None
+        app = gui.App(root, dnd_type=None)
+        app._set_busy(True)  # the Cancel button shows too
+        width, height = root.minsize()
+        root.geometry(f"{width}x{height}")
+        root.deiconify()
+        root.update()
+        for widget in (
+            app.zone_label,
+            app.browse_button,
+            app.max_side_box,
+            app.background_box,
+            app.compact_check,
+            app.progressbar,
+            app.cancel_button,
+            app.open_button,
+        ):
+            parent = widget.nametowidget(widget.winfo_parent())
+            assert widget.winfo_width() >= widget.winfo_reqwidth(), widget
+            assert widget.winfo_height() >= widget.winfo_reqheight(), widget
+            assert widget.winfo_x() + widget.winfo_width() <= parent.winfo_width(), widget
+            assert widget.winfo_y() + widget.winfo_height() <= parent.winfo_height(), widget
+        app._set_busy(False)
+        app.dispose()
+    finally:
+        root.destroy()
+
+
 # --- The window icon -----------------------------------------------------------------
 
 REPO_ICON = Path(__file__).resolve().parents[1] / "packaging" / gui.ICON_NAME

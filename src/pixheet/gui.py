@@ -7,6 +7,9 @@ and closes it when the app has nothing to do. Use it to test a built app.
 Each output file goes next to its image, with the suffix ``.xlsx``. A worker thread does
 the conversion, so the window stays responsive. The worker sends messages to a queue,
 and the window reads the queue each 50 ms.
+
+With sv-ttk, the window has the Sun Valley theme, the look of Windows 11. The theme is
+light or dark, the same as the system setting, and it changes when the setting changes.
 """
 
 import contextlib
@@ -16,7 +19,7 @@ import subprocess
 import sys
 import threading
 import time
-from collections.abc import Callable, Iterable, Sequence
+from collections.abc import Callable, Iterable, Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -32,6 +35,8 @@ from pixheet._image import RGB, check_max_side, parse_background
 from pixheet.core import DEFAULT_BACKGROUND, DEFAULT_MAX_SIDE, ConvertResult, convert
 
 TITLE = "Pixheet"
+MIN_WIDTH, MIN_HEIGHT = 460, 400
+"""The smallest size of the window. The window can need more, for example with large text."""
 POLL_MS = 50
 """Time between two reads of the message queue, in milliseconds."""
 PROGRESS_INTERVAL = 0.05
@@ -369,6 +374,214 @@ def enable_dnd(root: tk.Tk) -> str | None:
     return files
 
 
+# --- The theme -----------------------------------------------------------------------
+
+THEME_ENV = "PIXHEET_THEME"
+"""The environment variable that sets the theme: light, dark, or system (the default)."""
+THEME_POLL_MS = 2000
+"""Time between two reads of the system light or dark setting, in milliseconds."""
+SUN_VALLEY = ("sun-valley-light", "sun-valley-dark")
+"""The names of the ttk themes of sv-ttk."""
+PERSONALIZE_KEY = r"Software\Microsoft\Windows\CurrentVersion\Themes\Personalize"
+LIGHT_DISABLED_ACCENT_FG = "#575757"
+"""The text color of a disabled accent button in the light theme.
+
+sv-ttk draws this text white on light gray, with a contrast of 1.7:1. This color gives
+4.1:1, about the same as the dark theme.
+"""
+DWMWA_USE_IMMERSIVE_DARK_MODE = 20
+SWP_REDRAW_FRAME = 0x0001 | 0x0002 | 0x0004 | 0x0010 | 0x0020
+"""SetWindowPos flags: no size, no move, no z-order, no activate, frame changed."""
+
+
+def system_theme(platform: str | None = None) -> str:
+    """Return "dark" when Windows shows apps in dark mode. Else return "light".
+
+    The function reads the Windows setting from the registry. On other systems, and when
+    the setting is not available, the result is "light". The function does not raise.
+    """
+    if (platform or sys.platform) != "win32":
+        return "light"
+    try:
+        import winreg
+
+        with winreg.OpenKey(winreg.HKEY_CURRENT_USER, PERSONALIZE_KEY) as key:
+            value, _kind = winreg.QueryValueEx(key, "AppsUseLightTheme")
+    except ImportError, OSError:
+        return "light"
+    return "dark" if value == 0 else "light"
+
+
+def theme_override(environ: Mapping[str, str] | None = None) -> str | None:
+    """Return "light" or "dark" when the environment variable ``PIXHEET_THEME`` sets one.
+
+    Return None for "system", for no value, and for an unknown value. Then the app
+    follows the system setting.
+    """
+    value = (os.environ if environ is None else environ).get(THEME_ENV, "")
+    value = value.strip().lower()
+    return value if value in ("light", "dark") else None
+
+
+def _load_sv_ttk() -> Any:
+    """Import sv_ttk. The tests replace this function."""
+    # A plain import, not "lazy import", so that PyInstaller finds the package.
+    import sv_ttk
+
+    return sv_ttk
+
+
+def theme_name(root: tk.Tk) -> str:
+    """Return the name of the ttk theme of ``root``, for example "sun-valley-dark"."""
+    return ttk.Style(root).theme_use()
+
+
+def apply_theme(root: tk.Tk, mode: str) -> str | None:
+    """Show ``root`` in the light or dark Sun Valley theme. Return the ttk theme name.
+
+    Return None when sv-ttk is not installed or does not load. Then the window keeps the
+    ttk theme that it has. The function does not raise, because the theme only changes
+    the look of the app.
+    """
+    try:
+        sv_ttk = _load_sv_ttk()
+        first = SUN_VALLEY[0] not in ttk.Style(root).theme_names()
+        sv_ttk.set_theme(mode, root)
+        if first:
+            _adjust_sun_valley(root)
+    except Exception:
+        return None
+    name = theme_name(root)
+    return name if name in SUN_VALLEY else None
+
+
+def _adjust_sun_valley(root: tk.Tk) -> None:
+    """Change the Sun Valley themes in ``root`` once, after sv-ttk loads them."""
+    ttk.Style(root).theme_settings(
+        "sun-valley-light",
+        {
+            "Accent.TButton": {
+                "map": {
+                    "foreground": [("pressed", "#c1d8ee"), ("disabled", LIGHT_DISABLED_ACCENT_FG)]
+                }
+            }
+        },
+    )
+    # sv-ttk gives its fonts a size in pixels. Tk does not scale a size in pixels for the
+    # screen resolution. Scale the fonts, so that the text has the same size as in other
+    # apps at 125 % or 150 %.
+    scale = root.winfo_fpixels("1i") / 96
+    if abs(scale - 1) < 0.01:
+        return
+    for name in tkfont.names(root):
+        if name.startswith("SunValley"):
+            font = tkfont.nametofont(name, root=root)
+            size = int(font.cget("size"))
+            if size < 0:
+                font.configure(size=-round(-size * scale))
+
+
+def set_title_bar(root: tk.Tk, dark: bool, platform: str | None = None) -> bool:
+    """Make the title bar of ``root`` dark or light. Return True when Windows accepts it.
+
+    Only Windows 10 version 20H1 and later can do this. On other systems, and for a window
+    that Tk did not show yet, the function does nothing. It does not raise.
+    """
+    if (platform or sys.platform) != "win32":
+        return False
+    try:
+        import ctypes
+        from ctypes import wintypes
+
+        user32 = ctypes.WinDLL("user32")
+        user32.GetParent.restype = wintypes.HWND
+        user32.GetParent.argtypes = [wintypes.HWND]
+        dwmapi = ctypes.WinDLL("dwmapi")
+        # winfo_id() is the client area. Its parent is the frame with the title bar.
+        hwnd = user32.GetParent(root.winfo_id())
+        if not hwnd:
+            return False
+        value = ctypes.c_int(1 if dark else 0)
+        result = dwmapi.DwmSetWindowAttribute(
+            wintypes.HWND(hwnd),
+            DWMWA_USE_IMMERSIVE_DARK_MODE,
+            ctypes.byref(value),
+            ctypes.sizeof(value),
+        )
+        if result != 0:
+            return False
+        # Windows draws the new title bar only when the frame changes. This call redraws
+        # the frame and does not hide the window.
+        user32.SetWindowPos(wintypes.HWND(hwnd), None, 0, 0, 0, 0, SWP_REDRAW_FRAME)
+    except Exception:
+        return False
+    return True
+
+
+class ThemeFollower:
+    """Show ``root`` in the Sun Valley theme, light or dark, as ``source`` tells.
+
+    ``source`` returns "light" or "dark". With ``follow``, the class reads ``source`` each
+    ``interval`` milliseconds and changes the theme when the value changes. The title bar
+    on Windows gets the same mode. When sv-ttk does not load, ``theme`` is None, and the
+    window keeps its ttk theme.
+    """
+
+    def __init__(
+        self,
+        root: tk.Tk,
+        source: Callable[[], str] = system_theme,
+        *,
+        follow: bool = True,
+        interval: int = THEME_POLL_MS,
+    ) -> None:
+        self.root = root
+        self.source = source
+        self.interval = interval
+        self.mode = source()
+        self.theme = apply_theme(root, self.mode)
+        self._after_id: str | None = None
+        if self.theme is None:
+            return
+        root.bind("<Map>", self._on_map, add="+")
+        root.bind("<Destroy>", self._on_destroy, add="+")
+        if follow:
+            self._after_id = root.after(interval, self.poll)
+
+    def _on_map(self, event: tk.Event) -> None:
+        if event.widget is self.root:
+            set_title_bar(self.root, dark=self.mode == "dark")
+
+    def _on_destroy(self, event: tk.Event) -> None:
+        if event.widget is self.root:
+            self.stop()
+
+    def poll(self) -> None:
+        """Read ``source``. Change the theme and the title bar if the value changed."""
+        self._after_id = None
+        mode = self.source()
+        if mode != self.mode and (theme := apply_theme(self.root, mode)) is not None:
+            self.mode = mode
+            self.theme = theme
+            set_title_bar(self.root, dark=mode == "dark")
+        self._after_id = self.root.after(self.interval, self.poll)
+
+    def stop(self) -> None:
+        """Stop the reads of ``source``."""
+        if self._after_id is not None:
+            with contextlib.suppress(tk.TclError):
+                self.root.after_cancel(self._after_id)
+            self._after_id = None
+
+
+def follow_theme(root: tk.Tk) -> ThemeFollower:
+    """Apply the theme of ``PIXHEET_THEME``, or follow the system light or dark mode."""
+    mode = theme_override()
+    if mode is not None:
+        return ThemeFollower(root, lambda: mode, follow=False)
+    return ThemeFollower(root, system_theme)
+
+
 class App:
     """The main window. Make it on a Tk root, then call ``root.mainloop()``.
 
@@ -404,16 +617,22 @@ class App:
             self.status_var.set(NO_DND_TEXT)
         root.protocol("WM_DELETE_WINDOW", self.close)
         root.report_callback_exception = self._report_exception
+        self.fit_min_size()
 
     # Layout
 
     def _build(self) -> None:
         root = self.root
         root.title(TITLE)
-        root.minsize(460, 400)
-        self._big_font = tkfont.nametofont("TkDefaultFont").copy()
-        size = self._big_font.cget("size")
-        self._big_font.configure(size=round(size * 1.6))
+        root.minsize(MIN_WIDTH, MIN_HEIGHT)
+        sun_valley = theme_name(root) in SUN_VALLEY
+        if sun_valley:
+            # The heading font of sv-ttk. Its size follows the screen resolution.
+            self._big_font = tkfont.nametofont("SunValleySubtitleFont", root=root)
+        else:
+            self._big_font = tkfont.nametofont("TkDefaultFont", root=root).copy()
+            size = self._big_font.cget("size")
+            self._big_font.configure(size=round(size * 1.6))
 
         body = ttk.Frame(root, padding=16)
         body.pack(fill="both", expand=True)
@@ -421,7 +640,10 @@ class App:
         body.rowconfigure(0, weight=1)
         self.body = body
 
-        zone = ttk.Frame(body, padding=24, borderwidth=2, relief="groove")
+        if sun_valley:
+            zone = ttk.Frame(body, style="Card.TFrame", padding=24)
+        else:
+            zone = ttk.Frame(body, padding=24, borderwidth=2, relief="groove")
         zone.grid(row=0, column=0, sticky="nsew")
         zone.columnconfigure(0, weight=1)
         zone.rowconfigure(0, weight=1)
@@ -431,7 +653,10 @@ class App:
         self.zone_label.grid(row=1, column=0, pady=(0, 8))
         self.or_label = ttk.Label(zone, text="or")
         self.or_label.grid(row=2, column=0, pady=(0, 8))
-        self.browse_button = ttk.Button(zone, text="Browse...", command=self.browse)
+        # Other themes show the style Accent.TButton as a normal button.
+        self.browse_button = ttk.Button(
+            zone, text="Browse...", style="Accent.TButton", command=self.browse
+        )
         self.browse_button.grid(row=3, column=0, sticky="n")
 
         options = ttk.Frame(body, padding=(0, 12, 0, 0))
@@ -477,6 +702,17 @@ class App:
         self.open_button = ttk.Button(buttons, text="Open folder", command=self.open_output)
         self.open_button.grid(row=0, column=1)
         self.open_button.state(["disabled"])
+
+    def fit_min_size(self) -> None:
+        """Make the minimum size of the window large enough for all the widgets.
+
+        The size that the widgets need changes with the theme, the fonts, and the screen
+        resolution. A smaller window cuts off a part of the options row.
+        """
+        self.root.update_idletasks()
+        self.root.minsize(
+            max(MIN_WIDTH, self.root.winfo_reqwidth()), max(MIN_HEIGHT, self.root.winfo_reqheight())
+        )
 
     def _wrap_status(self, event: tk.Event) -> None:
         self.status_label.configure(wraplength=max(event.width - 32, 100))
@@ -777,7 +1013,7 @@ def smoke_test(app: App) -> list[str]:
     The window closes 200 ms after the start, or later when a batch runs, after the
     batch. The app does not show dialogs. It records each error message as a problem,
     and it does not replace output files that exist. A built app must also have the
-    window icon and drag and drop.
+    window icon, drag and drop, and the Sun Valley theme.
     """
     problems: list[str] = []
     if getattr(sys, "frozen", False):
@@ -785,6 +1021,8 @@ def smoke_test(app: App) -> list[str]:
             problems.append("The window icon is missing.")
         if not app.dnd:
             problems.append("Drag and drop is not available.")
+        if theme_name(app.root) not in SUN_VALLEY:
+            problems.append("The Sun Valley theme is not available.")
 
     def record(title: str, message: str, **kwargs: Any) -> None:
         problems.append(message)
@@ -806,7 +1044,9 @@ def main(argv: Sequence[str] | None = None) -> int:
     """Open the window. Convert the image paths in ``argv``, if there are some.
 
     With ``--smoke``, the window closes when it has nothing to do. Then the exit status is
-    1 if the app found a problem. See :func:`smoke_test`.
+    1 if the app found a problem. See :func:`smoke_test`. The window follows the system
+    light or dark mode. The environment variable ``PIXHEET_THEME`` can set "light" or
+    "dark".
     """
     args = list(sys.argv[1:] if argv is None else argv)
     smoke = "--smoke" in args
@@ -820,12 +1060,16 @@ def main(argv: Sequence[str] | None = None) -> int:
     except tk.TclError as e:
         _error(f"cannot open a window: {e}")
         return 1
-    app = App(root, dnd_type=enable_dnd(root))
+    # Load tkdnd into the plain tk.Tk root first, then the theme. The tests use this order.
+    dnd_type = enable_dnd(root)
+    follow_theme(root)
+    app = App(root, dnd_type=dnd_type)
     problems = smoke_test(app) if smoke else []
     if files:
         root.after_idle(app.start, files)
     if smoke and sys.stdout is not None:
         print(f"pixheet-gui: drag and drop {'on' if app.dnd else 'off'}", flush=True)
+        print(f"pixheet-gui: theme {theme_name(root)}", flush=True)
     root.mainloop()
     for problem in problems:
         _error(problem.replace("\n", " "))

@@ -67,6 +67,16 @@ The app uses Tkinter from the Python standard library. The `gui` extra adds
 tkinterdnd2, the app opens without the drop function, and **Browse...** still works.
 You can also give image paths as arguments: `pixheet-gui photo.jpg`.
 
+The `gui` extra also adds [sv-ttk](https://pypi.org/project/sv-ttk/). It gives the
+window the look of Windows 11:
+
+- On Windows, the window and its title bar are light or dark, the same as the Windows
+  setting for apps. When you change the setting, the window changes in about 2 seconds.
+- On other systems, the window is light.
+- To always use one mode, set the environment variable `PIXHEET_THEME` to `light` or
+  `dark`. The value `system` is the default.
+- Without sv-ttk, the app opens with the standard Tk look.
+
 To build the Windows app yourself, see [Windows app](#windows-app).
 
 ## Windows app

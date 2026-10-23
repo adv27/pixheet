@@ -15,7 +15,7 @@ Read [README.md](README.md) for usage, the Python API, and the Excel limits.
 | `src/pixheet/__init__.py` | The public API. The `__all__` list is the public surface. |
 | `src/pixheet/core.py` | `convert()`, `prepare()`, `ConvertResult`. |
 | `src/pixheet/cli.py` | The `pixheet` command. |
-| `src/pixheet/gui.py` | The `pixheet-gui` desktop app (Tkinter, with tkinterdnd2 for the file drop). |
+| `src/pixheet/gui.py` | The `pixheet-gui` desktop app (Tkinter, with tkinterdnd2 for the file drop and sv-ttk for the theme). |
 | `src/pixheet/_image.py` | Private. Opens, normalizes, and fits the image. |
 | `src/pixheet/_xlsx.py` | Private. Writes the `.xlsx` XML by hand. |
 | `src/pixheet/_threads.py` | Private. Runs the resize and the zip compression on several threads. The resize helpers give the same pixels as the one-thread calls. The zip members decompress to the same bytes. The compressed bytes can differ. |
@@ -68,6 +68,8 @@ Run the tests, the lint, and the format check before you report a change as comp
 - In `gui.py`, only the main thread can call Tk. The worker thread sends messages
   through a queue. A Tk object that Python collects on the worker thread causes an
   error, so the GUI tests collect garbage on the main thread after each test.
+- `App` does not load the Sun Valley theme. Only `main()` loads it, so most window tests
+  use the default ttk theme. A test that needs the theme calls `apply_theme()`.
 - The primary development OS is Windows. Keep paths and shell examples portable.
 - `packaging/pixheet.spec` leaves many modules out of `Pixheet.exe`. A new import of
   such a module can break the exe while the tests pass. After a change to the imports in
