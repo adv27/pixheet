@@ -56,6 +56,23 @@ def test_committed_icon_is_the_output_of_make_icon(tmp_path):
     assert sorted(frames(fresh)) == list(make_icon.SIZES)
 
 
+def test_committed_png_icon_is_the_output_of_make_icon(tmp_path):
+    fresh = make_icon.write_png(tmp_path / "pixheet.png")
+    with Image.open(make_icon.PNG) as committed, Image.open(fresh) as new:
+        assert committed.format == new.format == "PNG"
+        assert committed.size == (make_icon.PNG_SIZE, make_icon.PNG_SIZE)
+        assert committed.convert("RGBA").tobytes() == new.convert("RGBA").tobytes()
+
+
+def test_make_icon_writes_the_file_type_of_each_output(tmp_path, monkeypatch, capsys):
+    ico, png = tmp_path / "a.ico", tmp_path / "a.PNG"
+    monkeypatch.setattr(sys, "argv", ["make_icon.py", str(ico), str(png)])
+    make_icon.main()
+    with Image.open(ico) as first, Image.open(png) as second:
+        assert (first.format, second.format) == ("ICO", "PNG")
+    assert capsys.readouterr().out.split() == [str(ico), str(png)]
+
+
 @pytest.mark.parametrize("size", make_icon.SIZES)
 def test_icon_cells_have_the_picture_colors(size):
     image = make_icon.draw(size)

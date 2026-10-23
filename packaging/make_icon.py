@@ -1,8 +1,9 @@
-"""Draw the Pixheet icon and write it to packaging/pixheet.ico.
+"""Draw the Pixheet icon and write it to packaging/pixheet.ico and packaging/pixheet.png.
 
 The icon is a small pixel-art picture on a grid of 8 x 8 cells, one color for each
 cell, as in a sheet that Pixheet makes. The script draws each size on its own, so that
-the cells have sharp edges at each size. Run it from the repository root:
+the cells have sharp edges at each size. The app on Windows uses the .ico file. The app
+on Linux uses the PNG file. Run the script from the repository root:
 
     uv run python packaging/make_icon.py
 """
@@ -15,6 +16,9 @@ from PIL import Image, ImageDraw
 SIZES = (16, 24, 32, 48, 64, 128, 256)
 """The sizes in the .ico file, in pixels. Each size is a multiple of the grid size."""
 ICON = Path(__file__).with_name("pixheet.ico")
+PNG = Path(__file__).with_name("pixheet.png")
+PNG_SIZE = 128
+"""The size of the PNG icon, in pixels. The window manager scales it."""
 
 PALETTE = {
     "s": (79, 163, 224),  # sky
@@ -71,11 +75,24 @@ def write(path: Path = ICON) -> Path:
     return path
 
 
+def write_png(path: Path = PNG) -> Path:
+    """Write the icon with the size ``PNG_SIZE`` to the PNG file ``path``. Return ``path``."""
+    draw(PNG_SIZE).save(path, format="PNG", optimize=True)
+    return path
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
-    parser.add_argument("output", nargs="?", type=Path, default=ICON, help="the .ico file")
+    parser.add_argument(
+        "output",
+        nargs="*",
+        type=Path,
+        default=[ICON, PNG],
+        help="the .ico file or the .png file (default: both files in packaging/)",
+    )
     args = parser.parse_args()
-    print(write(args.output))
+    for output in args.output:
+        print(write_png(output) if output.suffix.lower() == ".png" else write(output))
 
 
 if __name__ == "__main__":

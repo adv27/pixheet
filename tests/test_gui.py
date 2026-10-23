@@ -122,6 +122,22 @@ def test_throttle_limits_updates_but_lets_the_first_and_last_through():
 def test_image_suffixes_match_the_file_dialog_types():
     patterns = gui.IMAGE_TYPES[0][1].split()
     assert {pattern.removeprefix("*") for pattern in patterns} == IMAGE_SUFFIXES
+    assert gui.image_types("win32") == gui.IMAGE_TYPES
+
+
+def test_file_dialog_types_on_x11_ignore_the_case():
+    [(name, patterns), (other, everything)] = gui.image_types("linux")
+    assert (name, other, everything) == ("Images", "All files", "*")
+    patterns = patterns.split()
+    assert len(patterns) == len(IMAGE_SUFFIXES)
+    assert "*.[pP][nN][gG]" in patterns
+    assert "*.[tT][iI][fF][fF]" in patterns
+    # Tcl "string match", which the Tk file dialog uses, accepts each case of a suffix.
+    interp = tk.Tcl()
+    for suffix in IMAGE_SUFFIXES:
+        for name in (f"a{suffix}", f"a{suffix.upper()}", f"a{suffix.title()}"):
+            assert any(interp.call("string", "match", p, name) for p in patterns), name
+    assert not any(interp.call("string", "match", p, "a.txt") for p in patterns)
 
 
 def test_parse_options():
@@ -265,7 +281,7 @@ def test_open_folder_does_not_wait_for_the_opener(tmp_path, monkeypatch, platfor
         # An opener that runs for some time, as xdg-open can.
         return real_popen([sys.executable, "-c", "import time; time.sleep(1)"], **kwargs)
 
-    monkeypatch.setattr(gui.subprocess, "Popen", popen)
+    monkeypatch.setattr(_desktop.subprocess, "Popen", popen)
     t0 = time.monotonic()
     gui.open_folder(tmp_path / "a.xlsx", platform=platform)
     assert time.monotonic() - t0 < 0.5
@@ -283,7 +299,7 @@ def test_open_folder_without_an_opener_raises(tmp_path, monkeypatch):
     def popen(command, **kwargs):
         raise FileNotFoundError(2, "No such file", command[0])
 
-    monkeypatch.setattr(gui.subprocess, "Popen", popen)
+    monkeypatch.setattr(_desktop.subprocess, "Popen", popen)
     with pytest.raises(FileNotFoundError, match="xdg-open"):  # App shows it in a dialog
         gui.open_folder(tmp_path / "a.xlsx", platform="linux")
 
@@ -799,6 +815,28 @@ def test_main_smoke_of_a_built_app_accepts_no_dnd_when_tkdnd_cannot_load(monkeyp
     assert "Drag and drop" not in captured.err
 
 
+def test_missing_x11_dialogs():
+    found = {"::tk::dialog::file::": "1", "::tk::MessageBox": "0"}
+
+    def call(command, name):
+        assert command == "auto_load"
+        return found[name]
+
+    assert gui.missing_x11_dialogs(call) == ["Tk cannot load the message box (msgbox.tcl)."]
+    found["::tk::MessageBox"] = 1  # Tcl can give an int
+    assert gui.missing_x11_dialogs(call) == []
+
+
+def test_tk_finds_the_x11_dialogs():
+    root = new_root()
+    try:
+        if root.tk.call("tk", "windowingsystem") != "x11":
+            pytest.skip("Tk on this system uses the dialogs of the system")
+        assert gui.missing_x11_dialogs(root.tk.call) == []
+    finally:
+        root.destroy()
+
+
 def test_main_smoke_of_a_built_app_needs_the_theme(monkeypatch, capsys):
     new_root().destroy()
     monkeypatch.setattr(sys, "frozen", True, raising=False)
@@ -827,7 +865,7 @@ def fake_winreg(value=None, error=None):
 
     def open_key(root, path):
         assert root == "HKCU"
-        assert path == gui.PERSONALIZE_KEY
+        assert path == _desktop.PERSONALIZE_KEY
         if error is not None:
             raise error
         return FakeKey()
@@ -858,10 +896,31 @@ def test_system_theme_without_winreg(monkeypatch):
     assert gui.system_theme(platform="win32") == "light"
 
 
-def test_system_theme_on_other_systems_is_light(monkeypatch):
+def test_system_theme_on_other_systems_does_not_read_the_registry(monkeypatch):
     monkeypatch.setitem(sys.modules, "winreg", fake_winreg(0))
+    monkeypatch.setattr(_desktop, "linux_theme", lambda: None)
     assert gui.system_theme(platform="linux") == "light"
     assert gui.system_theme(platform="darwin") == "light"
+
+
+def test_system_theme_on_linux_asks_the_desktop(monkeypatch):
+    monkeypatch.setattr(_desktop, "linux_theme", lambda: "dark")
+    assert gui.system_theme(platform="linux") == "dark"
+
+
+def test_follow_theme_reads_the_system_on_a_worker_thread_off_windows(monkeypatch):
+    pytest.importorskip("sv_ttk")
+    reads = []
+    monkeypatch.setattr(gui, "system_theme", lambda: reads.append(1) or "dark")
+    root = new_root()
+    try:
+        follower = gui.follow_theme(root, platform="linux")
+        assert isinstance(follower.source, _desktop.LatestValue)
+        assert follower.mode == "dark"
+        assert reads == [1]
+        follower.stop()
+    finally:
+        root.destroy()
 
 
 @pytest.mark.parametrize(
@@ -1609,6 +1668,7 @@ def test_nothing_is_cut_off_at_the_minimum_size(percent, themed):
 # --- The window icon -----------------------------------------------------------------
 
 REPO_ICON = Path(__file__).resolve().parents[1] / "packaging" / gui.ICON_NAME
+REPO_PNG = REPO_ICON.with_name(gui.ICON_PNG)
 
 
 def test_icon_path_from_a_checkout():
@@ -1645,12 +1705,29 @@ def test_set_icon_sets_the_default_icon_on_windows():
     assert root.calls == [{"default": str(REPO_ICON)}]
 
 
-def test_set_icon_does_nothing_on_other_systems_or_without_the_file(monkeypatch):
+def test_set_icon_does_nothing_without_the_file(monkeypatch):
     root = IconRoot()
-    assert not gui.set_icon(root, platform="linux")
-    monkeypatch.setattr(gui, "icon_path", lambda: None)
+    monkeypatch.setattr(gui, "icon_path", lambda name=gui.ICON_NAME: None)
     assert not gui.set_icon(root, platform="win32")
+    assert not gui.set_icon(root, platform="linux")
     assert root.calls == []
+
+
+def test_icon_path_finds_the_png_icon():
+    assert gui.icon_path(gui.ICON_PNG) == REPO_PNG
+    assert REPO_PNG.is_file()
+
+
+def test_set_icon_shows_the_png_icon_off_windows(tmp_path, monkeypatch):
+    root = new_root()
+    try:
+        assert gui.set_icon(root, platform="linux")
+        assert root._pixheet_icon.width() == root._pixheet_icon.height() == 128
+        # The file goes away after the check: Tk raises an error, and the app continues.
+        monkeypatch.setattr(gui, "icon_path", lambda name: tmp_path / name)
+        assert not gui.set_icon(root, platform="linux")
+    finally:
+        root.destroy()
 
 
 @pytest.mark.skipif(sys.platform != "win32", reason="Tk reads .ico files only on Windows")
@@ -1665,8 +1742,8 @@ def test_set_icon_on_a_real_window(tmp_path, monkeypatch):
         root.destroy()
 
 
-def test_window_has_the_icon_on_windows(harness):
-    assert harness().app.has_icon == (sys.platform == "win32")
+def test_window_has_the_icon(harness):
+    assert harness().app.has_icon
 
 
 def has_tkinterdnd2() -> bool:

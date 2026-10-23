@@ -490,7 +490,28 @@ def test_path_problem_of_a_long_file_name_on_all_systems():
     dst = Path("/out", "a" * 251 + ".xlsx")
     problem = path_problem(dst, platform="linux")
     assert problem is not None
+    assert problem.startswith("The output file name has 256 bytes. The limit is 255.")
+    problem = path_problem(dst, platform="win32")
     assert problem.startswith("The output file name has 256 characters. The limit is 255.")
+
+
+def test_path_problem_counts_bytes_off_windows():
+    # 95 letters with a mark and the suffix: 100 characters, but 290 bytes in UTF-8.
+    dst = Path("/out", "ả" * 95 + ".xlsx")
+    assert path_problem(dst, platform="win32") is None
+    problem = path_problem(dst, platform="linux")
+    assert problem.startswith("The output file name has 290 bytes. The limit is 255.")
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="a POSIX path is not absolute on Windows")
+def test_path_problem_of_a_long_path_off_windows():
+    folder = "/" + "/".join(["x" * 200] * 20)  # 4,020 bytes, each name below the limit
+    assert path_problem(Path(folder, "a.xlsx"), platform="linux") is None
+    problem = path_problem(Path(folder, "y" * 70, "a.xlsx"), platform="linux")
+    assert problem.startswith("The output path has 4,098 bytes. The system allows 4,095.")
+    assert "Windows" not in problem
+    near = Path(folder, "y" * 50, "a.xlsx")  # the path fits, the temporary file does not
+    assert "temporary file next to the output needs" in path_problem(near, platform="linux")
 
 
 # --- Folders -------------------------------------------------------------------------

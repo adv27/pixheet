@@ -41,7 +41,9 @@ DONE_MARK, FAILED_MARK, MUTED_MARK = "\u2713", "\u2715", "\u2013"
 LONG_PATH = 259
 """The longest path that Windows opens without the long path setting."""
 LONG_NAME = 255
-"""The longest file name on Windows, macOS and Linux."""
+"""The longest file name: 255 characters on Windows, 255 bytes on Linux and macOS."""
+LONG_POSIX_PATH = 4095
+"""The longest path in bytes that Linux opens. PATH_MAX is 4096 with the end byte."""
 TEMP_NAME_LENGTH = len(".pixheet-0123456789abcdef.tmp")
 """The length of the name of the temporary file that convert() writes next to the output."""
 MAX_NAMED = 3
@@ -307,31 +309,38 @@ def path_problem(dst: Path, limit: int = LONG_PATH, *, platform: str | None = No
     The function only looks at the length of the path. It does not write to the disk.
     A folder that the app cannot write gives an error in the row when the app writes.
 
-    - On Windows, a path of more than ``limit`` characters fails. convert() first writes
-      a temporary file with a name of 29 characters next to the output. Its path counts
-      too.
-    - On all systems, a file name of more than 255 characters fails.
+    - On Windows, a file name of more than 255 characters fails. A path of more than
+      ``limit`` characters also fails. convert() first writes a temporary file with a
+      name of 29 characters next to the output. Its path counts too.
+    - On other systems, the limits count bytes in UTF-8, not characters. A file name of
+      more than 255 bytes fails, and a path of more than 4,095 bytes fails. A letter
+      with a mark, for example "ả", has 3 bytes.
     """
+    windows = (platform or sys.platform) == "win32"
     name = dst.name
-    if len(name) > LONG_NAME:
+    length = len(name) if windows else len(os.fsencode(name))
+    unit = "characters" if windows else "bytes"
+    if length > LONG_NAME:
         return (
-            f"The output file name has {len(name):,} characters. The limit is {LONG_NAME}. "
+            f"The output file name has {length:,} {unit}. The limit is {LONG_NAME}. "
             "Rename the image, then click Retry failed."
         )
-    if (platform or sys.platform) != "win32":
-        return None
     full = absolute(dst)
-    length = len(str(full))
-    temp_length = len(str(full.parent / ("x" * TEMP_NAME_LENGTH)))
+    temp = full.parent / ("x" * TEMP_NAME_LENGTH)
+    if windows:
+        length, temp_length = len(str(full)), len(str(temp))
+        system = "Windows allows"
+    else:
+        limit = LONG_POSIX_PATH
+        length, temp_length = len(os.fsencode(full)), len(os.fsencode(temp))
+        system = "The system allows"
     if length > limit:
-        what = f"The output path has {length:,} characters."
+        what = f"The output path has {length:,} {unit}."
     elif temp_length > limit:
-        what = f"The temporary file next to the output needs {temp_length:,} characters."
+        what = f"The temporary file next to the output needs {temp_length:,} {unit}."
     else:
         return None
-    return (
-        f'{what} Windows allows {limit}. Set "Save to" to a short folder, then click Retry failed.'
-    )
+    return f'{what} {system} {limit:,}. Set "Save to" to a short folder, then click Retry failed.'
 
 
 def common_folder(folders: Sequence[Path]) -> Path | None:

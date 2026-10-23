@@ -18,7 +18,6 @@ import configparser
 import contextlib
 import os
 import queue
-import subprocess
 import sys
 import threading
 import time
@@ -36,7 +35,7 @@ except ImportError:  # a Python build without Tk
 
 from PIL import UnidentifiedImageError
 
-from pixheet._desktop import dnd_allowed
+from pixheet._desktop import LatestValue, dnd_allowed, open_folder, settings_path, system_theme
 from pixheet._image import RGB, check_max_side, parse_background
 from pixheet.core import DEFAULT_BACKGROUND, DEFAULT_MAX_SIDE, ConvertResult, convert
 
@@ -61,7 +60,25 @@ IMAGE_TYPES = [
     ),
     ("All files", "*.*"),
 ]
+"""The file types of the file dialog on Windows."""
 BACKGROUNDS = ("white", "black", "none")
+
+
+def image_types(platform: str | None = None) -> list[tuple[str, str]]:
+    """Return the file types of the file dialog for the system.
+
+    Windows compares the patterns without case. The Tk file dialog on X11 compares them
+    with case, so each letter of a suffix gets a pattern for both cases, for example
+    ``*.[pP][nN][gG]``. On X11, ``*.*`` does not show a file without a dot, so "All
+    files" is ``*``.
+    """
+    if (platform or sys.platform) == "win32":
+        return IMAGE_TYPES
+    patterns = [
+        "*." + "".join(f"[{c.lower()}{c.upper()}]" if c.isalpha() else c for c in p[2:])
+        for p in IMAGE_TYPES[0][1].split()
+    ]
+    return [(IMAGE_TYPES[0][0], " ".join(patterns)), ("All files", "*")]
 
 
 # --- Helpers that do not need Tk -----------------------------------------------------
@@ -309,30 +326,6 @@ def summary(dst: Path, result: ConvertResult) -> str:
     return f"{dst}  {w}x{h}  {result.colors:,} colors  {result.seconds:.2f} s"
 
 
-def open_folder(path: Path, platform: str | None = None) -> None:
-    """Show the folder that holds ``path`` in the file manager of the system.
-
-    The function does not wait for the file manager. Some openers, for example the
-    generic path of xdg-open, run until the user closes the file manager. Raise OSError
-    when the system has no opener.
-    """
-    folder = path.parent
-    platform = platform or sys.platform
-    if platform == "win32":
-        os.startfile(folder)
-        return
-    opener = "open" if platform == "darwin" else "xdg-open"
-    process = subprocess.Popen(
-        [opener, os.fspath(folder)],
-        stdin=subprocess.DEVNULL,
-        stdout=subprocess.DEVNULL,
-        stderr=subprocess.DEVNULL,
-        start_new_session=True,
-    )
-    # Collect the exit status when the opener ends. This prevents a zombie process.
-    threading.Thread(target=process.wait, name="pixheet-opener", daemon=True).start()
-
-
 # --- The window ----------------------------------------------------------------------
 
 
@@ -345,10 +338,13 @@ def _load_tkdnd() -> tuple[Any, str]:
 
 
 ICON_NAME = "pixheet.ico"
+"""The window icon on Windows."""
+ICON_PNG = "pixheet.png"
+"""The window icon on other systems. Tk reads PNG files without Pillow."""
 
 
-def icon_path() -> Path | None:
-    """Return the path of the window icon, or None when the app has no icon file.
+def icon_path(name: str = ICON_NAME) -> Path | None:
+    """Return the path of the icon file ``name``, or None when the app has no such file.
 
     The built app has the icon in its own folder. From a checkout, the icon is in
     ``packaging/``. An installed package does not include the icon.
@@ -357,23 +353,35 @@ def icon_path() -> Path | None:
         folder = Path(getattr(sys, "_MEIPASS", Path(sys.executable).parent))
     else:
         folder = Path(__file__).resolve().parents[2] / "packaging"
-    path = folder / ICON_NAME
+    path = folder / name
     return path if path.is_file() else None
 
 
 def set_icon(root: tk.Tk, platform: str | None = None) -> bool:
     """Show the Pixheet icon on ``root`` and on all windows that come later.
 
-    Return True when the window has the icon. Only Tk on Windows can read an .ico file.
-    On other systems, and when the icon file is not found, the window keeps the Tk icon.
+    Return True when the window has the icon. On Windows, Tk reads the .ico file. On
+    other systems, Tk reads the PNG file. When the icon file is not found, the window
+    keeps the Tk icon.
     """
-    path = icon_path()
-    if path is None or (platform or sys.platform) != "win32":
+    if (platform or sys.platform) == "win32":
+        path = icon_path()
+        if path is None:
+            return False
+        try:
+            root.iconbitmap(default=os.fspath(path))
+        except tk.TclError:
+            return False
+        return True
+    path = icon_path(ICON_PNG)
+    if path is None:
         return False
     try:
-        root.iconbitmap(default=os.fspath(path))
+        image = tk.PhotoImage(master=root, file=os.fspath(path))
+        root.iconphoto(True, image)
     except tk.TclError:
         return False
+    root._pixheet_icon = image  # Tk deletes an image when Python has no reference to it
     return True
 
 
@@ -404,7 +412,6 @@ THEME_POLL_MS = 2000
 """Time between two reads of the system light or dark setting, in milliseconds."""
 SUN_VALLEY = ("sun-valley-light", "sun-valley-dark")
 """The names of the ttk themes of sv-ttk."""
-PERSONALIZE_KEY = r"Software\Microsoft\Windows\CurrentVersion\Themes\Personalize"
 LIGHT_DISABLED_ACCENT_FG = "#575757"
 """The text color of a disabled accent button in the light theme.
 
@@ -421,24 +428,6 @@ In this time, Windows draws the title bar in the theme mode, and Tk draws the wi
 """
 
 
-def system_theme(platform: str | None = None) -> str:
-    """Return "dark" when Windows shows apps in dark mode. Else return "light".
-
-    The function reads the Windows setting from the registry. On other systems, and when
-    the setting is not available, the result is "light". The function does not raise.
-    """
-    if (platform or sys.platform) != "win32":
-        return "light"
-    try:
-        import winreg
-
-        with winreg.OpenKey(winreg.HKEY_CURRENT_USER, PERSONALIZE_KEY) as key:
-            value, _kind = winreg.QueryValueEx(key, "AppsUseLightTheme")
-    except ImportError, OSError:
-        return "light"
-    return "dark" if value == 0 else "light"
-
-
 def theme_override(environ: Mapping[str, str] | None = None) -> str | None:
     """Return the theme choice that the environment variable ``PIXHEET_THEME`` sets.
 
@@ -450,29 +439,7 @@ def theme_override(environ: Mapping[str, str] | None = None) -> str | None:
     return value if value in THEME_CHOICES else None
 
 
-SETTINGS_NAME = "settings.ini"
 SETTINGS_SECTION = "appearance"
-
-
-def settings_path(
-    environ: Mapping[str, str] | None = None, platform: str | None = None
-) -> Path | None:
-    r"""Return the path of the settings file. Return None when the system gives no folder.
-
-    On Windows, the path is ``%APPDATA%\Pixheet\settings.ini``. On other systems, it is
-    ``pixheet/settings.ini`` in ``$XDG_CONFIG_HOME``, or in ``~/.config``. The function
-    does not make the file or the folder.
-    """
-    environ = os.environ if environ is None else environ
-    if (platform or sys.platform) == "win32":
-        base = Path(environ.get("APPDATA", ""))
-        return base / TITLE / SETTINGS_NAME if base.is_absolute() else None
-    base = Path(environ.get("XDG_CONFIG_HOME", ""))
-    if not base.is_absolute():
-        base = Path(environ.get("HOME", ""), ".config")
-        if not base.is_absolute():
-            return None
-    return base / "pixheet" / SETTINGS_NAME
 
 
 def _read_settings(path: Path) -> configparser.ConfigParser:
@@ -741,14 +708,20 @@ class ThemeFollower:
         return True
 
 
-def follow_theme(root: tk.Tk, settings: Path | None = None) -> ThemeFollower:
+def follow_theme(
+    root: tk.Tk, settings: Path | None = None, platform: str | None = None
+) -> ThemeFollower:
     """Show ``root`` in the theme choice of ``PIXHEET_THEME``, or else in the saved choice.
 
     ``settings`` is the settings file. Without a choice, the window follows the system
-    light or dark mode.
+    light or dark mode. On Linux, the app runs commands to read the system setting. A
+    worker thread runs them, so that a slow command does not block the window.
     """
     choice = theme_override() or read_theme_choice(settings)
-    return ThemeFollower(root, system_theme, choice=choice)
+    source: Callable[[], str] = system_theme
+    if (platform or sys.platform) != "win32":
+        source = LatestValue(system_theme, name="pixheet-theme")
+    return ThemeFollower(root, source, choice=choice)
 
 
 class App:
@@ -1033,7 +1006,7 @@ class App:
         if self.busy or self.closing:
             return
         names = self._modal(
-            self.ask_files, parent=self.root, title="Choose images", filetypes=IMAGE_TYPES
+            self.ask_files, parent=self.root, title="Choose images", filetypes=image_types()
         )
         if self._close_if_asked():
             return
@@ -1266,6 +1239,26 @@ def _set_dpi_awareness() -> None:
         ctypes.windll.shcore.SetProcessDpiAwareness(2)  # per-monitor DPI aware
 
 
+X11_DIALOGS = {
+    "::tk::dialog::file::": "the file dialog (tkfbox.tcl)",
+    "::tk::MessageBox": "the message box (msgbox.tcl)",
+}
+"""The Tcl commands of the dialogs that Tk on X11 makes with Tcl scripts."""
+
+
+def missing_x11_dialogs(call: Callable[..., Any]) -> list[str]:
+    """Return a problem for each X11 dialog whose Tcl script Tk cannot find.
+
+    ``call`` is ``root.tk.call``. A trim of the Tcl and Tk files in the built app can
+    remove a script by mistake. The smoke test opens no dialog, so this check finds it.
+    """
+    return [
+        f"Tk cannot load {what}."
+        for command, what in X11_DIALOGS.items()
+        if str(call("auto_load", command)) != "1"
+    ]
+
+
 def smoke_test(app: App) -> list[str]:
     """Prepare ``app`` for a smoke test, and return the list that collects the problems.
 
@@ -1273,7 +1266,8 @@ def smoke_test(app: App) -> list[str]:
     batch. The app does not show dialogs. It records each error message as a problem,
     and it does not replace output files that exist. A built app must also have the
     window icon and the Sun Valley theme. It must have drag and drop when tkdnd can load
-    (see :func:`pixheet._desktop.dnd_allowed`).
+    (see :func:`pixheet._desktop.dnd_allowed`). On X11, Tk must find the scripts of its
+    dialogs.
     """
     problems: list[str] = []
     if getattr(sys, "frozen", False):
@@ -1283,6 +1277,8 @@ def smoke_test(app: App) -> list[str]:
             problems.append("Drag and drop is not available.")
         if theme_name(app.root) not in SUN_VALLEY:
             problems.append("The Sun Valley theme is not available.")
+        if app.root.tk.call("tk", "windowingsystem") == "x11":
+            problems += missing_x11_dialogs(app.root.tk.call)
 
     def record(title: str, message: str, **kwargs: Any) -> None:
         problems.append(message)
@@ -1317,7 +1313,9 @@ def main(argv: Sequence[str] | None = None) -> int:
         return 1
     _set_dpi_awareness()
     try:
-        root = tk.Tk()
+        # On X11, the class name is the WM_CLASS of the window. Desktops use it to group
+        # the windows of an app.
+        root = tk.Tk(className=TITLE)
     except tk.TclError as e:
         _error(f"cannot open a window: {e}")
         return 1
