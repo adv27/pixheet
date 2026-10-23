@@ -1,21 +1,24 @@
 # Packaging and CI
 
-This folder holds the build of `Pixheet.exe`, the desktop app for Windows. This page is
-for maintainers.
+This folder holds the build of the desktop app in one file: `Pixheet.exe` for Windows and
+`Pixheet-linux-x86_64` for Linux. This page is for maintainers.
 
 ## Files
 
 | File | Content |
 |---|---|
 | `pixheet_gui.py` | The entry script that PyInstaller freezes. |
-| `pixheet.spec` | The PyInstaller spec. It makes one file by default. It leaves unused modules out of the exe. |
-| `trim_tcltk.py` | Removes unused files from the Tcl and Tk library in `tcl90.dll` and `tcl9tk90.dll`. The spec runs it. |
+| `pixheet.spec` | The PyInstaller spec, for Windows and Linux. It makes one file by default. It leaves unused modules out of the app. |
+| `trim_tcltk.py` | Removes unused files from the Tcl and Tk library: in `tcl90.dll` and `tcl9tk90.dll` on Windows, from the data files on Linux. The spec runs it. |
+| `linux_guards.py` | On Linux, reads each library of the bundle with `objdump -T`. It stops the build for a glibc newer than 2.27 or a libX11 older than 1.7. The spec runs it. |
 | `version_info.py` | Reads the version resource of the exe from `pyproject.toml` and `LICENSE`. |
-| `pixheet.ico` | The icon of the exe and of the window, in 7 sizes from 16 to 256 pixels. |
-| `make_icon.py` | Draws `pixheet.ico` with Pillow. |
-| `build.ps1` | Builds the exe and tests it. |
+| `pixheet.ico` | The icon of the exe and of the window on Windows, in 7 sizes from 16 to 256 pixels. |
+| `pixheet.png` | The icon of the window on Linux, 128 pixels. |
+| `make_icon.py` | Draws `pixheet.ico` and `pixheet.png` with Pillow. |
+| `build.ps1` | Builds the exe on Windows and tests it. |
+| `build.sh` | Builds the Linux app and tests it. Run it on Debian 11. |
 | `release_version.py` | Reads the version from `pyproject.toml` for the release job. It also stops a pull request that changes the version to a version with a tag. |
-| `check_exe.py` | Makes sure that a built exe starts, and that it converts test images of 11 formats and modes correctly. |
+| `check_exe.py` | Makes sure that a built app starts, and that it converts test images of 11 formats and modes correctly. It works on Windows and on Linux. |
 | `runner_job_started.ps1` | The job-started hook for a later self-hosted runner. It refuses each job that is not a trusted build. Read [Later: self-hosted runner](#later-self-hosted-runner). |
 
 ## Build on your computer
@@ -71,13 +74,78 @@ Sun Valley theme of sv-ttk. The app also prints the name of its ttk theme.
 name of a standard Tk theme.
 
 The exe shows the version of `pyproject.toml` in its properties. To change the icon,
-edit `make_icon.py`, then run `uv run python packaging/make_icon.py`. Commit the script
-and the new `pixheet.ico`. A test makes sure that the two agree.
+edit `make_icon.py`, then run `uv run python packaging/make_icon.py`. Commit the script,
+the new `pixheet.ico` and the new `pixheet.png`. Tests make sure that they agree.
+
+## Build the Linux app
+
+Run this command from the repository root, on Debian 11 or in a `debian:11` container:
+
+```console
+$ bash packaging/build.sh
+```
+
+The script does the same steps as `build.ps1`, with these differences:
+
+- It builds `dist/Pixheet` from the same `pixheet.spec`.
+- It runs `check_exe.py` under `xvfb-run` when `DISPLAY` is not set.
+- It renames the file to `dist/Pixheet-linux-x86_64` and writes
+  `dist/Pixheet-linux-x86_64.sha256`. With `--onedir`, it builds the folder
+  `dist/Pixheet/` and does not rename it.
+- PyInstaller uses `SOURCE_DATE_EPOCH` as the time stamp of the files in the bundle.
+
+Install these packages first: `git`, `binutils` (for `objdump`), `libx11-6`,
+`libxcursor1`, `xvfb` and `xauth`.
+
+### Why Debian 11
+
+PyInstaller copies the shared libraries of the build host into the app, for example
+`libX11.so.6`, `libstdc++.so.6` and `libgcc_s.so.1`. These libraries set two limits:
+
+- **glibc.** The app runs only on a system with the newest glibc version that a library
+  of the bundle needs. Pillow already needs glibc 2.27. On Debian 11 (glibc 2.31), the
+  libraries of the host need 2.26 or less, so the app needs glibc 2.27: Ubuntu 18.04,
+  Debian 10, RHEL 8 and later. On Ubuntu 22.04, the app would need glibc 2.35. On the
+  `ubuntu-latest` runner (Ubuntu 24.04), it would need glibc 2.39.
+- **libX11.** The Tk of the uv Python (python-build-standalone) has its own static copy of
+  Xlib. tkdnd uses the shared `libX11.so.6`. With a libX11 older than 1.7, the load of
+  tkdnd stops the app with SIGABRT ("[xcb] Extra reply data still left in queue"), and
+  Python cannot catch that. Debian 11 has libX11 1.7.2. Ubuntu 20.04 and RHEL 8 have
+  1.6, so they are not good build hosts. Only libX11 1.7 and later export the function
+  `XSetIOErrorExitHandler`.
+
+`linux_guards.py` makes sure of both limits in the spec. It reads each library with
+`objdump -T`. The build stops when a library needs a glibc newer than 2.27, or when the
+bundled `libX11.so.6` does not export `XSetIOErrorExitHandler`. The log shows the floor,
+for example `linux_guards: the app needs glibc 2.27 or later (GLIBC_2.27 in
+PIL/_imagingmath...)`.
+
+The app itself does the same libX11 check before it loads tkdnd (see
+`src/pixheet/_desktop.py`). It matters for a source install with `pip` or `uv` on Ubuntu
+20.04 or RHEL 8: then the app runs without drag and drop and does not stop.
+
+Debian 11 is past its LTS. Its packages are on `archive.debian.org`, and they get no
+more security updates. If the archive goes away, change the container of the job
+`build-linux` in `release.yml` to a newer system with libX11 1.7, for example
+`ubuntu:22.04`, and change `GLIBC_MAX` in `linux_guards.py` to the new floor.
+
+To test a build on a host with an older libX11, for example WSL with Ubuntu 20.04, put a
+folder with the `libX11.so.6` (and its `libxcb.so.1`) of Debian 11 first in
+`LD_LIBRARY_PATH`. PyInstaller then copies that libX11.
+
+### Fonts and other limits on Linux
+
+The Tk of python-build-standalone has no Xft and no fontconfig. Thus the app uses the
+core X bitmap fonts, without antialiasing, and some letters show as boxes. Only a
+different Python build or a Tk with Xft can fix this. The app also has no `.desktop`
+file. The README of the repository lists the other limits.
 
 ## The size of the exe
 
 The one-file exe is about 13.8 MB. Without the changes below, it is about
-19.6 MB. `build.ps1` shows 13.2 MB, because it counts 1 MB as 1,048,576 bytes. The
+19.6 MB. The Linux file is about 19.3 MB (`build.sh` shows 18.4 MB). On Linux, `strip`
+removes the debug symbols of the libraries and saves about 3.8 MB, and the trim saves
+about 0.6 MB. `build.ps1` shows 13.2 MB, because it counts 1 MB as 1,048,576 bytes. The
 Sun Valley theme adds about 55 KB. The spec
 keeps all the features. It makes these changes. Each number is the saving of one change
 alone:
@@ -106,6 +174,12 @@ The spec also stops the build in these conditions:
   signature also stops the build.
 - `trim_tcltk.py` does not find a correct zip archive after the PE image of a DLL.
 - `trim_tcltk.py` does not find each of the two DLLs one time.
+- On Linux, `linux_guards.py` finds a library that needs a glibc newer than 2.27, or a
+  `libX11.so.6` older than 1.7.
+
+On Linux, the trim removes data files. It keeps the Tcl scripts of the file dialog and
+of the message box (`tkfbox.tcl`, `msgbox.tcl` and others), because Tk on X11 makes
+these dialogs with Tcl. The smoke test of the built app makes sure that Tk finds them.
 
 ### Maintenance rule
 
@@ -116,8 +190,8 @@ with `ModuleNotFoundError`. A test finds a direct import of an excluded module i
 these steps after a change to the imports, or after an update of Pillow, Python, or
 PyInstaller:
 
-1. Run `packaging\build.ps1`. Its `check_exe.py` step converts images of many formats
-   with the exe.
+1. Run `packaging\build.ps1`, or `packaging/build.sh` on Linux. Its `check_exe.py` step
+   converts images of many formats with the app.
 2. If the exe needs an excluded module, remove the module from `EXCLUDES` and from
    `UNWANTED_MODULES`.
 
@@ -162,8 +236,10 @@ pull request.
 
 After the build job passes on `master`, the release job reads the version that the build
 job gives. If the tag `v<version>` does not exist yet, the job makes the tag at the
-commit of the push. Then it publishes `Pixheet.exe` and `Pixheet.exe.sha256` in the
-GitHub release "Pixheet v<version>", with generated release notes. If the tag exists,
+commit of the push. Then it publishes `Pixheet.exe`, `Pixheet.exe.sha256`,
+`Pixheet-linux-x86_64` and `Pixheet-linux-x86_64.sha256` in the GitHub release
+"Pixheet v<version>", with generated release notes. The job waits for both build jobs.
+When one build fails, the job does not run. If the tag exists,
 the job does nothing. The artifact of the build stays on the Actions page.
 
 These rules apply to the release job:
@@ -189,7 +265,7 @@ The release job never replaces a file of a published release, because users can 
 downloaded the file already. A new build of the same commit can also give a different
 exe. For example, each job installs the newest patch release of Python 3.15. When the
 job runs again for a tag, for example after a re-run, it fails if the
-release already has `Pixheet.exe` or `Pixheet.exe.sha256`. To replace a file, delete it
+release already has one of the four files. To replace a file, delete it
 in the release on GitHub, and then run the job again.
 
 You can also protect the releases in the settings of the repository:

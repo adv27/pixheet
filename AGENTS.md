@@ -16,6 +16,7 @@ Read [README.md](README.md) for usage, the Python API, and the Excel limits.
 | `src/pixheet/core.py` | `convert()`, `prepare()`, `ConvertResult`. |
 | `src/pixheet/cli.py` | The `pixheet` command. |
 | `src/pixheet/gui.py` | The `pixheet-gui` desktop app (Tkinter, with tkinterdnd2 for the file drop and sv-ttk for the theme). |
+| `src/pixheet/_desktop.py` | Private. The services of the desktop system, without Tk: open a file or a folder, show a file in its folder, the light or dark setting, the settings path, and the check that tkdnd can load. Each function has a `platform` argument for the tests. |
 | `src/pixheet/_plan.py` | Private. The plan of a batch for the desktop app, without Tk: the images of a drop, the output names, the row states and counts, and the texts of the list. |
 | `src/pixheet/_image.py` | Private. Opens, normalizes, and fits the image. |
 | `src/pixheet/_xlsx.py` | Private. Writes the `.xlsx` XML by hand. |
@@ -23,7 +24,8 @@ Read [README.md](README.md) for usage, the Python API, and the Excel limits.
 | `tests/` | Pytest suite. `tests/images.py` generates all test images. No real photos. |
 | `bench/bench.py` | Benchmark on local sample photos. |
 | `scripts/` | `excel_check.ps1` (Excel COM check, Windows) and `sample_pixels.py`. |
-| `packaging/` | The build of `Pixheet.exe`: the PyInstaller spec `pixheet.spec`, the Tcl and Tk trim `trim_tcltk.py`, the entry script, the icon and `make_icon.py`, `build.ps1`, `check_exe.py`, `release_version.py` for the release job, and the hook `runner_job_started.ps1` for a later self-hosted runner. Read `packaging/README.md`. |
+| `packaging/` | The build of `Pixheet.exe` and of the Linux app: the PyInstaller spec `pixheet.spec` (Windows and Linux), the Tcl and Tk trim `trim_tcltk.py`, the Linux checks `linux_guards.py`, the entry script, the icons `pixheet.ico` and `pixheet.png` and `make_icon.py`, `build.ps1` (Windows), `build.sh` (Linux), `check_exe.py`, `release_version.py` for the release job, and the hook `runner_job_started.ps1` for a later self-hosted runner. Read `packaging/README.md`. |
+| `.gitattributes` | Keeps LF line ends in `*.sh` files. |
 | `.github/workflows/` | `ci.yml`: tests and lint on GitHub-hosted Windows and Ubuntu. `release.yml`: the build of `Pixheet.exe` on GitHub-hosted Windows, the build of `Pixheet-linux-x86_64` in a Debian 11 container, and the release. |
 
 Modules with a leading underscore are private. Do not import them from outside the
@@ -33,7 +35,7 @@ package, except in tests and in `bench/bench.py`, which times each stage.
 
 ```console
 uv sync                                       # install; Python 3.15 per .python-version
-uv run pytest                                 # about 20 s
+uv run pytest                                 # about 70 s on Windows
 uv run pytest --cov --cov-report=term         # with the coverage, as in CI
 uv run ruff check && uv run ruff format --check
 uv run pixheet --help
@@ -49,7 +51,16 @@ uvx zizmor .github/workflows                                   # lint the workfl
 uvx --from actionlint-py actionlint
 ```
 
-The GUI tests in `tests/test_gui.py` need a display. Without a display, they skip.
+To build the Linux app into `dist/Pixheet-linux-x86_64` and test it, run this command on
+Debian 11 or in a `debian:11` container. Read "Build the Linux app" in
+`packaging/README.md`.
+
+```console
+bash packaging/build.sh                                        # add --onedir for a folder
+```
+
+The GUI tests in `tests/test_gui.py` need a display. Without a display, they skip. On
+Linux without a desktop, run the tests with `xvfb-run -a uv run pytest`.
 
 Run the tests, the lint, and the format check before you report a change as complete.
 
@@ -75,7 +86,12 @@ Run the tests, the lint, and the format check before you report a change as comp
 - The primary development OS is Windows. Keep paths and shell examples portable.
 - `packaging/pixheet.spec` leaves many modules out of `Pixheet.exe`. A new import of
   such a module can break the exe while the tests pass. After a change to the imports in
-  `src/pixheet`, run `packaging/build.ps1`.
+  `src/pixheet`, run `packaging/build.ps1`, and `packaging/build.sh` on Linux if you can.
+- Code in the app must not start a program of the system with `subprocess` directly. Use
+  the helpers in `_desktop.py`. They give the program the `LD_LIBRARY_PATH` from before
+  the start of the one-file app on Linux.
+- `pathlib.Path.as_uri()` needs `urllib`, which the app does not have. Use
+  `_desktop.file_uri()`.
 - The workflows run on GitHub-hosted runners, and the repository is public. Never add a
   `pull_request_target` trigger. Pin each action to a full commit SHA. Only the release
   job of `release.yml` can write to the repository.

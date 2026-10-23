@@ -77,14 +77,22 @@ window the look of Windows 11:
   title bar on Windows gets the same theme. You can use Tab and the arrow keys.
 - With **System** (the default), the window is light or dark, the same as the Windows
   setting for apps. When you change the setting, the window changes in about 2 seconds.
-  On other systems, **System** is light.
+  On Linux, the app reads the dark style setting of the desktop: the color scheme of
+  the desktop portal, or else the GNOME setting. On macOS, **System** is light.
 - The app saves your choice in `%APPDATA%\Pixheet\settings.ini`. On other systems, the
-  file is `~/.config/pixheet/settings.ini`. A damaged file gives **System**.
+  file is `pixheet/settings.ini` in `$XDG_CONFIG_HOME`, or else in `~/.config`. A
+  damaged file gives **System**.
 - The environment variable `PIXHEET_THEME` sets the theme at the start: `system`,
   `light`, or `dark`. It wins over the saved choice.
 - Without sv-ttk, the app opens with the standard Tk look and has no toggle.
 
-To build the Windows app yourself, see [Windows app](#windows-app).
+On Linux, drag and drop needs libX11 1.7 or later, for example Ubuntu 22.04 or Debian 11.
+With an older libX11, tkdnd stops the app when it loads. Thus the app does not load it,
+and you use **Browse...**. The environment variable `PIXHEET_DND=0` turns off drag and
+drop on all systems.
+
+To build the Windows app yourself, see [Windows app](#windows-app). For Linux, see
+[Linux app](#linux-app).
 
 ## Windows app
 
@@ -136,6 +144,59 @@ The exe has all the features of the app, but it does not have these parts:
 
 These changes make the exe about 6 MB smaller. The exe does not use UPX, because
 antivirus programs flag UPX-packed exes.
+
+## Linux app
+
+`Pixheet-linux-x86_64` is the desktop app for Linux in one file. It does not need
+Python. It runs on x86_64 Linux with glibc 2.27 or later, for example Ubuntu 18.04,
+Debian 10, RHEL 8, and later versions.
+
+To get the file, do one of these steps:
+
+- Download `Pixheet-linux-x86_64` and `Pixheet-linux-x86_64.sha256` from the
+  [Releases](https://github.com/adv27/pixheet/releases) page.
+- Download the artifact `Pixheet-linux-x86_64` from the
+  [Actions](https://github.com/adv27/pixheet/actions/workflows/release.yml) page.
+
+Then run these commands in the download folder. A download does not keep the
+permission to run the file, so `chmod +x` adds it:
+
+```console
+$ sha256sum -c Pixheet-linux-x86_64.sha256
+$ chmod +x Pixheet-linux-x86_64
+$ ./Pixheet-linux-x86_64
+```
+
+The app needs an X server. On a Wayland desktop, it runs through Xwayland. It also
+needs `libxcb.so.1`, which each X11 desktop has.
+
+Known limits:
+
+- The text uses the core X fonts of Tk, without antialiasing, so it looks plain. The Tk
+  in the app has no Xft. Some letters, for example Vietnamese letters in a file name,
+  can show as boxes.
+- When drag and drop cannot load, the app shows "Drag and drop is not available. Use
+  Browse.". The app has its own libX11 1.7.2, so this is not usual.
+- At each start, the app extracts itself to a folder `/tmp/_MEI...`. If `/tmp` does not
+  let programs run (`noexec`), set `TMPDIR` to a different folder.
+- To open a folder, the app uses `xdg-open`.
+- The file has no menu entry and no desktop icon.
+
+A GitHub-hosted runner builds the file in a Debian 11 container on `ubuntu-latest`. The
+build passes the smoke test and the conversion test under Xvfb. Nobody has tested the
+file on a real Linux desktop yet. Please report a problem in an issue.
+
+To build the file yourself, use Debian 11 or a `debian:11` container. Install `git`,
+`binutils`, `libx11-6`, `libxcursor1`, `xvfb` and `xauth`, then run this command:
+
+```console
+$ bash packaging/build.sh
+```
+
+The script builds `dist/Pixheet-linux-x86_64`, about 19.3 MB, and tests it. The build
+stops on a system with a libX11 older than 1.7, because then tkdnd stops the app. It
+also stops when the app would need a glibc newer than 2.27.
+[packaging/README.md](packaging/README.md) tells why.
 
 ## Python API
 
