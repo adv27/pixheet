@@ -473,6 +473,9 @@ def _adjust_sun_valley(root: tk.Tk) -> None:
             }
         },
     )
+    # The list of a Combobox is a Tk Listbox. sv-ttk does not give it a font, so its text
+    # was smaller than the text in the field.
+    root.option_add("*TCombobox*Listbox.font", "SunValleyBodyFont")
     # sv-ttk gives its fonts a size in pixels. Tk does not scale a size in pixels for the
     # screen resolution. Scale the fonts, so that the text has the same size as in other
     # apps at 125 % or 150 %.

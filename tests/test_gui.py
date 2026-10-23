@@ -963,6 +963,19 @@ def test_disabled_spinbox_and_combobox_use_the_gray_text_of_the_style():
         root.destroy()
 
 
+def test_combobox_list_uses_the_sun_valley_font():
+    pytest.importorskip("sv_ttk")
+    root = new_root()
+    try:
+        gui.apply_theme(root, "dark")
+        app = gui.App(root, dnd_type=None)
+        popdown = root.tk.call("ttk::combobox::PopdownWindow", app.background_box)
+        assert str(root.tk.call(f"{popdown}.f.l", "cget", "-font")) == "SunValleyBodyFont"
+        app.dispose()
+    finally:
+        root.destroy()
+
+
 class ThemeSource:
     """A fake system setting. It counts its reads."""
 
