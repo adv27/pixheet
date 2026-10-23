@@ -46,6 +46,20 @@ def collect_tk_garbage():
     gc.collect()
 
 
+@pytest.fixture(autouse=True)
+def settings_folder(tmp_path, monkeypatch):
+    """Point the settings file of the app at tmp_path, and remove ``PIXHEET_THEME``.
+
+    Then no test reads or writes the settings of the user, and a theme that the user
+    chose does not change a test.
+    """
+    folder = tmp_path / "config"
+    monkeypatch.setenv("APPDATA", str(folder))
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(folder))
+    monkeypatch.delenv(gui.THEME_ENV, raising=False)
+    return folder
+
+
 @pytest.fixture
 def splitlist():
     """The Tcl list parser of a Tcl interpreter. It does not need a display."""
@@ -822,7 +836,7 @@ def test_system_theme_on_other_systems_is_light(monkeypatch):
 
 @pytest.mark.parametrize(
     ("value", "theme"),
-    [("light", "light"), (" Dark ", "dark"), ("system", None), ("", None), ("blue", None)],
+    [("light", "light"), (" Dark ", "dark"), ("System", "system"), ("", None), ("blue", None)],
 )
 def test_theme_override(value, theme):
     assert gui.theme_override({gui.THEME_ENV: value}) == theme
@@ -1064,7 +1078,7 @@ def test_follower_sets_the_title_bar_when_the_window_shows(monkeypatch):
     monkeypatch.setattr(gui, "set_title_bar", lambda root, dark: bars.append(dark))
     root = new_root()
     try:
-        gui.ThemeFollower(root, ThemeSource("dark"), follow=False)
+        gui.ThemeFollower(root, ThemeSource("dark"), choice="dark")
         frame = tk.Frame(root)
         frame.pack()
         root.update()
@@ -1083,7 +1097,7 @@ def test_follower_hides_the_window_until_it_shows_in_the_theme(monkeypatch):
     monkeypatch.setattr(gui, "set_title_bar", lambda root, dark: bars.append(dark))
     root = new_root()
     try:
-        gui.ThemeFollower(root, ThemeSource("dark"), follow=False)
+        gui.ThemeFollower(root, ThemeSource("dark"), choice="dark")
         assert float(root.attributes("-alpha")) == 0.0
         root.deiconify()
         root.update()
@@ -1120,17 +1134,22 @@ def test_follower_stops_when_the_window_closes():
     assert follower._after_id is None
 
 
-def test_follower_with_a_fixed_theme_does_not_read_again():
+def test_follower_with_a_fixed_theme_does_not_read_the_system():
     pytest.importorskip("sv_ttk")
     root = new_root()
     try:
-        source = ThemeSource("dark")
-        follower = gui.ThemeFollower(root, source, follow=False)
+        source = ThemeSource("light")
+        follower = gui.ThemeFollower(root, source, choice="dark")
         assert follower.theme == "sun-valley-dark"
         assert follower._after_id is None
-        assert source.reads == 1
+        assert source.reads == 0
     finally:
         root.destroy()
+
+
+def test_follower_refuses_an_unknown_choice():
+    with pytest.raises(ValueError, match="blue"):
+        gui.ThemeFollower(None, ThemeSource("light"), choice="blue")
 
 
 def test_follow_theme_uses_the_environment(monkeypatch):
@@ -1144,6 +1163,341 @@ def test_follow_theme_uses_the_environment(monkeypatch):
         assert follower._after_id is None
     finally:
         root.destroy()
+
+
+# --- The theme toggle and the settings file ------------------------------------------
+
+
+@pytest.mark.skipif(sys.platform != "win32", reason="a Windows path is not absolute on POSIX")
+def test_settings_path_on_windows():
+    path = gui.settings_path({"APPDATA": r"C:\Users\me\AppData\Roaming"}, platform="win32")
+    assert path == Path(r"C:\Users\me\AppData\Roaming", "Pixheet", "settings.ini")
+    assert gui.settings_path({}, platform="win32") is None
+    assert gui.settings_path({"APPDATA": "relative"}, platform="win32") is None
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="a POSIX path is not absolute on Windows")
+def test_settings_path_on_other_systems():
+    home = {"HOME": "/home/me"}
+    assert gui.settings_path(home, "linux") == Path("/home/me/.config/pixheet/settings.ini")
+    xdg = {"XDG_CONFIG_HOME": "/cfg", **home}
+    assert gui.settings_path(xdg, "linux") == Path("/cfg/pixheet/settings.ini")
+    relative = {"XDG_CONFIG_HOME": "cfg", **home}
+    assert gui.settings_path(relative, "linux") == Path("/home/me/.config/pixheet/settings.ini")
+    assert gui.settings_path({}, "darwin") is None
+
+
+def test_settings_path_follows_the_environment(settings_folder):
+    path = gui.settings_path()
+    assert path is not None
+    assert path.is_relative_to(settings_folder)
+
+
+def test_theme_choice_without_a_file_is_system(tmp_path):
+    assert gui.read_theme_choice(None) == "system"
+    assert gui.read_theme_choice(tmp_path / "missing" / "settings.ini") == "system"
+    assert gui.read_theme_choice(tmp_path) == "system"  # a folder, not a file
+
+
+@pytest.mark.parametrize("choice", gui.THEME_CHOICES)
+def test_theme_choice_round_trip(tmp_path, choice):
+    path = tmp_path / "Pixheet" / "settings.ini"
+    path.parent.mkdir()
+    path.write_text("[other]\nkey = value\n", encoding="utf-8")
+    assert gui.write_theme_choice(path, choice)
+    assert gui.read_theme_choice(path) == choice
+    assert "[other]\nkey = value\n" in path.read_text(encoding="utf-8")  # kept
+    assert sorted(p.name for p in path.parent.iterdir()) == ["settings.ini"]  # no temp file
+
+
+@pytest.mark.parametrize(
+    "content",
+    [
+        b"theme = dark\n",  # no section
+        b"[appearance]\ntheme = dark\ntheme = light\n",  # the same option two times
+        b"[appearance]\ntheme = blue\n",
+        b"[appearance]\ntheme = \xff\xfe\n",  # not UTF-8
+        b"\x00\x01\x02",
+    ],
+)
+def test_damaged_settings_give_system_and_a_new_choice_replaces_them(tmp_path, content):
+    path = tmp_path / "settings.ini"
+    path.write_bytes(content)
+    assert gui.read_theme_choice(path) == "system"
+    assert gui.write_theme_choice(path, "dark")
+    assert gui.read_theme_choice(path) == "dark"
+
+
+def test_write_theme_choice_does_not_raise(tmp_path, capsys):
+    blocker = tmp_path / "file"
+    blocker.write_text("", encoding="utf-8")
+    path = blocker / "settings.ini"  # the folder is a file
+    assert not gui.write_theme_choice(path, "dark")
+    assert "pixheet-gui: cannot save the settings in " in capsys.readouterr().err
+    assert gui.read_theme_choice(path) == "system"
+
+
+def test_write_theme_choice_removes_its_temp_file(tmp_path, monkeypatch, capsys):
+    path = tmp_path / "settings.ini"
+
+    def fail(self, target):
+        raise PermissionError("locked")
+
+    monkeypatch.setattr(gui.Path, "replace", fail)
+    assert not gui.write_theme_choice(path, "light")
+    assert list(tmp_path.iterdir()) == []
+    assert "locked" in capsys.readouterr().err
+
+
+def test_follow_theme_uses_the_saved_choice(tmp_path, monkeypatch):
+    pytest.importorskip("sv_ttk")
+    monkeypatch.setattr(gui, "system_theme", lambda: pytest.fail("reads the system"))
+    path = tmp_path / "settings.ini"
+    gui.write_theme_choice(path, "dark")
+    root = new_root()
+    try:
+        follower = gui.follow_theme(root, path)
+        assert follower.choice == "dark"
+        assert follower.theme == "sun-valley-dark"
+        assert follower._after_id is None
+    finally:
+        root.destroy()
+
+
+def test_follow_theme_without_a_saved_choice_follows_the_system(tmp_path, monkeypatch):
+    pytest.importorskip("sv_ttk")
+    monkeypatch.setattr(gui, "system_theme", lambda: "dark")
+    root = new_root()
+    try:
+        follower = gui.follow_theme(root, tmp_path / "settings.ini")
+        assert follower.choice == "system"
+        assert follower.theme == "sun-valley-dark"
+        assert follower._after_id is not None
+    finally:
+        root.destroy()
+
+
+@pytest.mark.parametrize("value", ["system", "light"])
+def test_environment_wins_over_the_saved_choice_and_the_toggle_shows_it(
+    tmp_path, monkeypatch, value
+):
+    pytest.importorskip("sv_ttk")
+    monkeypatch.setenv(gui.THEME_ENV, value)
+    monkeypatch.setattr(gui, "system_theme", lambda: "light")
+    path = tmp_path / "settings.ini"
+    gui.write_theme_choice(path, "dark")
+    root = new_root()
+    try:
+        follower = gui.follow_theme(root, path)
+        app = gui.App(root, dnd_type=None, follower=follower, settings=path)
+        assert follower.choice == value
+        assert app.theme_var.get() == value
+        assert gui.theme_name(root) == "sun-valley-light"
+        assert gui.read_theme_choice(path) == "dark"  # the start does not write
+        app.dispose()
+    finally:
+        root.destroy()
+
+
+def test_choose_stops_and_starts_the_reads_of_the_system(monkeypatch):
+    pytest.importorskip("sv_ttk")
+    bars = []
+    monkeypatch.setattr(gui, "set_title_bar", lambda root, dark: bars.append(dark))
+    root = new_root()
+    try:
+        source = ThemeSource("light")
+        follower = gui.ThemeFollower(root, source, interval=10_000)
+        assert follower._after_id is not None
+        assert follower.choose("dark")
+        assert follower._after_id is None  # the reads stop
+        assert (follower.choice, follower.mode, follower.theme) == (
+            "dark",
+            "dark",
+            "sun-valley-dark",
+        )
+        assert gui.theme_name(root) == "sun-valley-dark"
+        assert bars == [True]
+        assert source.reads == 1
+        assert follower.choose("light")
+        assert follower._after_id is None
+        assert bars == [True, False]
+        source.mode = "dark"
+        assert follower.choose("system")  # reads the system at once
+        assert source.reads == 2
+        assert follower._after_id is not None  # the reads start again
+        assert (follower.choice, follower.mode) == ("system", "dark")
+        assert gui.theme_name(root) == "sun-valley-dark"
+        assert bars == [True, False, True]
+        source.mode = "light"
+        follower.poll()
+        assert gui.theme_name(root) == "sun-valley-light"
+        with pytest.raises(ValueError, match="blue"):
+            follower.choose("blue")
+    finally:
+        root.destroy()
+
+
+def test_choose_keeps_the_choice_when_the_theme_cannot_change(monkeypatch, capsys):
+    pytest.importorskip("sv_ttk")
+    root = new_root()
+    try:
+        follower = gui.ThemeFollower(root, ThemeSource("light"), interval=10_000)
+        monkeypatch.setattr(gui, "_load_sv_ttk", no_sv_ttk)
+        assert not follower.choose("dark")
+        assert (follower.choice, follower.mode) == ("system", "light")
+        assert gui.theme_name(root) == "sun-valley-light"
+    finally:
+        root.destroy()
+    without = gui.ThemeFollower(new_root(), ThemeSource("light"))
+    try:
+        assert without.theme is None
+        assert not without.choose("dark")
+    finally:
+        without.root.destroy()
+    capsys.readouterr()
+
+
+def toggle_app(path, choice="system", source=None):
+    """Return an App with the theme toggle, its root and its follower."""
+    pytest.importorskip("sv_ttk")
+    root = new_root()
+    follower = gui.ThemeFollower(root, source or ThemeSource("light"), choice=choice)
+    return gui.App(root, dnd_type=None, follower=follower, settings=path)
+
+
+def test_toggle_is_at_the_right_of_the_header_row(tmp_path):
+    app = toggle_app(tmp_path / "settings.ini")
+    try:
+        assert [b.cget("text") for b in app.theme_buttons] == ["System", "Light", "Dark"]
+        assert {b.cget("style") for b in app.theme_buttons} == {"Toggle.TButton"}
+        toggle = app.theme_buttons[0].master
+        assert toggle.master is app.header
+        assert toggle.grid_info()["column"] == 1
+        assert toggle.grid_info()["sticky"] == "e"
+        assert app.header.grid_info()["row"] == 0
+        assert app.header.columnconfigure(0)["weight"] == 1  # the left part is free
+        assert app.zone.grid_info()["row"] == 1
+        assert app.theme_var.get() == "system"
+    finally:
+        app.dispose()
+        app.root.destroy()
+
+
+def test_toggle_changes_the_theme_and_saves_the_choice(tmp_path, monkeypatch):
+    bars = []
+    monkeypatch.setattr(gui, "set_title_bar", lambda root, dark: bars.append(dark))
+    path = tmp_path / "Pixheet" / "settings.ini"
+    source = ThemeSource("light")
+    app = toggle_app(path, source=source)
+    system, light, dark = app.theme_buttons
+    try:
+        dark.invoke()
+        assert gui.theme_name(app.root) == "sun-valley-dark"
+        assert app.follower._after_id is None
+        assert bars == [True]
+        assert gui.read_theme_choice(path) == "dark"
+        light.invoke()
+        assert gui.read_theme_choice(path) == "light"
+        system.invoke()
+        assert gui.read_theme_choice(path) == "system"
+        assert app.follower._after_id is not None
+        assert gui.theme_name(app.root) == "sun-valley-light"
+    finally:
+        app.dispose()
+        app.root.destroy()
+
+
+def test_toggle_does_not_write_without_a_choice(tmp_path):
+    path = tmp_path / "settings.ini"
+    app = toggle_app(path)
+    try:
+        app.root.update()
+        app.theme_buttons[0].invoke()  # the choice that is in use
+        app.choose_theme()
+        assert not path.exists()
+    finally:
+        app.dispose()
+        app.root.destroy()
+    assert list(tmp_path.iterdir()) == []
+
+
+def test_toggle_without_a_settings_file_does_not_save(tmp_path):
+    app = toggle_app(None)
+    try:
+        app.theme_buttons[2].invoke()
+        assert gui.theme_name(app.root) == "sun-valley-dark"
+    finally:
+        app.dispose()
+        app.root.destroy()
+
+
+def test_toggle_shows_the_old_choice_when_the_theme_cannot_change(tmp_path, monkeypatch):
+    path = tmp_path / "settings.ini"
+    app = toggle_app(path)
+    try:
+        monkeypatch.setattr(gui, "_load_sv_ttk", no_sv_ttk)
+        app.theme_buttons[2].invoke()
+        assert app.theme_var.get() == "system"
+        assert not path.exists()
+    finally:
+        app.dispose()
+        app.root.destroy()
+
+
+def test_toggle_is_one_tab_stop_and_the_arrows_move_the_choice(tmp_path):
+    app = toggle_app(tmp_path / "settings.ini", choice="light")
+    system, light, dark = app.theme_buttons
+    try:
+
+        def stops():
+            return [int(b.cget("takefocus")) for b in app.theme_buttons]
+
+        assert stops() == [0, 1, 0]
+        for button in app.theme_buttons:
+            for key in ("<Left>", "<Right>", "<Up>", "<Down>"):
+                assert button.bind(key), (button, key)
+        assert app._step_theme(1) == "break"
+        assert app.theme_var.get() == "dark"
+        assert stops() == [0, 0, 1]
+        app._step_theme(1)  # from the last choice to the first
+        assert app.theme_var.get() == "system"
+        app._step_theme(-1)
+        assert app.theme_var.get() == "dark"
+        assert gui.theme_name(app.root) == "sun-valley-dark"
+        # The Tab key goes from the toggle to the next control, not to the next choice.
+        assert str(dark.tk_focusNext()) != str(system)
+        assert str(dark.tk_focusNext()) != str(light)
+    finally:
+        app.dispose()
+        app.root.destroy()
+
+
+def test_window_without_a_follower_or_sv_ttk_has_no_toggle(harness, monkeypatch):
+    assert harness().app.theme_buttons == []
+    monkeypatch.setattr(gui, "_load_sv_ttk", no_sv_ttk)
+    root = new_root()
+    try:
+        follower = gui.ThemeFollower(root, ThemeSource("dark"))
+        app = gui.App(root, dnd_type=None, follower=follower)
+        assert app.follower is None
+        assert app.theme_buttons == []
+        app.dispose()
+    finally:
+        root.destroy()
+
+
+def test_main_does_not_write_the_settings(settings_folder, monkeypatch, capsys):
+    new_root().destroy()
+    assert gui.main(["--smoke"]) == 0
+    assert not settings_folder.exists()
+
+
+def test_main_uses_the_saved_choice(settings_folder, capsys):
+    pytest.importorskip("sv_ttk")
+    new_root().destroy()
+    gui.write_theme_choice(gui.settings_path(), "dark")
+    assert gui.main(["--smoke"]) == 0
+    assert "pixheet-gui: theme sun-valley-dark\n" in capsys.readouterr().out
 
 
 def test_set_title_bar_does_nothing_on_other_systems():
@@ -1189,9 +1543,12 @@ def test_nothing_is_cut_off_at_the_minimum_size(percent, themed):
     root = new_root()
     try:
         root.tk.call("tk", "scaling", 96 * percent / 100 / 72)
+        follower = None
         if themed:
-            assert gui.apply_theme(root, "light") is not None
-        app = gui.App(root, dnd_type=None)
+            follower = gui.ThemeFollower(root, ThemeSource("light"), choice="light")
+            assert follower.theme is not None
+        app = gui.App(root, dnd_type=None, follower=follower)
+        assert len(app.theme_buttons) == (3 if themed else 0)
         app._set_busy(True)  # the Cancel button shows too
         width, height = root.minsize()
         root.geometry(f"{width}x{height}")
@@ -1206,6 +1563,7 @@ def test_nothing_is_cut_off_at_the_minimum_size(percent, themed):
             app.progressbar,
             app.cancel_button,
             app.open_button,
+            *app.theme_buttons,
         ):
             parent = widget.nametowidget(widget.winfo_parent())
             assert widget.winfo_width() >= widget.winfo_reqwidth(), widget

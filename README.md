@@ -73,12 +73,16 @@ You can also give image paths as arguments: `pixheet-gui photo.jpg`.
 The `gui` extra also adds [sv-ttk](https://pypi.org/project/sv-ttk/). It gives the
 window the look of Windows 11:
 
-- On Windows, the window and its title bar are light or dark, the same as the Windows
+- The toggle at the top right sets the theme: **System**, **Light**, or **Dark**. The
+  title bar on Windows gets the same theme. You can use Tab and the arrow keys.
+- With **System** (the default), the window is light or dark, the same as the Windows
   setting for apps. When you change the setting, the window changes in about 2 seconds.
-- On other systems, the window is light.
-- To always use one mode, set the environment variable `PIXHEET_THEME` to `light` or
-  `dark`. The value `system` is the default.
-- Without sv-ttk, the app opens with the standard Tk look.
+  On other systems, **System** is light.
+- The app saves your choice in `%APPDATA%\Pixheet\settings.ini`. On other systems, the
+  file is `~/.config/pixheet/settings.ini`. A damaged file gives **System**.
+- The environment variable `PIXHEET_THEME` sets the theme at the start: `system`,
+  `light`, or `dark`. It wins over the saved choice.
+- Without sv-ttk, the app opens with the standard Tk look and has no toggle.
 
 To build the Windows app yourself, see [Windows app](#windows-app).
 

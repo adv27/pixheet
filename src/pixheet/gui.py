@@ -8,10 +8,13 @@ Each output file goes next to its image, with the suffix ``.xlsx``. A worker thr
 the conversion, so the window stays responsive. The worker sends messages to a queue,
 and the window reads the queue each 50 ms.
 
-With sv-ttk, the window has the Sun Valley theme, the look of Windows 11. The theme is
-light or dark, the same as the system setting, and it changes when the setting changes.
+With sv-ttk, the window has the Sun Valley theme, the look of Windows 11. A toggle at the
+top right sets the theme to System, Light or Dark. With System, the theme is the same as
+the system setting, and it changes when the setting changes. The app saves the choice in
+a settings file.
 """
 
+import configparser
 import contextlib
 import os
 import queue
@@ -389,7 +392,9 @@ def enable_dnd(root: tk.Tk) -> str | None:
 # --- The theme -----------------------------------------------------------------------
 
 THEME_ENV = "PIXHEET_THEME"
-"""The environment variable that sets the theme: light, dark, or system (the default)."""
+"""The environment variable that sets the theme at the start: light, dark, or system."""
+THEME_CHOICES = ("system", "light", "dark")
+"""The choices of the theme toggle. "system" follows the light or dark setting of the system."""
 THEME_POLL_MS = 2000
 """Time between two reads of the system light or dark setting, in milliseconds."""
 SUN_VALLEY = ("sun-valley-light", "sun-valley-dark")
@@ -430,14 +435,96 @@ def system_theme(platform: str | None = None) -> str:
 
 
 def theme_override(environ: Mapping[str, str] | None = None) -> str | None:
-    """Return "light" or "dark" when the environment variable ``PIXHEET_THEME`` sets one.
+    """Return the theme choice that the environment variable ``PIXHEET_THEME`` sets.
 
-    Return None for "system", for no value, and for an unknown value. Then the app
-    follows the system setting.
+    The result is "system", "light" or "dark". Return None for no value and for an
+    unknown value. Then the app uses the saved choice.
     """
     value = (os.environ if environ is None else environ).get(THEME_ENV, "")
     value = value.strip().lower()
-    return value if value in ("light", "dark") else None
+    return value if value in THEME_CHOICES else None
+
+
+SETTINGS_NAME = "settings.ini"
+SETTINGS_SECTION = "appearance"
+
+
+def settings_path(
+    environ: Mapping[str, str] | None = None, platform: str | None = None
+) -> Path | None:
+    r"""Return the path of the settings file. Return None when the system gives no folder.
+
+    On Windows, the path is ``%APPDATA%\Pixheet\settings.ini``. On other systems, it is
+    ``pixheet/settings.ini`` in ``$XDG_CONFIG_HOME``, or in ``~/.config``. The function
+    does not make the file or the folder.
+    """
+    environ = os.environ if environ is None else environ
+    if (platform or sys.platform) == "win32":
+        base = Path(environ.get("APPDATA", ""))
+        return base / TITLE / SETTINGS_NAME if base.is_absolute() else None
+    base = Path(environ.get("XDG_CONFIG_HOME", ""))
+    if not base.is_absolute():
+        base = Path(environ.get("HOME", ""), ".config")
+        if not base.is_absolute():
+            return None
+    return base / "pixheet" / SETTINGS_NAME
+
+
+def _read_settings(path: Path) -> configparser.ConfigParser:
+    """Read the settings file. Raise configparser.Error or ValueError for a damaged file.
+
+    A file that does not exist, or that the app cannot open, gives no settings.
+    """
+    parser = configparser.ConfigParser(interpolation=None)
+    parser.read(path, encoding="utf-8")  # read() ignores a file that it cannot open
+    return parser
+
+
+def read_theme_choice(path: Path | None) -> str:
+    """Return the saved theme choice: "system", "light" or "dark".
+
+    No path, a missing file, a damaged file and an unknown value give "system". The
+    function does not raise.
+    """
+    if path is None:
+        return "system"
+    try:
+        parser = _read_settings(path)
+    except configparser.Error, ValueError:  # ValueError includes UnicodeDecodeError
+        return "system"
+    value = parser.get(SETTINGS_SECTION, "theme", fallback="").strip().lower()
+    return value if value in THEME_CHOICES else "system"
+
+
+def write_theme_choice(path: Path, choice: str) -> bool:
+    """Save the theme choice in the settings file. Return True when the file has it.
+
+    The function writes a temporary file, then puts it in the place of the old file. Thus
+    the file is never half written. The function keeps the other settings, but it replaces
+    a damaged file. For an error of the file system, it writes the cause to stderr and
+    does not raise.
+    """
+    try:
+        parser = _read_settings(path)
+    except configparser.Error, ValueError:
+        parser = configparser.ConfigParser(interpolation=None)
+    if not parser.has_section(SETTINGS_SECTION):
+        parser.add_section(SETTINGS_SECTION)
+    parser.set(SETTINGS_SECTION, "theme", choice)
+    temp = path.with_name(f".{path.name}.{os.getpid()}.tmp")
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        with temp.open("w", encoding="utf-8") as file:
+            parser.write(file)
+            file.flush()
+            os.fsync(file.fileno())
+        temp.replace(path)
+    except OSError as e:
+        with contextlib.suppress(OSError):
+            temp.unlink(missing_ok=True)
+        _error(f"cannot save the settings in {path}: {_describe(e)}")
+        return False
+    return True
 
 
 def _load_sv_ttk() -> Any:
@@ -540,12 +627,14 @@ def set_title_bar(root: tk.Tk, dark: bool, platform: str | None = None) -> bool:
 
 
 class ThemeFollower:
-    """Show ``root`` in the Sun Valley theme, light or dark, as ``source`` tells.
+    """Show ``root`` in the Sun Valley theme, light or dark, as ``choice`` tells.
 
-    ``source`` returns "light" or "dark". With ``follow``, the class reads ``source`` each
-    ``interval`` milliseconds and changes the theme when the value changes. The title bar
-    on Windows gets the same mode. When sv-ttk does not load, ``theme`` is None, and the
-    window keeps its ttk theme.
+    ``choice`` is "system", "light" or "dark". ``source`` returns the system setting,
+    "light" or "dark". With "system", the class reads ``source`` each ``interval``
+    milliseconds and changes the theme when the value changes. With "light" or "dark", it
+    does not read ``source``. :meth:`choose` changes the choice. The title bar on Windows
+    gets the same mode. When sv-ttk does not load, ``theme`` is None, and the window keeps
+    its ttk theme.
 
     On Windows, the window is transparent until it shows for the first time. Windows draws
     the first frame before Tk can set the title bar, and Tk fills the window with white
@@ -557,13 +646,16 @@ class ThemeFollower:
         root: tk.Tk,
         source: Callable[[], str] = system_theme,
         *,
-        follow: bool = True,
+        choice: str = "system",
         interval: int = THEME_POLL_MS,
     ) -> None:
+        if choice not in THEME_CHOICES:
+            raise ValueError(f"unknown theme choice: {choice!r}")
         self.root = root
         self.source = source
         self.interval = interval
-        self.mode = source()
+        self.choice = choice
+        self.mode = source() if choice == "system" else choice
         self.theme = apply_theme(root, self.mode)
         self._after_id: str | None = None
         self._hidden = False
@@ -574,7 +666,7 @@ class ThemeFollower:
             self._hidden = True
         root.bind("<Map>", self._on_map, add="+")
         root.bind("<Destroy>", self._on_destroy, add="+")
-        if follow:
+        if choice == "system":
             self._after_id = root.after(interval, self.poll)
 
     def _on_map(self, event: tk.Event) -> None:
@@ -618,13 +710,40 @@ class ThemeFollower:
                 self.root.after_cancel(self._after_id)
             self._after_id = None
 
+    def choose(self, choice: str) -> bool:
+        """Use the theme choice "system", "light" or "dark". Return True when it is in use.
 
-def follow_theme(root: tk.Tk) -> ThemeFollower:
-    """Apply the theme of ``PIXHEET_THEME``, or follow the system light or dark mode."""
-    mode = theme_override()
-    if mode is not None:
-        return ThemeFollower(root, lambda: mode, follow=False)
-    return ThemeFollower(root, system_theme)
+        "light" and "dark" stop the reads of ``source``. "system" reads ``source`` at once
+        and starts the reads again. When the theme cannot change, for example without
+        sv-ttk, the choice stays as it was, and the result is False.
+        """
+        if choice not in THEME_CHOICES:
+            raise ValueError(f"unknown theme choice: {choice!r}")
+        if self.theme is None:
+            return False
+        self.stop()
+        mode = self.source() if choice == "system" else choice
+        if mode != self.mode:
+            theme = apply_theme(self.root, mode)
+            if theme is None:
+                return False
+            self.mode = mode
+            self.theme = theme
+            set_title_bar(self.root, dark=mode == "dark")
+        self.choice = choice
+        if choice == "system":
+            self._after_id = self.root.after(self.interval, self.poll)
+        return True
+
+
+def follow_theme(root: tk.Tk, settings: Path | None = None) -> ThemeFollower:
+    """Show ``root`` in the theme choice of ``PIXHEET_THEME``, or else in the saved choice.
+
+    ``settings`` is the settings file. Without a choice, the window follows the system
+    light or dark mode.
+    """
+    choice = theme_override() or read_theme_choice(settings)
+    return ThemeFollower(root, system_theme, choice=choice)
 
 
 class App:
@@ -632,10 +751,26 @@ class App:
 
     ``dnd_type`` is the result of :func:`enable_dnd`. When it is None, the window has no
     drop zone, and the user must use Browse.
+
+    ``follower`` is the result of :func:`follow_theme`. With a follower in the Sun Valley
+    theme, the header row shows the theme toggle. A choice in the toggle goes to the
+    settings file ``settings``. Without ``settings``, the app does not save the choice.
+
+    Without sv-ttk, the window has no toggle. The standard ttk theme has only one look, so
+    the choices cannot change the window. A toggle that does nothing only confuses.
     """
 
-    def __init__(self, root: tk.Tk, *, dnd_type: str | None) -> None:
+    def __init__(
+        self,
+        root: tk.Tk,
+        *,
+        dnd_type: str | None,
+        follower: ThemeFollower | None = None,
+        settings: Path | None = None,
+    ) -> None:
         self.root = root
+        self.follower = follower if follower is not None and follower.theme else None
+        self.settings = settings
         self.queue: queue.SimpleQueue[Message] = queue.SimpleQueue()
         self.cancel_event = threading.Event()
         self.worker: threading.Thread | None = None
@@ -682,14 +817,21 @@ class App:
         body = ttk.Frame(root, padding=16)
         body.pack(fill="both", expand=True)
         body.columnconfigure(0, weight=1)
-        body.rowconfigure(0, weight=1)
+        body.rowconfigure(1, weight=1)
         self.body = body
+
+        # The header row. Column 0 stretches. It keeps the left part free for more controls.
+        header = ttk.Frame(body)
+        header.grid(row=0, column=0, sticky="ew")
+        header.columnconfigure(0, weight=1)
+        self.header = header
+        self._build_theme_toggle(header, sun_valley)
 
         if sun_valley:
             zone = ttk.Frame(body, style="Card.TFrame", padding=24)
         else:
             zone = ttk.Frame(body, padding=24, borderwidth=2, relief="groove")
-        zone.grid(row=0, column=0, sticky="nsew")
+        zone.grid(row=1, column=0, sticky="nsew")
         zone.columnconfigure(0, weight=1)
         zone.rowconfigure(0, weight=1)
         zone.rowconfigure(3, weight=1)
@@ -705,7 +847,7 @@ class App:
         self.browse_button.grid(row=3, column=0, sticky="n")
 
         options = ttk.Frame(body, padding=(0, 12, 0, 0))
-        options.grid(row=1, column=0, sticky="ew")
+        options.grid(row=2, column=0, sticky="ew")
         self.max_side_var = tk.StringVar(root, value=str(DEFAULT_MAX_SIDE))
         self.background_var = tk.StringVar(root, value=DEFAULT_BACKGROUND)
         self.compact_var = tk.BooleanVar(root, value=False)
@@ -730,25 +872,80 @@ class App:
         self.progressbar = ttk.Progressbar(
             body, mode="determinate", maximum=1.0, variable=self.progress_var
         )
-        self.progressbar.grid(row=2, column=0, sticky="ew", pady=(12, 4))
+        self.progressbar.grid(row=3, column=0, sticky="ew", pady=(12, 4))
         self.title_var = tk.StringVar(root, value="")
-        ttk.Label(body, textvariable=self.title_var).grid(row=3, column=0, sticky="w")
+        ttk.Label(body, textvariable=self.title_var).grid(row=4, column=0, sticky="w")
         self.status_var = tk.StringVar(root, value="")
         self.status_label = ttk.Label(body, textvariable=self.status_var, justify="left")
-        self.status_label.grid(row=4, column=0, sticky="ew")
+        self.status_label.grid(row=5, column=0, sticky="ew")
         body.bind("<Configure>", self._wrap_status, add="+")
         # A note that the worker messages do not replace, for example about a refused drop.
         self.note_var = tk.StringVar(root, value="")
-        ttk.Label(body, textvariable=self.note_var).grid(row=5, column=0, sticky="w")
+        ttk.Label(body, textvariable=self.note_var).grid(row=6, column=0, sticky="w")
 
         buttons = ttk.Frame(body, padding=(0, 12, 0, 0))
-        buttons.grid(row=6, column=0, sticky="e")
+        buttons.grid(row=7, column=0, sticky="e")
         self.cancel_button = ttk.Button(buttons, text="Cancel", command=self.cancel)
         self.cancel_button.grid(row=0, column=0, padx=(0, 8))
         self.cancel_button.grid_remove()
         self.open_button = ttk.Button(buttons, text="Open folder", command=self.open_output)
         self.open_button.grid(row=0, column=1)
         self.open_button.state(["disabled"])
+
+    def _build_theme_toggle(self, header: ttk.Frame, sun_valley: bool) -> None:
+        """Make the System, Light and Dark toggle at the right of the header row.
+
+        The toggle is one stop of the Tab key. The arrow keys select the next choice or
+        the previous choice, as in a group of radio buttons on Windows.
+        """
+        follower = self.follower
+        self.theme_var = tk.StringVar(
+            self.root, value=follower.choice if follower is not None else "system"
+        )
+        self.theme_buttons: list[ttk.Radiobutton] = []
+        if follower is None or not sun_valley:
+            return
+        toggle = ttk.Frame(header)
+        toggle.grid(row=0, column=1, sticky="e", pady=(0, 12))
+        for column, choice in enumerate(THEME_CHOICES):
+            button = ttk.Radiobutton(
+                toggle,
+                text=choice.title(),
+                value=choice,
+                variable=self.theme_var,
+                style="Toggle.TButton",
+                command=self.choose_theme,
+            )
+            button.grid(row=0, column=column)
+            for key, step in (("<Left>", -1), ("<Up>", -1), ("<Right>", 1), ("<Down>", 1)):
+                button.bind(key, lambda event, step=step: self._step_theme(step))
+            self.theme_buttons.append(button)
+        self._theme_tab_stop()
+
+    def _theme_tab_stop(self) -> None:
+        """Let the Tab key stop only at the selected choice of the theme toggle."""
+        choice = self.theme_var.get()
+        for button in self.theme_buttons:
+            button.configure(takefocus=int(button.cget("value") == choice))
+
+    def _step_theme(self, step: int) -> str:
+        """Select the choice ``step`` places from the current choice, and give it the focus."""
+        index = THEME_CHOICES.index(self.theme_var.get()) + step
+        button = self.theme_buttons[index % len(self.theme_buttons)]
+        button.focus_set()
+        button.invoke()
+        return "break"
+
+    def choose_theme(self) -> None:
+        """Use the choice of the theme toggle, and save it in the settings file."""
+        follower = self.follower
+        choice = self.theme_var.get()
+        if follower is not None and choice != follower.choice:
+            if not follower.choose(choice):
+                self.theme_var.set(follower.choice)
+            elif self.settings is not None:
+                write_theme_choice(self.settings, choice)
+        self._theme_tab_stop()
 
     def _use_style_foreground(self, event: tk.Event) -> None:
         """Let the style set the text color of the Spinbox and the Combobox.
@@ -1101,9 +1298,10 @@ def main(argv: Sequence[str] | None = None) -> int:
     """Open the window. Convert the image paths in ``argv``, if there are some.
 
     With ``--smoke``, the window closes when it has nothing to do. Then the exit status is
-    1 if the app found a problem. See :func:`smoke_test`. The window follows the system
-    light or dark mode. The environment variable ``PIXHEET_THEME`` can set "light" or
-    "dark".
+    1 if the app found a problem. See :func:`smoke_test`. The window uses the theme choice
+    in the settings file. Without a choice, it follows the system light or dark mode. The
+    environment variable ``PIXHEET_THEME`` can set "system", "light" or "dark" at the
+    start. It wins over the settings file.
     """
     args = list(sys.argv[1:] if argv is None else argv)
     smoke = "--smoke" in args
@@ -1119,8 +1317,9 @@ def main(argv: Sequence[str] | None = None) -> int:
         return 1
     # Load tkdnd into the plain tk.Tk root first, then the theme. The tests use this order.
     dnd_type = enable_dnd(root)
-    follow_theme(root)
-    app = App(root, dnd_type=dnd_type)
+    settings = settings_path()
+    follower = follow_theme(root, settings)
+    app = App(root, dnd_type=dnd_type, follower=follower, settings=settings)
     problems = smoke_test(app) if smoke else []
     if files:
         root.after_idle(app.start, files)
