@@ -129,12 +129,30 @@ exe did not stop in 120 s. The output of the exe then shows the `ModuleNotFoundE
 
 | Workflow | Runner | Triggers | Steps |
 |---|---|---|---|
-| `.github/workflows/ci.yml` | GitHub-hosted `windows-latest` and `ubuntu-latest` | pull request, push to `master`, manual | tests, `ruff check`, `ruff format --check`; for a pull request, the check of the version tag |
+| `.github/workflows/ci.yml` | GitHub-hosted `windows-latest` and `ubuntu-latest` | pull request, push to `master`, manual | tests with coverage, `ruff check`, `ruff format --check`, upload of the coverage and the test results to Codecov; for a pull request, the check of the version tag |
 | `.github/workflows/windows-exe.yml` | GitHub-hosted `windows-2025` | pull request, push to `master`, push of a `v*` tag, manual | tests, `build.ps1`, upload of the artifact `Pixheet-windows-x64` |
 
 Each job runs on a new virtual machine. GitHub deletes the machine after the job. Thus
 no file from an earlier job goes into a release. For the same reason, the build job does
 not use the GitHub Actions cache.
+
+### Codecov
+
+The test job of `ci.yml` runs pytest with `--cov` and `--junitxml`. Then it sends
+`coverage.xml` and `junit.xml` to [Codecov](https://codecov.io/gh/adv27/pixheet). These
+rules apply:
+
+- The upload uses the repository secret `CODECOV_TOKEN`. Never print the token.
+- A pull request from a fork gets no secrets. Codecov accepts its upload without a
+  token, because the repository is public. Then an upload error does not stop the job.
+- `windows-exe.yml` sends nothing to Codecov. Thus the job that can write never gets a
+  different secret.
+- `codecov.yml` lets the coverage of the project go down by 1 % or less, and keeps the
+  comment on a pull request short.
+
+`pyproject.toml` configures coverage in `[tool.coverage.run]` and
+`[tool.coverage.report]`. A plain `uv run pytest` does not measure coverage, so it stays
+fast.
 
 ### Releases
 

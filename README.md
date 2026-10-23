@@ -1,5 +1,8 @@
 # Pixheet
 
+[![CI](https://github.com/adv27/pixheet/actions/workflows/ci.yml/badge.svg?branch=master)](https://github.com/adv27/pixheet/actions/workflows/ci.yml)
+[![codecov](https://codecov.io/gh/adv27/pixheet/graph/badge.svg?token=6ZUOTE5GOF)](https://codecov.io/gh/adv27/pixheet)
+
 Pixheet turns any image into an `.xlsx` spreadsheet where every cell is one pixel,
 filled with that pixel's color. Open the file in a spreadsheet app, zoom out, and you
 see the picture.

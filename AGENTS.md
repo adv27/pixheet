@@ -33,6 +33,7 @@ package, except in tests and in `bench/bench.py`, which times each stage.
 ```console
 uv sync                                       # install; Python 3.15 per .python-version
 uv run pytest                                 # about 20 s
+uv run pytest --cov --cov-report=term         # with the coverage, as in CI
 uv run ruff check && uv run ruff format --check
 uv run pixheet --help
 uv run pixheet-gui                            # the desktop app

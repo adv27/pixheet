@@ -12,7 +12,9 @@ dist/
 # Tools
 .pytest_cache/
 .ruff_cache/
-.coverage
+.coverage*
+coverage.xml
+junit.xml
 htmlcov/
 
 # Local sample images and outputs: never commit them
