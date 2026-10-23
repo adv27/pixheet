@@ -440,8 +440,8 @@ def apply_theme(root: tk.Tk, mode: str) -> str | None:
     """Show ``root`` in the light or dark Sun Valley theme. Return the ttk theme name.
 
     Return None when sv-ttk is not installed or does not load. Then the window keeps the
-    ttk theme that it has. The function does not raise, because the theme only changes
-    the look of the app.
+    ttk theme that it has, and the function writes the cause to stderr. The function does
+    not raise, because the theme only changes the look of the app.
     """
     try:
         sv_ttk = _load_sv_ttk()
@@ -449,7 +449,8 @@ def apply_theme(root: tk.Tk, mode: str) -> str | None:
         sv_ttk.set_theme(mode, root)
         if first:
             _adjust_sun_valley(root)
-    except Exception:
+    except Exception as e:
+        _error(f"cannot use the Sun Valley theme: {_describe(e)}")
         return None
     name = theme_name(root)
     return name if name in SUN_VALLEY else None
@@ -557,10 +558,17 @@ class ThemeFollower:
             self.stop()
 
     def poll(self) -> None:
-        """Read ``source``. Change the theme and the title bar if the value changed."""
+        """Read ``source``. Change the theme and the title bar if the value changed.
+
+        If the theme does not change, the reads stop. Then the window keeps its theme, and
+        the app does not write the same error each ``interval``.
+        """
         self._after_id = None
         mode = self.source()
-        if mode != self.mode and (theme := apply_theme(self.root, mode)) is not None:
+        if mode != self.mode:
+            theme = apply_theme(self.root, mode)
+            if theme is None:
+                return
             self.mode = mode
             self.theme = theme
             set_title_bar(self.root, dark=mode == "dark")

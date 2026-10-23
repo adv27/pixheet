@@ -866,8 +866,8 @@ def test_apply_theme_scales_the_fonts_for_the_screen():
         root.destroy()
 
 
-@pytest.mark.parametrize("error", [ImportError, RuntimeError, OSError])
-def test_apply_theme_keeps_the_ttk_theme_when_sv_ttk_fails(monkeypatch, error):
+@pytest.mark.parametrize("error", [ImportError, RuntimeError, OSError, tk.TclError])
+def test_apply_theme_keeps_the_ttk_theme_when_sv_ttk_fails(monkeypatch, capsys, error):
     def fail():
         raise error("no sv_ttk")
 
@@ -879,6 +879,21 @@ def test_apply_theme_keeps_the_ttk_theme_when_sv_ttk_fails(monkeypatch, error):
         assert gui.theme_name(root) == before
     finally:
         root.destroy()
+    # The cause is visible, for example in the output of a failed test.
+    assert capsys.readouterr().err == "pixheet-gui: cannot use the Sun Valley theme: no sv_ttk\n"
+
+
+def test_apply_theme_without_a_message_names_the_error_type(monkeypatch, capsys):
+    def fail():
+        raise ImportError
+
+    monkeypatch.setattr(gui, "_load_sv_ttk", fail)
+    root = new_root()
+    try:
+        assert gui.apply_theme(root, "dark") is None
+    finally:
+        root.destroy()
+    assert "cannot use the Sun Valley theme: ImportError" in capsys.readouterr().err
 
 
 def test_window_without_sv_ttk_has_the_old_look(monkeypatch, harness):
@@ -960,6 +975,25 @@ def test_follower_changes_the_theme_when_the_system_changes(monkeypatch):
         assert follower.theme == "sun-valley-dark"
         assert gui.theme_name(root) == "sun-valley-dark"
         assert source.reads == 3
+    finally:
+        root.destroy()
+
+
+def test_follower_stops_when_the_theme_does_not_change(monkeypatch, capsys):
+    pytest.importorskip("sv_ttk")
+    root = new_root()
+    try:
+        source = ThemeSource("light")
+        follower = gui.ThemeFollower(root, source, interval=10_000)
+        assert follower._after_id is not None
+        monkeypatch.setattr(gui, "_load_sv_ttk", no_sv_ttk)
+        source.mode = "dark"
+        follower.poll()
+        assert follower._after_id is None  # no new read, and no new error
+        assert follower.mode == "light"
+        assert follower.theme == "sun-valley-light"
+        assert gui.theme_name(root) == "sun-valley-light"
+        assert capsys.readouterr().err.count("cannot use the Sun Valley theme") == 1
     finally:
         root.destroy()
 
