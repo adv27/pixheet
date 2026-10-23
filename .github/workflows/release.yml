@@ -137,6 +137,12 @@ jobs:
         with:
           persist-credentials: false
 
+      # The container runs as root, but the runner user owns the checkout. Thus git
+      # refuses the folder as "dubious ownership" (exit code 128). build.sh and the tests
+      # call git, so mark the folder as safe for git.
+      - name: Let git use the checkout
+        run: git config --global --add safe.directory "$GITHUB_WORKSPACE"
+
       # uv installs the Python of .python-version from python-build-standalone, the same
       # Python as on Windows. The job does not use the GitHub Actions cache, for the same
       # reason as the Windows job.
