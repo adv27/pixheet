@@ -13,7 +13,7 @@ from pathlib import Path
 import pytest
 from images import noise
 
-from pixheet import gui
+from pixheet import _desktop, gui
 from pixheet._plan import IMAGE_SUFFIXES
 from pixheet.core import convert as real_convert
 from pixheet.gui import (
@@ -238,8 +238,21 @@ def test_enable_dnd_falls_back(monkeypatch, error):
     def fail():
         raise error("no tkdnd")
 
+    monkeypatch.setattr(gui, "dnd_allowed", lambda platform=None: True)
     monkeypatch.setattr(gui, "_load_tkdnd", fail)
     assert gui.enable_dnd(object()) is None
+
+
+def test_enable_dnd_does_not_load_tkdnd_when_it_can_stop_the_process(monkeypatch):
+    monkeypatch.setattr(_desktop, "x11_supports_tkdnd", lambda load=None: False)
+    monkeypatch.setattr(gui, "_load_tkdnd", lambda: pytest.fail("loads tkdnd"))
+    assert gui.enable_dnd(object(), platform="linux") is None
+
+
+def test_enable_dnd_can_be_turned_off(monkeypatch):
+    monkeypatch.setenv(_desktop.DND_ENV, "0")
+    monkeypatch.setattr(gui, "_load_tkdnd", lambda: pytest.fail("loads tkdnd"))
+    assert gui.enable_dnd(object(), platform="win32") is None
 
 
 @pytest.mark.parametrize(("platform", "opener"), [("linux", "xdg-open"), ("darwin", "open")])
@@ -769,10 +782,21 @@ def test_main_smoke_of_a_built_app_needs_the_icon_and_dnd(tmp_path, monkeypatch,
     monkeypatch.setattr(sys, "frozen", True, raising=False)
     monkeypatch.setattr(sys, "_MEIPASS", str(tmp_path), raising=False)  # no icon here
     monkeypatch.setattr(gui, "enable_dnd", lambda root: None)
+    monkeypatch.setattr(gui, "dnd_allowed", lambda: True)
     assert gui.main(["--smoke"]) == 1
     err = capsys.readouterr().err
     assert "The window icon is missing." in err
     assert "Drag and drop is not available." in err
+
+
+def test_main_smoke_of_a_built_app_accepts_no_dnd_when_tkdnd_cannot_load(monkeypatch, capsys):
+    new_root().destroy()
+    monkeypatch.setattr(sys, "frozen", True, raising=False)
+    monkeypatch.setattr(gui, "dnd_allowed", lambda *args: False)
+    gui.main(["--smoke"])
+    captured = capsys.readouterr()
+    assert "pixheet-gui: drag and drop off" in captured.out
+    assert "Drag and drop" not in captured.err
 
 
 def test_main_smoke_of_a_built_app_needs_the_theme(monkeypatch, capsys):
@@ -1660,7 +1684,7 @@ def test_python_m_pixheet_gui_smoke():
     new_root().destroy()
     result = run_python("-m", "pixheet.gui", "--smoke")
     assert result.returncode == 0, result.stderr
-    state = "on" if has_tkinterdnd2() else "off"
+    state = "on" if has_tkinterdnd2() and _desktop.dnd_allowed() else "off"
     assert f"pixheet-gui: drag and drop {state}" in result.stdout
 
 
@@ -1683,6 +1707,8 @@ root.destroy()
 def test_real_tkdnd_registers_the_drop_zone():
     if not has_tkinterdnd2():
         pytest.skip("tkinterdnd2 is not installed")
+    if not _desktop.dnd_allowed():
+        pytest.skip("tkdnd cannot load here, for example with libX11 older than 1.7")
     new_root().destroy()
     result = run_python("-c", REGISTER_DROP)
     assert result.returncode == 0, result.stderr

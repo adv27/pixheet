@@ -36,6 +36,7 @@ except ImportError:  # a Python build without Tk
 
 from PIL import UnidentifiedImageError
 
+from pixheet._desktop import dnd_allowed
 from pixheet._image import RGB, check_max_side, parse_background
 from pixheet.core import DEFAULT_BACKGROUND, DEFAULT_MAX_SIDE, ConvertResult, convert
 
@@ -376,11 +377,15 @@ def set_icon(root: tk.Tk, platform: str | None = None) -> bool:
     return True
 
 
-def enable_dnd(root: tk.Tk) -> str | None:
+def enable_dnd(root: tk.Tk, platform: str | None = None) -> str | None:
     """Load the tkdnd extension into ``root``. Return the drop type for files.
 
-    Return None when tkinterdnd2 is not installed or tkdnd does not load.
+    Return None when tkinterdnd2 is not installed or tkdnd does not load. Also return
+    None when :func:`pixheet._desktop.dnd_allowed` is False: then the app does not load
+    tkdnd, because the load can stop the process.
     """
+    if not dnd_allowed(platform):
+        return None
     try:
         tkdnd, files = _load_tkdnd()
         tkdnd.require(root)
@@ -1267,13 +1272,14 @@ def smoke_test(app: App) -> list[str]:
     The window closes 200 ms after the start, or later when a batch runs, after the
     batch. The app does not show dialogs. It records each error message as a problem,
     and it does not replace output files that exist. A built app must also have the
-    window icon, drag and drop, and the Sun Valley theme.
+    window icon and the Sun Valley theme. It must have drag and drop when tkdnd can load
+    (see :func:`pixheet._desktop.dnd_allowed`).
     """
     problems: list[str] = []
     if getattr(sys, "frozen", False):
         if not app.has_icon:
             problems.append("The window icon is missing.")
-        if not app.dnd:
+        if not app.dnd and dnd_allowed():
             problems.append("Drag and drop is not available.")
         if theme_name(app.root) not in SUN_VALLEY:
             problems.append("The Sun Valley theme is not available.")
