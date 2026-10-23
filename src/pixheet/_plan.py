@@ -150,9 +150,9 @@ def expand_drop(
     - A dropped file with an image suffix is an image. Other dropped files go to
       ``ignored``.
     - A dropped folder gives the images directly in it, in the order of File Explorer.
-      Its other files go to ``ignored``, but not the hidden files, the files in
-      :data:`QUIET_NAMES` and the .xlsx files. Thus a second drop of a converted folder
-      does not show a note about its outputs.
+      Its other files go to ``ignored``, but not the files whose name starts with a
+      dot, the files in :data:`QUIET_NAMES` and the .xlsx files. Thus a second drop of
+      a converted folder does not show a note about its outputs.
     - Without ``recursive``, the app does not open the subfolders. It counts them in
       ``skipped_subfolders``. With ``recursive``, it adds the images of all subfolders,
       after the images of the folder itself.

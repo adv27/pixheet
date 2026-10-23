@@ -106,12 +106,9 @@ def test_natural_key_does_not_read_other_digits_as_numbers():
     assert sorted(["a².png", "a1.png", "a٣.png"], key=natural_key)[0] == "a1.png"
 
 
-def test_image_suffixes_match_the_file_dialog_types():
-    from pixheet.gui import IMAGE_TYPES
-
-    patterns = IMAGE_TYPES[0][1].split()
-    assert {pattern.removeprefix("*") for pattern in patterns} == IMAGE_SUFFIXES
+def test_xlsx_is_not_an_image_suffix():
     assert ".xlsx" not in IMAGE_SUFFIXES
+    assert all(suffix == suffix.lower() and suffix.startswith(".") for suffix in IMAGE_SUFFIXES)
 
 
 def test_is_image_ignores_the_case_of_the_suffix():

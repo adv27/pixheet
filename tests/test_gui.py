@@ -14,6 +14,7 @@ import pytest
 from images import noise
 
 from pixheet import gui
+from pixheet._plan import IMAGE_SUFFIXES
 from pixheet.core import convert as real_convert
 from pixheet.gui import (
     Converted,
@@ -116,6 +117,11 @@ def test_throttle_limits_updates_but_lets_the_first_and_last_through():
     now[0] = 0.07
     assert not throttle(3, 10)
     assert throttle(10, 10)  # the last, at once after the one before
+
+
+def test_image_suffixes_match_the_file_dialog_types():
+    patterns = gui.IMAGE_TYPES[0][1].split()
+    assert {pattern.removeprefix("*") for pattern in patterns} == IMAGE_SUFFIXES
 
 
 def test_parse_options():
