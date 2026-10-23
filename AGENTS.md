@@ -22,8 +22,8 @@ Read [README.md](README.md) for usage, the Python API, and the Excel limits.
 | `tests/` | Pytest suite. `tests/images.py` generates all test images. No real photos. |
 | `bench/bench.py` | Benchmark on local sample photos. |
 | `scripts/` | `excel_check.ps1` (Excel COM check, Windows) and `sample_pixels.py`. |
-| `packaging/` | The build of `Pixheet.exe`: the PyInstaller spec `pixheet.spec`, the Tcl and Tk trim `trim_tcltk.py`, the entry script, the icon and `make_icon.py`, `build.ps1`, `check_exe.py`, and the runner hook `runner_job_started.ps1`. Read `packaging/README.md`. |
-| `.github/workflows/` | `ci.yml`: tests and lint on GitHub-hosted Windows. `windows-exe.yml`: the exe build on the self-hosted runner, and the release. |
+| `packaging/` | The build of `Pixheet.exe`: the PyInstaller spec `pixheet.spec`, the Tcl and Tk trim `trim_tcltk.py`, the entry script, the icon and `make_icon.py`, `build.ps1`, `check_exe.py`, and the hook `runner_job_started.ps1` for a later self-hosted runner. Read `packaging/README.md`. |
+| `.github/workflows/` | `ci.yml`: tests and lint on GitHub-hosted Windows. `windows-exe.yml`: the exe build on GitHub-hosted Windows, and the release. |
 
 Modules with a leading underscore are private. Do not import them from outside the
 package, except in tests and in `bench/bench.py`, which times each stage.
@@ -74,12 +74,11 @@ Run the tests, the lint, and the format check before you report a change as comp
 - `packaging/pixheet.spec` leaves many modules out of `Pixheet.exe`. A new import of
   such a module can break the exe while the tests pass. After a change to the imports in
   `src/pixheet`, run `packaging/build.ps1`.
-- `windows-exe.yml` runs on a self-hosted runner, and the repository is public. Never
-  add a `pull_request` or `pull_request_target` trigger to it. Pin each action to a
-  full commit SHA.
-- The job-started hook `packaging/runner_job_started.ps1` lets the runner run only
-  `windows-exe.yml` from `master` or from a `v*` tag. If you rename the workflow or the
-  default branch, change the hook and its tests.
+- The workflows run on GitHub-hosted runners, and the repository is public. Never add a
+  `pull_request_target` trigger. Pin each action to a full commit SHA. Only the release
+  job of `windows-exe.yml` can write to the repository.
+- Before you move a job to a self-hosted runner, you MUST remove the `pull_request`
+  trigger of its workflow. Read "Later: self-hosted runner" in `packaging/README.md`.
 
 ## Commits
 

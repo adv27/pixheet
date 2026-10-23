@@ -1,35 +1,37 @@
-# Build Pixheet.exe on the self-hosted Windows runner of the project.
+# Build Pixheet.exe on a GitHub-hosted Windows runner.
 #
-# Security: the repository is public. A pull request from a fork must never run code on
-# the self-hosted runner. Thus this workflow has no pull_request trigger and no
-# pull_request_target trigger. Do not add them. Only a push to master, a push of a v*
-# tag, and a manual start run it.
+# Each job runs on a new virtual machine, and GitHub deletes the machine after the job.
+# Thus no file from an earlier job can go into the exe.
 #
-# A pull request from a fork can change this file. Thus the runner itself must refuse
-# untrusted jobs: its job-started hook, packaging/runner_job_started.ps1, runs only this
-# workflow from master or from a v* tag. If you rename this file, change the hook too.
+# Security: the repository is public. A pull request from a fork can run this workflow,
+# because the trigger is pull_request. For pull_request, GitHub gives no secrets and a
+# token that can only read. Do not use pull_request_target. It gives the secrets and a
+# token that can write.
 #
-# A push of a tag "v<version>" also publishes the exe in a GitHub release. A
-# GitHub-hosted runner does that step, so the token that can write never goes to the
-# self-hosted runner.
+# Before you move the build job to a self-hosted runner, you MUST remove the pull_request
+# trigger. Read "Later: self-hosted runner" in packaging/README.md.
+#
+# A push of a tag "v<version>" also publishes the exe in a GitHub release. Only the release
+# job can write to the repository. It never runs for a pull request.
 name: Windows exe
 
 on:
   push:
     branches: [master]
     tags: ["v*"]
+  pull_request:
   workflow_dispatch:
 
 permissions: {}
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: false
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   build:
     name: Build Pixheet.exe
-    runs-on: [self-hosted, Windows, X64]
+    runs-on: windows-2025
     timeout-minutes: 45
     permissions:
       contents: read # check out the code
@@ -38,41 +40,14 @@ jobs:
         # Windows PowerShell 5.1 is on each Windows machine. pwsh is not always there.
         shell: powershell
     steps:
-      # A self-hosted runner keeps its files from the last job.
-      - name: Clean the workspace
-        run: |
-          # A Pixheet.exe that did not stop in an earlier job keeps its files locked.
-          Get-Process -Name Pixheet -ErrorAction SilentlyContinue |
-            Where-Object { $_.Path -and $_.Path.StartsWith($env:GITHUB_WORKSPACE, 'OrdinalIgnoreCase') } |
-            ForEach-Object {
-              Stop-Process -Id $_.Id -Force -ErrorAction SilentlyContinue
-              Wait-Process -Id $_.Id -Timeout 10 -ErrorAction SilentlyContinue
-            }
-          Get-ChildItem -LiteralPath $env:GITHUB_WORKSPACE -Force |
-            Remove-Item -Recurse -Force
-
-      # This workflow publishes releases. Thus no file from an earlier job can go into
-      # the exe. The runner empties RUNNER_TEMP at the start and at the end of each job,
-      # so uv keeps its cache and its Python there, not in the profile of the runner
-      # account. setup-uv downloads uv again and checks its SHA256.
-      - name: Use new folders for uv and Python
-        run: |
-          "UV_CACHE_DIR=$env:RUNNER_TEMP\uv-cache" |
-            Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
-          "UV_PYTHON_INSTALL_DIR=$env:RUNNER_TEMP\uv-python" |
-            Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
-          if ($env:RUNNER_TOOL_CACHE) {
-            $uv = Join-Path $env:RUNNER_TOOL_CACHE 'uv'
-            if (Test-Path -LiteralPath $uv) { Remove-Item -LiteralPath $uv -Recurse -Force }
-          }
-
       - name: Check out the repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
 
       # uv reads the uv version from pyproject.toml and the Python version from
-      # .python-version. enable-cache: false turns off only the GitHub Actions cache.
+      # .python-version. This workflow publishes releases. Thus it does not use the GitHub
+      # Actions cache, because a file from the cache can go into the exe.
       - name: Install uv
         uses: astral-sh/setup-uv@18d369b23da25a81e9458561248e1aafff6a70fa # v10.3.1
         with:
@@ -90,6 +65,8 @@ jobs:
             exit 1
           }
 
+      # The build group includes pefile. Thus the test that compares the PE checksum with
+      # pefile runs here. It does not skip.
       - name: Install the dependencies
         run: uv sync --locked --extra gui --group build
 
@@ -109,25 +86,11 @@ jobs:
           if-no-files-found: error
           retention-days: 30
 
-      - name: Clean the workspace
-        if: always()
-        run: |
-          # A Pixheet.exe that did not stop in an earlier job keeps its files locked.
-          Get-Process -Name Pixheet -ErrorAction SilentlyContinue |
-            Where-Object { $_.Path -and $_.Path.StartsWith($env:GITHUB_WORKSPACE, 'OrdinalIgnoreCase') } |
-            ForEach-Object {
-              Stop-Process -Id $_.Id -Force -ErrorAction SilentlyContinue
-              Wait-Process -Id $_.Id -Timeout 10 -ErrorAction SilentlyContinue
-            }
-          foreach ($name in 'dist', 'build', '.venv') {
-            $path = Join-Path $env:GITHUB_WORKSPACE $name
-            if (Test-Path -LiteralPath $path) { Remove-Item -LiteralPath $path -Recurse -Force }
-          }
-
   release:
     name: Publish the release
     needs: build
-    if: startsWith(github.ref, 'refs/tags/v')
+    # Only for a push of a v* tag. Never for a pull request.
+    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
     runs-on: ubuntu-latest
     timeout-minutes: 10
     permissions:

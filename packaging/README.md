@@ -15,7 +15,7 @@ for maintainers.
 | `make_icon.py` | Draws `pixheet.ico` with Pillow. |
 | `build.ps1` | Builds the exe and tests it. |
 | `check_exe.py` | Makes sure that a built exe starts, and that it converts test images of 11 formats and modes correctly. |
-| `runner_job_started.ps1` | The job-started hook of the self-hosted runner. It refuses each job that is not a trusted build. |
+| `runner_job_started.ps1` | The job-started hook for a later self-hosted runner. It refuses each job that is not a trusted build. Read [Later: self-hosted runner](#later-self-hosted-runner). |
 
 ## Build on your computer
 
@@ -127,11 +127,16 @@ exe did not stop in 120 s. The output of the exe then shows the `ModuleNotFoundE
 | Workflow | Runner | Triggers | Steps |
 |---|---|---|---|
 | `.github/workflows/ci.yml` | GitHub-hosted `windows-latest` | pull request, push to `master`, manual | tests, `ruff check`, `ruff format --check` |
-| `.github/workflows/windows-exe.yml` | self-hosted, labels `self-hosted`, `Windows`, `X64` | push to `master`, push of a `v*` tag, manual | tests, `build.ps1`, upload of the artifact `Pixheet-windows-x64` |
+| `.github/workflows/windows-exe.yml` | GitHub-hosted `windows-2025` | pull request, push to `master`, push of a `v*` tag, manual | tests, `build.ps1`, upload of the artifact `Pixheet-windows-x64` |
+
+Each job runs on a new virtual machine. GitHub deletes the machine after the job. Thus
+no file from an earlier job goes into a release. For the same reason, the build job does
+not use the GitHub Actions cache.
 
 For a `v*` tag, a second job publishes `Pixheet.exe` and `Pixheet.exe.sha256` in a
-GitHub release. That job runs on a GitHub-hosted runner. The tag must agree with the
-version in `pyproject.toml`, for example `v0.1.0` for version `0.1.0`.
+GitHub release. That job runs on a GitHub-hosted Linux runner. It is the only job that
+can write to the repository, and it never runs for a pull request. The tag must agree
+with the version in `pyproject.toml`, for example `v0.1.0` for version `0.1.0`.
 
 To make a release, do these steps:
 
@@ -160,107 +165,39 @@ these linters:
 > uvx --from actionlint-py actionlint
 ```
 
-## Register the self-hosted runner
-
-The runner must be a Windows x64 computer. It needs Git. The workflow installs uv, and
-uv installs Python 3.15. Each job downloads uv and Python again, and keeps the uv cache
-and Python in the temporary folder of the job. The runner deletes that folder at the end
-of the job. Thus no file from an earlier job goes into a release.
-
-1. Make a local Windows account only for the runner. Do not use your own account or an
-   administrator account. This page calls it the "runner account".
-2. Let PowerShell run local scripts. Open PowerShell as an administrator, and run this
-   command:
-
-   ```console
-   > Set-ExecutionPolicy -ExecutionPolicy RemoteSigned -Scope LocalMachine
-   ```
-
-   Windows 10 and Windows 11 refuse all scripts by default. The runner runs each
-   `shell: powershell` step and the job-started hook as a script, so without this
-   command each job fails. As an alternative, run the command with `-Scope CurrentUser`
-   as the runner account.
-3. On GitHub, open **Settings > Actions > Runners**, and click **New self-hosted runner**.
-4. Select **Windows** and **x64**.
-5. Run the download and configure commands that GitHub shows, in PowerShell.
-6. When `config.cmd` asks for labels, keep the default labels `self-hosted`, `Windows`,
-   and `X64`. The workflow needs these labels.
-7. When `config.cmd` asks to run the runner as a service, type `Y`. Give the runner
-   account for the service.
-8. Install the job-started hook. Do this before the runner takes its first job.
-
-The smoke test opens a window. A service runs in session 0, which has no desktop that
-you can see. Tk can usually open a window there. If the step "Build and test the exe"
-fails with "cannot open a window", do these steps:
-
-1. Stop the service, and start the runner with `run.cmd` in a session where the
-   runner account is logged on.
-2. Or, make a scheduled task that starts `run.cmd` when the runner account logs on.
-
-Use only the runner account for `run.cmd`. Never start the runner in your own logon
-session, because then each job can read and change your files.
-
-### Install the job-started hook
-
-`runner_job_started.ps1` makes the runner refuse each job that is not a trusted build.
-The runner runs a job only when all these conditions are true:
-
-- The workflow is `windows-exe.yml` of this repository.
-- The event is a push or a manual start.
-- The ref is `master` or a `v*` tag.
-
-The runner stops all other jobs in the step "Set up runner", and the job fails. A
-manual start of `windows-exe.yml` from a branch that is not `master` also fails.
-
-To install the hook, do these steps on the runner computer as an administrator:
-
-1. Make the folder `C:\actions-runner-hooks`. Do not put the hook in the folder of the
-   runner application, because GitHub tells you not to.
-2. Copy `packaging\runner_job_started.ps1` from a clone of the repository into that
-   folder.
-3. Give the runner account read access to the folder, but not write access. Then a job
-   cannot change the hook.
-4. Add this line to the file `.env` in the folder of the runner application:
-
-   ```text
-   ACTIONS_RUNNER_HOOK_JOB_STARTED=C:\actions-runner-hooks\runner_job_started.ps1
-   ```
-
-5. Restart the runner service.
-6. Start `windows-exe.yml` by hand on `master`. The log of the step "Set up runner" must
-   show "runner_job_started: run the job".
-
-When the hook changes in the repository, copy it again. If the repository gets a new
-name or a new default branch, change the hook and its tests in
-`tests/test_packaging.py`.
-
-An ephemeral runner (`config.cmd --ephemeral`) is another option. It takes one job, and
-then you must register it again. It does not refuse a job that it must not run. Thus
-use the hook also on an ephemeral runner.
-
 ## Safety rule for the public repository
 
 The repository is public. A pull request from a fork can contain any code, and also
 new workflow files. For a pull request, GitHub runs the workflow files of the pull
-request, not the files on `master`. Thus a fork can add a `pull_request` trigger to
-`windows-exe.yml`, or use the labels of the runner in a different workflow. That code
-must never run on the self-hosted runner, because the runner is your computer.
+request, not the files on `master`. These rules keep the repository safe:
 
-The rules in the workflow files do not stop an attacker. These controls protect the
-runner:
+- Use the `pull_request` trigger, not `pull_request_target`. For `pull_request`, a fork
+  gets no secrets and a token that can only read.
+- Keep the default permissions of the `GITHUB_TOKEN` at no access. Each job asks for
+  the permissions that it needs. Only the release job can write.
+- Use only GitHub-hosted runners for a workflow that a pull request starts.
 
-- The job-started hook refuses each job that is not a trusted build. The runner itself
-  enforces this control. Install the hook before the runner takes its first job.
-- In **Settings > Actions > General**, under **Approval for running fork pull request
-  workflows from contributors**, select **Require approval for all external
-  contributors**.
-- Before you approve the workflows of a pull request from a fork, read each change
-  under `.github/`. Refuse the run if a change adds a `runs-on` with a label of the
-  runner (`self-hosted`, `Windows`, or `X64`), or changes the triggers of
-  `windows-exe.yml`.
-- `windows-exe.yml` has no `pull_request` trigger and no `pull_request_target`
-  trigger. Do not add them.
-- Do not use the labels of the self-hosted runner in `ci.yml` or in a new workflow
-  that a pull request starts.
-- Keep the default permissions of the `GITHUB_TOKEN` at read access. Each job asks for
-  the permissions that it needs.
+## Later: self-hosted runner
+
+The build job can move to a self-hosted Windows runner later, for example to build
+faster. A self-hosted runner is your computer, and it keeps its files from job to job.
+A pull request from a fork must never run code on it. To move the job, do these steps:
+
+1. Remove the `pull_request` trigger from `windows-exe.yml`. You MUST do this step
+   first.
+2. Make a local Windows account only for the runner. Do not use an administrator
+   account.
+3. Install the job-started hook `runner_job_started.ps1` before the runner takes its
+   first job. Then the runner refuses each job that is not `windows-exe.yml` from a push
+   or a manual start on `master` or on a `v*` tag. Set the hook in the `.env` file of the
+   runner with `ACTIONS_RUNNER_HOOK_JOB_STARTED`. Give the runner account only read
+   access to the hook.
+4. Add steps that delete the workspace before and after the job. Keep the uv cache and
+   Python in `RUNNER_TEMP`. Then no file from an earlier job goes into a release.
+5. Keep the release job on a GitHub-hosted runner. Then the token that can write never
+   goes to your computer.
+6. In **Settings > Actions > General**, require approval for the workflows of all
+   external contributors.
+
+The tests in `tests/test_packaging.py` check the hook. If the repository gets a new name
+or a new default branch, change the hook and its tests.
