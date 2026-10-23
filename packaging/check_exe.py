@@ -14,7 +14,14 @@ The script does these steps:
    exe. If the exe needs one of them, this step fails.
 
 If the exe does not stop in time, the script stops the exe and all processes that the
-exe started. At the end, the script deletes the folder. Run it from the repository root:
+exe started. At the end, the script deletes the folder.
+
+Each run of the exe has its own temporary folder: the script sets TEMP, TMP and TMPDIR.
+A one-file exe extracts itself to a folder ``_MEI...`` in that folder. After each run,
+also after the script stops the exe, the script deletes the folder. Thus a stopped exe
+cannot leave a ``_MEI...`` folder in the temporary folder of the user.
+
+Run the script from the repository root:
 
     uv run python packaging/check_exe.py dist/Pixheet.exe
 """
@@ -23,6 +30,7 @@ import argparse
 import io
 import os
 import re
+import shutil
 import signal
 import subprocess
 import sys
@@ -41,6 +49,10 @@ TIMEOUT = 120
 """The maximum time for the exe, in seconds. The first start of a one-file exe is slow."""
 KILL_WAIT = 10
 """The maximum time to wait for the output after the script stops the exe, in seconds."""
+REMOVE_WAIT = 10
+"""The maximum time to try again to delete the temporary folder of the exe, in seconds."""
+TEMP_VARIABLES = ("TEMP", "TMP", "TMPDIR")
+"""The environment variables that give the temporary folder. Windows reads TMP and TEMP."""
 MEMBERS = ("xl/worksheets/sheet1.xml", "xl/styles.xml")
 """The parts of an .xlsx file that the format check compares."""
 FORMATS_FOLDER = "formats ảnh"
@@ -178,14 +190,49 @@ def kill_tree(process: subprocess.Popen[bytes]) -> None:
     process.kill()
 
 
+class CleanupError(Exception):
+    """The script cannot delete the temporary folder of a run of the exe."""
+
+
+def remove_folder(folder: Path, wait: float = REMOVE_WAIT) -> None:
+    """Delete ``folder`` and all its files. Raise ``CleanupError`` if that is not possible.
+
+    After Windows stops a process, its files can stay locked for a short time. Thus the
+    function tries again until ``wait`` seconds pass.
+    """
+    deadline = time.monotonic() + wait
+    while True:
+        try:
+            shutil.rmtree(folder)
+            return
+        except FileNotFoundError:
+            return
+        except OSError as e:
+            if time.monotonic() >= deadline:
+                raise CleanupError(f"The script cannot delete the folder {folder}: {e}") from e
+        time.sleep(0.2)
+
+
 def run_exe(
     command: list[str], timeout: float = TIMEOUT, env: dict[str, str] | None = None
 ) -> tuple[int | None, str]:
     """Run ``command``, and return its exit code and its output (stdout and stderr).
 
-    ``env`` adds environment variables. If the command does not stop in ``timeout``
-    seconds, stop it and all processes that it started. Then the exit code is None.
+    ``env`` adds environment variables. The command gets a new temporary folder in TEMP,
+    TMP and TMPDIR. If the command does not stop in ``timeout`` seconds, stop it and all
+    processes that it started. Then the exit code is None. At the end, delete the
+    temporary folder. Raise ``CleanupError`` if that is not possible.
     """
+    temp = Path(tempfile.mkdtemp(prefix="pixheet-exe-"))
+    try:
+        variables = dict.fromkeys(TEMP_VARIABLES, str(temp)) | (env or {})
+        return run_process(command, timeout, {**os.environ, **variables})
+    finally:
+        remove_folder(temp)
+
+
+def run_process(command: list[str], timeout: float, env: dict[str, str]) -> tuple[int | None, str]:
+    """Run ``command`` with the environment ``env``. ``run_exe`` tells the result."""
     # On POSIX, a new session lets kill_tree stop the child processes too.
     new_session = sys.platform != "win32"
     process = subprocess.Popen(
@@ -193,7 +240,7 @@ def run_exe(
         stdout=subprocess.PIPE,
         stderr=subprocess.STDOUT,
         start_new_session=new_session,
-        env=None if env is None else {**os.environ, **env},
+        env=env,
     )
     try:
         # communicate() closes the pipe and waits for the process.
@@ -301,7 +348,10 @@ def main() -> int:
     if not args.exe.is_file():
         print(f"check_exe: {args.exe} does not exist.", file=sys.stderr)
         return 1
-    problems = check(args.exe.resolve())
+    try:
+        problems = check(args.exe.resolve())
+    except CleanupError as e:
+        problems = [str(e)]
     for problem in problems:
         print(f"check_exe: {problem}", file=sys.stderr)
     if not problems:

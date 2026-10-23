@@ -35,7 +35,9 @@ The script does these steps:
    images of 11 formats and modes, for example AVIF, WebP, a CMYK JPEG with an ICC
    profile, and a LAB TIFF. Each sheet must be the same, byte for byte, as the sheet of
    `pixheet.convert` in Python. If the exe does not stop in 120 seconds, `check_exe.py`
-   stops it and all processes that it started.
+   stops it and all processes that it started. Each run of the exe gets its own
+   temporary folder in `TEMP` and `TMP`, and `check_exe.py` deletes it after the run.
+   Thus a stopped exe cannot leave a `_MEI...` folder in `%TEMP%`.
 4. It writes `dist\Pixheet.exe.sha256`.
 
 The script sets `PYINSTALLER_CONFIG_DIR` to `build\pyinstaller-config`. With `--clean`,

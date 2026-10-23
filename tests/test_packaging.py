@@ -315,6 +315,96 @@ def test_problem_includes_the_output_of_a_failed_exe():
     assert "pixheet-gui: cannot open a window" in problem
 
 
+# A fake one-file exe: it extracts itself to a folder _MEI... in its temporary folder.
+# With "hang", a child process keeps a file in that folder open, and both processes do
+# not stop, like an exe that shows an error dialog.
+MEI_EXE = """
+import os, subprocess, sys, tempfile, time
+from pathlib import Path
+mei = Path(tempfile.gettempdir()) / "_MEI12345"
+mei.mkdir()
+(mei / "python315.dll").write_bytes(b"fake")
+print("mei", mei, flush=True)
+print("temp", os.environ["TEMP"], os.environ["TMP"], flush=True)
+if sys.argv[1:] == ["hang"]:
+    code = "import sys, time; f = open(sys.argv[1], 'rb'); time.sleep(120)"
+    subprocess.Popen([sys.executable, "-c", code, str(mei / "python315.dll")])
+    time.sleep(120)
+"""
+
+
+def mei_folder(output: str) -> Path:
+    """Return the _MEI folder that MEI_EXE printed."""
+    [line] = [line for line in output.splitlines() if line.startswith("mei ")]
+    return Path(line.removeprefix("mei "))
+
+
+def test_run_exe_gives_the_exe_its_own_temporary_folder():
+    before = (os.environ.get("TEMP"), os.environ.get("TMP"))
+    code, output = check_exe.run_exe([sys.executable, "-c", MEI_EXE], timeout=60)
+    assert code == 0, output
+    mei = mei_folder(output)
+    temp = mei.parent
+    assert temp.name.startswith("pixheet-exe-")
+    [line] = [line for line in output.splitlines() if line.startswith("temp ")]
+    assert line.split()[1:] == [str(temp), str(temp)]
+    assert not temp.exists()
+    assert (os.environ.get("TEMP"), os.environ.get("TMP")) == before
+
+
+def test_run_exe_deletes_the_temporary_folder_of_a_stopped_exe():
+    code, output = check_exe.run_exe([sys.executable, "-c", MEI_EXE, "hang"], timeout=5)
+    assert code is None
+    mei = mei_folder(output)
+    assert mei.parent.name.startswith("pixheet-exe-")
+    assert not mei.exists()
+    assert not mei.parent.exists()
+
+
+def test_remove_folder_tries_again_while_a_file_is_locked(tmp_path, monkeypatch):
+    folder = tmp_path / "temp"
+    folder.mkdir()
+    calls = []
+    real_rmtree = shutil.rmtree
+
+    def rmtree(path):
+        calls.append(path)
+        if len(calls) < 3:
+            raise PermissionError("locked")
+        real_rmtree(path)
+
+    monkeypatch.setattr(check_exe.shutil, "rmtree", rmtree)
+    check_exe.remove_folder(folder, wait=30)
+    assert len(calls) == 3
+    assert not folder.exists()
+
+
+def test_remove_folder_stops_after_the_wait(tmp_path, monkeypatch):
+    def rmtree(path):
+        raise PermissionError("locked")
+
+    monkeypatch.setattr(check_exe.shutil, "rmtree", rmtree)
+    with pytest.raises(check_exe.CleanupError, match="cannot delete the folder"):
+        check_exe.remove_folder(tmp_path, wait=0.3)
+
+
+def test_remove_folder_accepts_a_missing_folder(tmp_path):
+    check_exe.remove_folder(tmp_path / "missing", wait=0)
+
+
+def test_main_reports_a_folder_that_it_cannot_delete(tmp_path, monkeypatch, capsys):
+    exe = tmp_path / "Pixheet.exe"
+    exe.write_bytes(b"MZ")
+
+    def check(path, timeout=check_exe.TIMEOUT):
+        raise check_exe.CleanupError("The script cannot delete the folder X: locked")
+
+    monkeypatch.setattr(check_exe, "check", check)
+    monkeypatch.setattr(sys, "argv", ["check_exe.py", str(exe)])
+    assert check_exe.main() == 1
+    assert "check_exe: The script cannot delete the folder X" in capsys.readouterr().err
+
+
 # The spec
 
 
