@@ -1,22 +1,30 @@
-# Build Pixheet.exe on a GitHub-hosted Windows runner.
+# Build the desktop app for Windows and Linux on GitHub-hosted runners, and publish the
+# release.
+#
+# - build-windows makes Pixheet.exe on a Windows runner.
+# - build-linux makes Pixheet-linux-x86_64 in a Debian 11 container on an Ubuntu runner.
+#   Debian 11 has glibc 2.31 and libX11 1.7.2. The app then needs only glibc 2.27 (the
+#   floor of Pillow), and tkdnd can load. A build on the Ubuntu runner itself would need
+#   glibc 2.39. Read packaging/README.md.
 #
 # Each job runs on a new virtual machine, and GitHub deletes the machine after the job.
-# Thus no file from an earlier job can go into the exe.
+# Thus no file from an earlier job can go into the app.
 #
 # Security: the repository is public. A pull request from a fork can run this workflow,
 # because the trigger is pull_request. For pull_request, GitHub gives no secrets and a
 # token that can only read. Do not use pull_request_target. It gives the secrets and a
 # token that can write.
 #
-# Before you move the build job to a self-hosted runner, you MUST remove the pull_request
+# Before you move a build job to a self-hosted runner, you MUST remove the pull_request
 # trigger. Read "Later: self-hosted runner" in packaging/README.md.
 #
-# The release job publishes the exe in a GitHub release "Pixheet v<version>":
+# The release job publishes the four files of both builds in a GitHub release
+# "Pixheet v<version>". It runs only when both builds pass:
 # - For a push to master, when the tag v<version> of the version in pyproject.toml does not
 #   exist yet. The job makes the tag. When the tag exists, the job does nothing.
 # - For a push of a tag "v<version>". The tag must agree with the version.
 # Only the release job can write to the repository. It never runs for a pull request.
-name: Windows exe
+name: Release
 
 on:
   push:
@@ -32,7 +40,7 @@ concurrency:
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
-  build:
+  build-windows:
     name: Build Pixheet.exe
     runs-on: windows-2025
     timeout-minutes: 45
@@ -52,7 +60,7 @@ jobs:
 
       # uv reads the uv version from pyproject.toml and the Python version from
       # .python-version. This workflow publishes releases. Thus it does not use the GitHub
-      # Actions cache, because a file from the cache can go into the exe.
+      # Actions cache, because a file from the cache can go into the app.
       - name: Install uv
         uses: astral-sh/setup-uv@18d369b23da25a81e9458561248e1aafff6a70fa # v10.3.1
         with:
@@ -98,9 +106,70 @@ jobs:
           if-no-files-found: error
           retention-days: 30
 
+  build-linux:
+    name: Build Pixheet for Linux
+    runs-on: ubuntu-latest
+    container: debian:11
+    timeout-minutes: 45
+    permissions:
+      contents: read # check out the code
+    env:
+      DEBIAN_FRONTEND: noninteractive
+    steps:
+      # The container runs as root, so apt needs no sudo. Debian 11 is old, so its
+      # packages are on archive.debian.org. git lets actions/checkout make a real clone:
+      # build.sh reads the time of the commit. binutils gives objdump to linux_guards.py.
+      # xvfb, xauth and xfonts-base give an X server to the tests and to check_exe.py.
+      - name: Install the system packages
+        run: |
+          printf '%s\n' \
+            'deb http://archive.debian.org/debian bullseye main' \
+            'deb http://archive.debian.org/debian-security bullseye-security main' \
+            > /etc/apt/sources.list
+          rm -f /etc/apt/sources.list.d/*
+          apt-get -o Acquire::Check-Valid-Until=false update
+          apt-get install -y git ca-certificates binutils libx11-6 libxcursor1 \
+            xvfb xauth xfonts-base
+          dpkg-query -W libc6 libx11-6
+
+      - name: Check out the repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      # uv installs the Python of .python-version from python-build-standalone, the same
+      # Python as on Windows. The job does not use the GitHub Actions cache, for the same
+      # reason as the Windows job.
+      - name: Install uv
+        uses: astral-sh/setup-uv@18d369b23da25a81e9458561248e1aafff6a70fa # v10.3.1
+        with:
+          enable-cache: false
+
+      - name: Install the dependencies
+        run: uv sync --locked --extra gui --group build
+
+      - name: Run the tests
+        run: xvfb-run -a uv run --locked --extra gui --group build pytest
+
+      # The spec writes the glibc floor of the bundle to the log, in the line
+      # "linux_guards: the app needs glibc 2.27 or later (...)". The build stops when the
+      # floor is above 2.27, or when the libX11 of the container is older than 1.7.
+      - name: Build and test the app
+        run: bash packaging/build.sh
+
+      - name: Upload the app
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: Pixheet-linux-x86_64
+          path: |
+            dist/Pixheet-linux-x86_64
+            dist/Pixheet-linux-x86_64.sha256
+          if-no-files-found: error
+          retention-days: 30
+
   release:
     name: Publish the release
-    needs: build
+    needs: [build-windows, build-linux]
     # A push to master, a push of a v* tag, or a manual start on master. Never a pull
     # request, and never a manual start on a different branch.
     if: >-
@@ -129,10 +198,10 @@ jobs:
           REF: ${{ github.ref }}
           REF_NAME: ${{ github.ref_name }}
           SHA: ${{ github.sha }}
-          VERSION: ${{ needs.build.outputs.version }}
+          VERSION: ${{ needs.build-windows.outputs.version }}
         run: |
           if [[ "$REF" == refs/tags/v* ]]; then
-            # The build job made sure that the tag agrees with the version.
+            # The Windows build job made sure that the tag agrees with the version.
             echo "tag=$REF_NAME" >> "$GITHUB_OUTPUT"
             echo "publish=true" >> "$GITHUB_OUTPUT"
             exit 0
@@ -181,17 +250,25 @@ jobs:
           fi
           echo "publish=true" >> "$GITHUB_OUTPUT"
 
-      - name: Download the exe
+      - name: Download the Windows app
         if: steps.tag.outputs.publish == 'true'
         uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: Pixheet-windows-x64
           path: dist
 
+      - name: Download the Linux app
+        if: steps.tag.outputs.publish == 'true'
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: Pixheet-linux-x86_64
+          path: dist
+
       # The job never replaces a file of a published release, because users can have
       # downloaded it already. A new build of the same commit can also give a different
-      # exe, for example with a newer patch release of Python. To replace a file, delete
-      # it in the release by hand, then run again.
+      # file, for example with a newer patch release of Python. To replace a file, delete
+      # it in the release by hand, then run again. A download drops the executable bit of
+      # the Linux file. The README tells the users to run chmod +x.
       - name: Create the release, or add the files to it
         if: steps.tag.outputs.publish == 'true'
         working-directory: dist
@@ -200,16 +277,17 @@ jobs:
           REPO: ${{ github.repository }}
           TAG: ${{ steps.tag.outputs.tag }}
         run: |
-          sha256sum -c Pixheet.exe.sha256
+          sha256sum -c Pixheet.exe.sha256 Pixheet-linux-x86_64.sha256
+          files=(Pixheet.exe Pixheet.exe.sha256 Pixheet-linux-x86_64 Pixheet-linux-x86_64.sha256)
           if assets=$(gh release view "$TAG" --repo "$REPO" --json assets --jq '.assets[].name' 2> /dev/null); then
-            for name in Pixheet.exe Pixheet.exe.sha256; do
+            for name in "${files[@]}"; do
               if printf '%s\n' "$assets" | grep -qxF "$name"; then
                 echo "::error::The release $TAG already has $name. The job does not replace it. Delete the file in the release by hand, then run the job again."
                 exit 1
               fi
             done
-            gh release upload "$TAG" Pixheet.exe Pixheet.exe.sha256 --repo "$REPO"
+            gh release upload "$TAG" "${files[@]}" --repo "$REPO"
           else
-            gh release create "$TAG" Pixheet.exe Pixheet.exe.sha256 --repo "$REPO" \
+            gh release create "$TAG" "${files[@]}" --repo "$REPO" \
               --verify-tag --title "Pixheet $TAG" --generate-notes
           fi

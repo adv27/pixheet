@@ -141,7 +141,7 @@ def test_spec_is_not_ignored_by_git():
 
 HOOK = PACKAGING / "runner_job_started.ps1"
 FOLDER = "adv27/pixheet/.github/workflows"
-WORKFLOW = f"{FOLDER}/windows-exe.yml"
+WORKFLOW = f"{FOLDER}/release.yml"
 
 
 def run_hook(**variables: str) -> subprocess.CompletedProcess[str]:
@@ -187,7 +187,7 @@ def test_runner_hook_runs_a_trusted_job(event, ref):
 @pytest.mark.parametrize(
     ("repository", "event", "ref"),
     [
-        # A fork PR that adds a pull_request trigger to windows-exe.yml.
+        # A fork PR that adds a pull_request trigger to release.yml.
         ("adv27/pixheet", "pull_request", f"{WORKFLOW}@refs/pull/7/merge"),
         ("adv27/pixheet", "pull_request_target", f"{WORKFLOW}@refs/heads/master"),
         # A fork PR that changes ci.yml, or adds a workflow, to use the runner labels.
@@ -1246,9 +1246,57 @@ def test_check_pr_command(tmp_path, monkeypatch, capsys, base, head, tags, code,
 def test_workflows_use_the_release_version_script():
     workflows = PACKAGING.parent / ".github" / "workflows"
     ci = (workflows / "ci.yml").read_text(encoding="utf-8")
-    exe = (workflows / "windows-exe.yml").read_text(encoding="utf-8")
+    release = (workflows / "release.yml").read_text(encoding="utf-8")
     assert "packaging/release_version.py check-pr" in ci
-    assert "packaging/release_version.py version" in exe
+    assert "packaging/release_version.py version" in release
+
+
+WORKFLOWS = PACKAGING.parent / ".github" / "workflows"
+RELEASE_FILES = (
+    "Pixheet.exe",
+    "Pixheet.exe.sha256",
+    "Pixheet-linux-x86_64",
+    "Pixheet-linux-x86_64.sha256",
+)
+
+
+def test_release_waits_for_both_builds_and_publishes_four_files():
+    text = (WORKFLOWS / "release.yml").read_text(encoding="utf-8")
+    assert "pull_request_target" not in text.replace("Do not use pull_request_target", "")
+    assert "\n  build-windows:\n" in text
+    assert "\n  build-linux:\n" in text
+    assert "    needs: [build-windows, build-linux]\n" in text
+    assert "VERSION: ${{ needs.build-windows.outputs.version }}" in text
+    assert f"files=({' '.join(RELEASE_FILES)})" in text
+    assert 'gh release upload "$TAG" "${files[@]}"' in text
+    assert 'gh release create "$TAG" "${files[@]}"' in text
+    assert "sha256sum -c Pixheet.exe.sha256 Pixheet-linux-x86_64.sha256" in text
+    for name in ("Pixheet-windows-x64", "Pixheet-linux-x86_64"):
+        assert f"          name: {name}\n" in text  # upload and download
+
+
+def test_linux_build_runs_in_debian_11():
+    text = (WORKFLOWS / "release.yml").read_text(encoding="utf-8")
+    job = text[text.index("\n  build-linux:\n") : text.index("\n  release:\n")]
+    assert "    runs-on: ubuntu-latest\n    container: debian:11\n" in job
+    assert "archive.debian.org/debian bullseye main" in job
+    assert "binutils" in job
+    assert "xvfb" in job
+    assert "sudo apt" not in job  # the container runs as root
+    assert "run: xvfb-run -a uv run --locked --extra gui --group build pytest" in job
+    assert "run: bash packaging/build.sh" in job
+    assert "dist/Pixheet-linux-x86_64.sha256" in job
+    assert "contents: read" in job
+    assert "contents: write" not in job
+
+
+def test_ci_tests_on_windows_and_linux():
+    text = (WORKFLOWS / "ci.yml").read_text(encoding="utf-8")
+    assert "os: [windows-latest, ubuntu-latest]" in text
+    assert "runs-on: ${{ matrix.os }}" in text
+    assert "fail-fast: false" in text
+    assert "run=(xvfb-run -a)" in text
+    assert text.count("flags: ${{ runner.os }}") == 2
 
 
 def test_release_version_script_runs_on_python_3_12():

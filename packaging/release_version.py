@@ -1,6 +1,6 @@
 """Read the package version for the release, and check a pull request that changes it.
 
-The workflow windows-exe.yml publishes a release when a push to master changes the
+The workflow release.yml publishes a release when a push to master changes the
 version. A pull request that changes the version to a version with a tag would not make a
 release. Thus ci.yml stops such a pull request. The script has two commands:
 

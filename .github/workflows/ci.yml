@@ -1,8 +1,8 @@
-# Tests and lint on a GitHub-hosted Windows runner.
-# The job runs on a new virtual machine each time, and its token can only read the
-# repository. A pull request from a fork gets no secrets. Read packaging/README.md.
-# The test job sends the coverage and the test results to Codecov. Only this workflow
-# uses the secret CODECOV_TOKEN.
+# Tests and lint on GitHub-hosted Windows and Ubuntu runners.
+# Each job runs on a new virtual machine, and its token can only read the repository. A
+# pull request from a fork gets no secrets. Read packaging/README.md.
+# Both test jobs send the coverage and the test results to Codecov, with a flag for the
+# system: Windows or Linux. Only this workflow uses the secret CODECOV_TOKEN.
 name: CI
 
 on:
@@ -20,14 +20,27 @@ concurrency:
 
 jobs:
   test:
-    name: Tests and lint
-    runs-on: windows-latest
+    name: Tests and lint (${{ matrix.os }})
+    strategy:
+      # A failure on one system does not cancel the job on the other system.
+      fail-fast: false
+      matrix:
+        os: [windows-latest, ubuntu-latest]
+    runs-on: ${{ matrix.os }}
     timeout-minutes: 20
     steps:
       - name: Check out the repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+
+      # The GUI tests need an X server on Linux. Without it, they skip, and the job passes
+      # without a test of the window.
+      - name: Install Xvfb
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y xvfb xauth
 
       # uv reads the uv version from pyproject.toml and the Python version from
       # .python-version.
@@ -37,11 +50,15 @@ jobs:
       - name: Install the dependencies
         run: uv sync --locked --extra gui
 
-      # Only CI measures the coverage. A plain "uv run pytest" stays fast.
+      # Only CI measures the coverage. A plain "uv run pytest" stays fast. On Linux,
+      # xvfb-run starts an X server for the run. bash runs the step on both systems.
       - name: Run the tests
-        run: >-
-          uv run --locked --extra gui pytest --cov --cov-branch --cov-report=xml
-          --junitxml=junit.xml -o junit_family=legacy
+        shell: bash
+        run: |
+          run=()
+          if [[ "$RUNNER_OS" == "Linux" ]]; then run=(xvfb-run -a); fi
+          "${run[@]}" uv run --locked --extra gui pytest --cov --cov-branch \
+            --cov-report=xml --junitxml=junit.xml -o junit_family=legacy
 
       # A pull request from a fork gets no secrets. Then the token is empty, and Codecov
       # accepts the upload without a token, because the repository is public. An upload
@@ -51,6 +68,7 @@ jobs:
         with:
           token: ${{ secrets.CODECOV_TOKEN }}
           files: coverage.xml
+          flags: ${{ runner.os }}
           disable_search: true
           fail_ci_if_error: ${{ secrets.CODECOV_TOKEN != '' }}
 
@@ -62,13 +80,17 @@ jobs:
           token: ${{ secrets.CODECOV_TOKEN }}
           report_type: test_results
           files: junit.xml
+          flags: ${{ runner.os }}
           disable_search: true
           fail_ci_if_error: ${{ secrets.CODECOV_TOKEN != '' }}
 
+      # The lint and the format check give the same result on each system.
       - name: Lint
+        if: runner.os == 'Windows'
         run: uv run --locked --extra gui ruff check
 
       - name: Check the format
+        if: runner.os == 'Windows'
         run: uv run --locked --extra gui ruff format --check
 
   version:

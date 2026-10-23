@@ -24,7 +24,7 @@ Read [README.md](README.md) for usage, the Python API, and the Excel limits.
 | `bench/bench.py` | Benchmark on local sample photos. |
 | `scripts/` | `excel_check.ps1` (Excel COM check, Windows) and `sample_pixels.py`. |
 | `packaging/` | The build of `Pixheet.exe`: the PyInstaller spec `pixheet.spec`, the Tcl and Tk trim `trim_tcltk.py`, the entry script, the icon and `make_icon.py`, `build.ps1`, `check_exe.py`, `release_version.py` for the release job, and the hook `runner_job_started.ps1` for a later self-hosted runner. Read `packaging/README.md`. |
-| `.github/workflows/` | `ci.yml`: tests and lint on GitHub-hosted Windows. `windows-exe.yml`: the exe build on GitHub-hosted Windows, and the release. |
+| `.github/workflows/` | `ci.yml`: tests and lint on GitHub-hosted Windows and Ubuntu. `release.yml`: the build of `Pixheet.exe` on GitHub-hosted Windows, the build of `Pixheet-linux-x86_64` in a Debian 11 container, and the release. |
 
 Modules with a leading underscore are private. Do not import them from outside the
 package, except in tests and in `bench/bench.py`, which times each stage.
@@ -78,7 +78,7 @@ Run the tests, the lint, and the format check before you report a change as comp
   `src/pixheet`, run `packaging/build.ps1`.
 - The workflows run on GitHub-hosted runners, and the repository is public. Never add a
   `pull_request_target` trigger. Pin each action to a full commit SHA. Only the release
-  job of `windows-exe.yml` can write to the repository.
+  job of `release.yml` can write to the repository.
 - Before you move a job to a self-hosted runner, you MUST remove the `pull_request`
   trigger of its workflow. Read "Later: self-hosted runner" in `packaging/README.md`.
 

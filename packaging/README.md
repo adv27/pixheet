@@ -130,7 +130,7 @@ exe did not stop in 120 s. The output of the exe then shows the `ModuleNotFoundE
 | Workflow | Runner | Triggers | Steps |
 |---|---|---|---|
 | `.github/workflows/ci.yml` | GitHub-hosted `windows-latest` and `ubuntu-latest` | pull request, push to `master`, manual | tests with coverage, `ruff check`, `ruff format --check`, upload of the coverage and the test results to Codecov; for a pull request, the check of the version tag |
-| `.github/workflows/windows-exe.yml` | GitHub-hosted `windows-2025` | pull request, push to `master`, push of a `v*` tag, manual | tests, `build.ps1`, upload of the artifact `Pixheet-windows-x64` |
+| `.github/workflows/release.yml` | GitHub-hosted `windows-2025`; GitHub-hosted `ubuntu-latest` with the container `debian:11` | pull request, push to `master`, push of a `v*` tag, manual | job `build-windows`: tests, `build.ps1`, upload of the artifact `Pixheet-windows-x64`; job `build-linux`: tests, `build.sh`, upload of the artifact `Pixheet-linux-x86_64`; job `release` |
 
 Each job runs on a new virtual machine. GitHub deletes the machine after the job. Thus
 no file from an earlier job goes into a release. For the same reason, the build job does
@@ -138,14 +138,15 @@ not use the GitHub Actions cache.
 
 ### Codecov
 
-The test job of `ci.yml` runs pytest with `--cov` and `--junitxml`. Then it sends
-`coverage.xml` and `junit.xml` to [Codecov](https://codecov.io/gh/adv27/pixheet). These
-rules apply:
+The test jobs of `ci.yml` run pytest with `--cov` and `--junitxml`, on Windows and on
+Linux. On Linux, `xvfb-run` gives the GUI tests an X server. Then each job sends
+`coverage.xml` and `junit.xml` to [Codecov](https://codecov.io/gh/adv27/pixheet), with
+the flag `Windows` or `Linux`. Codecov merges the two reports. These rules apply:
 
 - The upload uses the repository secret `CODECOV_TOKEN`. Never print the token.
 - A pull request from a fork gets no secrets. Codecov accepts its upload without a
   token, because the repository is public. Then an upload error does not stop the job.
-- `windows-exe.yml` sends nothing to Codecov. Thus the job that can write never gets a
+- `release.yml` sends nothing to Codecov. Thus the job that can write never gets a
   different secret.
 - `codecov.yml` lets the coverage of the project go down by 1 % or less, and keeps the
   comment on a pull request short.
@@ -227,12 +228,12 @@ The build job can move to a self-hosted Windows runner later, for example to bui
 faster. A self-hosted runner is your computer, and it keeps its files from job to job.
 A pull request from a fork must never run code on it. To move the job, do these steps:
 
-1. Remove the `pull_request` trigger from `windows-exe.yml`. You MUST do this step
+1. Remove the `pull_request` trigger from `release.yml`. You MUST do this step
    first.
 2. Make a local Windows account only for the runner. Do not use an administrator
    account.
 3. Install the job-started hook `runner_job_started.ps1` before the runner takes its
-   first job. Then the runner refuses each job that is not `windows-exe.yml` from a push
+   first job. Then the runner refuses each job that is not `release.yml` from a push
    or a manual start on `master` or on a `v*` tag. Set the hook in the `.env` file of the
    runner with `ACTIONS_RUNNER_HOOK_JOB_STARTED`. Give the runner account only read
    access to the hook.

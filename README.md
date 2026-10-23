@@ -95,7 +95,7 @@ To get Pixheet.exe, do one of these steps:
 - Download `Pixheet.exe` from the [Releases](https://github.com/adv27/pixheet/releases)
   page. Each merge that changes the version publishes a release.
 - Download the newest build from the
-  [Actions](https://github.com/adv27/pixheet/actions/workflows/windows-exe.yml) page.
+  [Actions](https://github.com/adv27/pixheet/actions/workflows/release.yml) page.
   Open a run, and download the artifact `Pixheet-windows-x64`. You must sign in to
   GitHub to download an artifact. A GitHub-hosted Windows runner builds the exe for
   each pull request and for each push to `master`.
