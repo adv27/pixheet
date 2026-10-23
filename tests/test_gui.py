@@ -828,6 +828,12 @@ def test_theme_override(value, theme):
     assert gui.theme_override({}) is None
 
 
+def test_pytest_does_not_capture_the_file_descriptors(pytestconfig):
+    # With fd capture, Tcl keeps the closed handles of fd 1 and 2. Then "open" and "source"
+    # fail sometimes for a file that a new handle with the same value points to.
+    assert pytestconfig.getoption("capture") in ("sys", "no")
+
+
 @pytest.mark.parametrize("mode", ["light", "dark"])
 def test_apply_theme_uses_sun_valley(mode):
     pytest.importorskip("sv_ttk")

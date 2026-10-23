@@ -57,7 +57,10 @@ build-backend = "uv_build"
 
 [tool.pytest]
 testpaths = ["tests"]
-addopts = ["-ra", "--strict-markers"]
+# Capture sys.stdout and sys.stderr, not file descriptors 1 and 2. With fd capture, Tcl on
+# Windows keeps the handles of fd 1 and 2 after pytest closes them. A new file can then get
+# the same handle, and Tcl cannot open it: sv-ttk fails with "couldn't read file".
+addopts = ["-ra", "--strict-markers", "--capture=sys"]
 filterwarnings = [
     "error",
     # With -p no:faulthandler, pytest does not know the faulthandler options below.
