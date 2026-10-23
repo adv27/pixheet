@@ -22,7 +22,7 @@ Read [README.md](README.md) for usage, the Python API, and the Excel limits.
 | `tests/` | Pytest suite. `tests/images.py` generates all test images. No real photos. |
 | `bench/bench.py` | Benchmark on local sample photos. |
 | `scripts/` | `excel_check.ps1` (Excel COM check, Windows) and `sample_pixels.py`. |
-| `packaging/` | The build of `Pixheet.exe`: the PyInstaller spec `pixheet.spec`, the Tcl and Tk trim `trim_tcltk.py`, the entry script, the icon and `make_icon.py`, `build.ps1`, `check_exe.py`, and the hook `runner_job_started.ps1` for a later self-hosted runner. Read `packaging/README.md`. |
+| `packaging/` | The build of `Pixheet.exe`: the PyInstaller spec `pixheet.spec`, the Tcl and Tk trim `trim_tcltk.py`, the entry script, the icon and `make_icon.py`, `build.ps1`, `check_exe.py`, `release_version.py` for the release job, and the hook `runner_job_started.ps1` for a later self-hosted runner. Read `packaging/README.md`. |
 | `.github/workflows/` | `ci.yml`: tests and lint on GitHub-hosted Windows. `windows-exe.yml`: the exe build on GitHub-hosted Windows, and the release. |
 
 Modules with a leading underscore are private. Do not import them from outside the

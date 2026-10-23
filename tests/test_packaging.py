@@ -1,5 +1,5 @@
 """Tests of the scripts in packaging/: the icon, the version resource, the spec, the Tcl and
-Tk trim, the exe check, and the runner hook."""
+Tk trim, the exe check, the release version, and the runner hook."""
 
 import ast
 import importlib.util
@@ -36,6 +36,7 @@ make_icon = load("make_icon")
 version_info = load("version_info")
 check_exe = load("check_exe")
 trim_tcltk = load("trim_tcltk")
+release_version = load("release_version")
 
 
 def frames(path: Path) -> dict[int, bytes]:
@@ -808,3 +809,104 @@ def test_output_problems_finds_a_missing_or_different_sheet(tmp_path):
         f"The exe did not write {paths[0].stem}.xlsx.",
         f"The exe wrote a different xl/worksheets/sheet1.xml, xl/styles.xml for {paths[1].name}.",
     ]
+
+
+def write_pyproject(path: Path, version: str) -> Path:
+    path.write_text(f'[project]\nname = "pixheet"\nversion = "{version}"\n', encoding="utf-8")
+    return path
+
+
+def test_read_version_reads_pyproject(tmp_path):
+    assert release_version.read_version(write_pyproject(tmp_path / "p.toml", "1.2.3")) == "1.2.3"
+    with (PACKAGING.parent / "pyproject.toml").open("rb") as f:
+        version = tomllib.load(f)["project"]["version"]
+    assert release_version.read_version(PACKAGING.parent / "pyproject.toml") == version
+
+
+def test_pr_problems_ignores_a_pull_request_that_keeps_the_version():
+    def tag_exists(tag):
+        raise AssertionError("The check must not ask for the tag.")
+
+    assert release_version.pr_problems("0.1.0", "0.1.0", tag_exists) == []
+
+
+def test_pr_problems_accepts_a_new_version_without_a_tag():
+    asked = []
+    assert release_version.pr_problems("0.1.0", "0.2.0", lambda t: asked.append(t)) == []
+    assert asked == ["v0.2.0"]
+
+
+def test_pr_problems_refuses_a_new_version_with_a_tag():
+    [problem] = release_version.pr_problems("0.2.0", "0.1.0", lambda tag: tag == "v0.1.0")
+    assert "from 0.2.0 to 0.1.0" in problem
+    assert "the tag v0.1.0 exists already" in problem
+
+
+def git(*args: str, cwd: Path) -> None:
+    subprocess.run(
+        ["git", "-c", "user.name=Test", "-c", "user.email=test@example.com", *args],
+        cwd=cwd,
+        capture_output=True,
+        check=True,
+    )
+
+
+needs_git = pytest.mark.skipif(shutil.which("git") is None, reason="needs git")
+
+
+@needs_git
+def test_remote_tag_exists_asks_the_remote(tmp_path):
+    remote = tmp_path / "remote"
+    remote.mkdir()
+    git("init", "-q", cwd=remote)
+    git("commit", "-q", "--allow-empty", "-m", "first", cwd=remote)
+    git("tag", "v0.1.0", cwd=remote)
+    git("tag", "-a", "v0.2.0", "-m", "annotated", cwd=remote)
+    assert release_version.remote_tag_exists("v0.1.0", str(remote))
+    assert release_version.remote_tag_exists("v0.2.0", str(remote))
+    # The pattern must not find a tag that only ends with the same text.
+    assert not release_version.remote_tag_exists("0.1.0", str(remote))
+    assert not release_version.remote_tag_exists("v0.1", str(remote))
+    assert not release_version.remote_tag_exists("v0.3.0", str(remote))
+
+
+@needs_git
+def test_remote_tag_exists_stops_for_an_error(tmp_path):
+    with pytest.raises(RuntimeError, match="git ls-remote stopped with exit code"):
+        release_version.remote_tag_exists("v0.1.0", str(tmp_path / "no remote"))
+
+
+def test_release_version_command_prints_the_version(tmp_path, capsys):
+    pyproject = write_pyproject(tmp_path / "pyproject.toml", "3.4.5")
+    assert release_version.main(["version", str(pyproject)]) == 0
+    assert capsys.readouterr().out == "3.4.5\n"
+
+
+@pytest.mark.parametrize(
+    ("base", "head", "tags", "code", "text"),
+    [
+        ("0.1.0", "0.1.0", {"v0.1.0"}, 0, "does not change the version 0.1.0"),
+        ("0.1.0", "0.2.0", {"v0.1.0"}, 0, "the tag v0.2.0 does not exist"),
+        ("0.1.0", "0.2.0", {"v0.1.0", "v0.2.0"}, 1, "::error::"),
+    ],
+)
+def test_check_pr_command(tmp_path, monkeypatch, capsys, base, head, tags, code, text):
+    monkeypatch.setattr(release_version, "remote_tag_exists", lambda tag: tag in tags)
+    base_file = write_pyproject(tmp_path / "base.toml", base)
+    head_file = write_pyproject(tmp_path / "head.toml", head)
+    assert release_version.main(["check-pr", str(base_file), str(head_file)]) == code
+    assert text in capsys.readouterr().out
+
+
+def test_workflows_use_the_release_version_script():
+    workflows = PACKAGING.parent / ".github" / "workflows"
+    ci = (workflows / "ci.yml").read_text(encoding="utf-8")
+    exe = (workflows / "windows-exe.yml").read_text(encoding="utf-8")
+    assert "packaging/release_version.py check-pr" in ci
+    assert "packaging/release_version.py version" in exe
+
+
+def test_release_version_script_runs_on_python_3_12():
+    """ci.yml runs the script with the Python 3.12 of the Ubuntu runner."""
+    source = (PACKAGING / "release_version.py").read_text(encoding="utf-8")
+    ast.parse(source, feature_version=(3, 12))

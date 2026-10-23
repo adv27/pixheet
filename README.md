@@ -86,7 +86,7 @@ Pixheet.exe is the desktop app in one file. It does not need Python.
 To get Pixheet.exe, do one of these steps:
 
 - Download `Pixheet.exe` from the [Releases](https://github.com/adv27/pixheet/releases)
-  page.
+  page. Each merge that changes the version publishes a release.
 - Download the newest build from the
   [Actions](https://github.com/adv27/pixheet/actions/workflows/windows-exe.yml) page.
   Open a run, and download the artifact `Pixheet-windows-x64`. You must sign in to
@@ -114,6 +114,9 @@ The script builds `dist\Pixheet.exe`, about 13.8 MB, and tests it. Add `-OneDir`
 build the folder `dist\Pixheet\`. The folder starts faster, because the exe does not
 extract itself each time. [packaging/README.md](packaging/README.md) gives more data
 about the build and the CI.
+
+To publish a release, change `version` in `pyproject.toml`, run `uv lock`, and merge the
+pull request.
 
 The exe has all the features of the app, but it does not have these parts:
 

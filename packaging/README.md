@@ -14,6 +14,7 @@ for maintainers.
 | `pixheet.ico` | The icon of the exe and of the window, in 7 sizes from 16 to 256 pixels. |
 | `make_icon.py` | Draws `pixheet.ico` with Pillow. |
 | `build.ps1` | Builds the exe and tests it. |
+| `release_version.py` | Reads the version from `pyproject.toml` for the release job. It also stops a pull request that changes the version to a version with a tag. |
 | `check_exe.py` | Makes sure that a built exe starts, and that it converts test images of 11 formats and modes correctly. |
 | `runner_job_started.ps1` | The job-started hook for a later self-hosted runner. It refuses each job that is not a trusted build. Read [Later: self-hosted runner](#later-self-hosted-runner). |
 
@@ -126,23 +127,42 @@ exe did not stop in 120 s. The output of the exe then shows the `ModuleNotFoundE
 
 | Workflow | Runner | Triggers | Steps |
 |---|---|---|---|
-| `.github/workflows/ci.yml` | GitHub-hosted `windows-latest` | pull request, push to `master`, manual | tests, `ruff check`, `ruff format --check` |
+| `.github/workflows/ci.yml` | GitHub-hosted `windows-latest` and `ubuntu-latest` | pull request, push to `master`, manual | tests, `ruff check`, `ruff format --check`; for a pull request, the check of the version tag |
 | `.github/workflows/windows-exe.yml` | GitHub-hosted `windows-2025` | pull request, push to `master`, push of a `v*` tag, manual | tests, `build.ps1`, upload of the artifact `Pixheet-windows-x64` |
 
 Each job runs on a new virtual machine. GitHub deletes the machine after the job. Thus
 no file from an earlier job goes into a release. For the same reason, the build job does
 not use the GitHub Actions cache.
 
-For a `v*` tag, a second job publishes `Pixheet.exe` and `Pixheet.exe.sha256` in a
-GitHub release. That job runs on a GitHub-hosted Linux runner. It is the only job that
-can write to the repository, and it never runs for a pull request. The tag must agree
-with the version in `pyproject.toml`, for example `v0.1.0` for version `0.1.0`.
+### Releases
 
-To make a release, do these steps:
+To publish a release, change `version` in `pyproject.toml`, run `uv lock`, and merge the
+pull request.
 
-1. Change `version` in `pyproject.toml`, and run `uv lock`.
-2. Commit the change, and push it to `master`.
-3. Push a tag: `git tag v0.2.0`, then `git push origin v0.2.0`.
+After the build job passes on `master`, the release job reads the version that the build
+job gives. If the tag `v<version>` does not exist yet, the job makes the tag at the
+commit of the push. Then it publishes `Pixheet.exe` and `Pixheet.exe.sha256` in the
+GitHub release "Pixheet v<version>", with generated release notes. If the tag exists,
+the job does nothing. The artifact of the build stays on the Actions page.
+
+These rules apply to the release job:
+
+- It runs on a GitHub-hosted Linux runner.
+- It is the only job that can write to the repository.
+- It never runs for a pull request, or for a manual start on a branch that is not
+  `master`.
+- Only one release job runs at a time. When two merges come quickly, the second job
+  finds the tag of the first job and does nothing.
+- A tag that the job makes with `GITHUB_TOKEN` does not start a new workflow run. This
+  is correct, because the job publishes the release itself.
+
+A pull request that changes the version fails in `ci.yml` when the tag `v<version>`
+exists already. Without this check, the merge does not publish a release, and nobody
+sees the problem.
+
+You can also push a tag by hand: `git tag v0.2.0`, then `git push origin v0.2.0`. Then
+the release job publishes the exe of the tag. The tag must agree with the version in
+`pyproject.toml`, for example `v0.1.0` for version `0.1.0`.
 
 The release job never replaces a file of a published release, because users can have
 downloaded the file already. A new build of the same commit can also give a different
@@ -154,7 +174,10 @@ in the release on GitHub, and then run the job again.
 You can also protect the releases in the settings of the repository:
 
 - Turn on immutable releases.
-- Add a tag ruleset for `v*` that lets only you make and delete these tags.
+- Add a tag ruleset for `v*` that stops the update and the deletion of these tags. Do
+  not stop the creation of the tags, because the release job makes them.
+
+### Pinned actions
 
 The workflows pin each action to a full commit SHA. The comment after the SHA gives the
 version. When you update an action, update the SHA and the comment together. Then run
@@ -173,8 +196,9 @@ request, not the files on `master`. These rules keep the repository safe:
 
 - Use the `pull_request` trigger, not `pull_request_target`. For `pull_request`, a fork
   gets no secrets and a token that can only read.
-- Keep the default permissions of the `GITHUB_TOKEN` at no access. Each job asks for
-  the permissions that it needs. Only the release job can write.
+- Keep the default permissions of the `GITHUB_TOKEN` in the repository settings at read
+  access. Each job asks for the permissions that it needs. Only the release job can
+  write.
 - Use only GitHub-hosted runners for a workflow that a pull request starts.
 
 ## Later: self-hosted runner

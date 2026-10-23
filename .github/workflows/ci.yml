@@ -43,3 +43,27 @@ jobs:
 
       - name: Check the format
         run: uv run --locked --extra gui ruff format --check
+
+  version:
+    name: Check the version tag
+    # A merge that changes the version publishes a release, but only when the tag
+    # v<version> does not exist yet. Thus a pull request that changes the version to a
+    # version with a tag fails here. Then the merge cannot skip the release silently.
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Check out the repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      # The repository is public. Thus git can read the base commit and the tags without
+      # a token, also for a pull request from a fork.
+      - name: Check that a new version has no tag yet
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        run: |
+          git fetch --quiet --depth=1 --no-tags origin "$BASE_SHA"
+          git show "$BASE_SHA:pyproject.toml" > "$RUNNER_TEMP/base-pyproject.toml"
+          python3 packaging/release_version.py check-pr "$RUNNER_TEMP/base-pyproject.toml"
