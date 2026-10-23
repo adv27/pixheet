@@ -16,6 +16,7 @@ Read [README.md](README.md) for usage, the Python API, and the Excel limits.
 | `src/pixheet/core.py` | `convert()`, `prepare()`, `ConvertResult`. |
 | `src/pixheet/cli.py` | The `pixheet` command. |
 | `src/pixheet/gui.py` | The `pixheet-gui` desktop app (Tkinter, with tkinterdnd2 for the file drop and sv-ttk for the theme). |
+| `src/pixheet/_plan.py` | Private. The plan of a batch for the desktop app, without Tk: the images of a drop, the output names, the row states and counts, and the texts of the list. |
 | `src/pixheet/_image.py` | Private. Opens, normalizes, and fits the image. |
 | `src/pixheet/_xlsx.py` | Private. Writes the `.xlsx` XML by hand. |
 | `src/pixheet/_threads.py` | Private. Runs the resize and the zip compression on several threads. The resize helpers give the same pixels as the one-thread calls. The zip members decompress to the same bytes. The compressed bytes can differ. |
