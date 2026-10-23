@@ -36,6 +36,7 @@ make_icon = load("make_icon")
 version_info = load("version_info")
 check_exe = load("check_exe")
 trim_tcltk = load("trim_tcltk")
+linux_guards = load("linux_guards")
 release_version = load("release_version")
 
 
@@ -244,9 +245,9 @@ def test_run_exe_stops_the_whole_process_tree_after_the_timeout():
 
 def test_result_problems():
     assert check_exe.result_problems(0, "pixheet-gui: drag and drop on\n", 120) == []
-    assert check_exe.result_problems(1, "", 120) == ["The exe stopped with exit code 1."]
+    assert check_exe.result_problems(1, "", 120) == ["The app stopped with exit code 1."]
     assert check_exe.result_problems(None, "  \n", 120) == [
-        "The exe did not stop in 120 s. The script stopped it."
+        "The app did not stop in 120 s. The script stopped it."
     ]
 
 
@@ -276,12 +277,12 @@ def test_theme_problems_accepts_the_sun_valley_theme(mode):
 @pytest.mark.parametrize(
     ("output", "problem"),
     [
-        ("pixheet-gui: drag and drop on\n", "The exe did not name its theme."),
-        ("", "The exe did not name its theme."),
-        ("pixheet-gui: theme vista\n", "The exe used the theme vista, not sun-valley-dark."),
+        ("pixheet-gui: drag and drop on\n", "The app did not name its theme."),
+        ("", "The app did not name its theme."),
+        ("pixheet-gui: theme vista\n", "The app used the theme vista, not sun-valley-dark."),
         (
             "pixheet-gui: theme sun-valley-light\n",
-            "The exe used the theme sun-valley-light, not sun-valley-dark.",
+            "The app used the theme sun-valley-light, not sun-valley-dark.",
         ),
     ],
 )
@@ -289,7 +290,7 @@ def test_theme_problems_refuses_a_fallback_theme(output, problem):
     [found] = check_exe.theme_problems(output, "dark")
     assert found.startswith(problem)
     if output:
-        assert found.endswith(f"The output of the exe:\n{output.strip()}")
+        assert found.endswith(f"The output of the app:\n{output.strip()}")
     else:
         assert found == problem
 
@@ -312,7 +313,9 @@ def test_check_smoke_runs_both_themes(monkeypatch, capsys):
     monkeypatch.setattr(check_exe, "run_exe", run_exe)
     assert check_exe.check_smoke(Path("Pixheet.exe"), 60) == []
     assert runs == [{"PIXHEET_THEME": "light"}, {"PIXHEET_THEME": "dark"}]
-    assert "sun-valley-dark" in capsys.readouterr().out
+    out = capsys.readouterr().out
+    assert "sun-valley-dark" in out
+    assert out.count("Drag and drop: on.") == 2
 
 
 def test_check_smoke_fails_without_the_theme(monkeypatch):
@@ -320,14 +323,14 @@ def test_check_smoke_fails_without_the_theme(monkeypatch):
         check_exe, "run_exe", lambda command, timeout, env=None: (0, "pixheet-gui: theme vista\n")
     )
     [problem] = check_exe.check_smoke(Path("Pixheet.exe"), 60)
-    assert problem.startswith("The exe used the theme vista, not sun-valley-light.")
+    assert problem.startswith("The app used the theme vista, not sun-valley-light.")
 
 
 def test_problem_includes_the_output_of_a_failed_exe():
     code, output = check_exe.run_exe([sys.executable, "-c", FAILED_EXE], timeout=60)
     assert code == 3
     [problem] = check_exe.result_problems(code, output, 60)
-    assert problem.startswith("The exe stopped with exit code 3. The output of the exe:\n")
+    assert problem.startswith("The app stopped with exit code 3. The output of the app:\n")
     assert "pixheet-gui: drag and drop on" in problem
     assert "pixheet-gui: cannot open a window" in problem
 
@@ -435,11 +438,11 @@ def spec_value(name: str):
     raise AssertionError(f"The spec has no {name}.")
 
 
-def spec_keywords(name: str) -> list:
-    """Return the values of each keyword argument ``name`` in the calls of the spec."""
+def spec_keywords(name: str) -> list[str]:
+    """Return the source text of each keyword argument ``name`` in the calls of the spec."""
     tree = ast.parse(SPEC.read_text(encoding="utf-8"))
     return [
-        ast.literal_eval(keyword.value)
+        ast.unparse(keyword.value)
         for node in ast.walk(tree)
         if isinstance(node, ast.Call)
         for keyword in node.keywords
@@ -496,33 +499,70 @@ def test_spec_guards_the_excludes():
     unwanted = set(spec_value("UNWANTED_MODULES"))
     assert {"ssl", "_hashlib", "multiprocessing", "numpy", "tkinter.test", "test"} <= unwanted
     assert unwanted.isdisjoint(spec_value("REQUIRED_MODULES"))
-    assert set(spec_value("UNWANTED_FILES")) == {"libcrypto-3-x64.dll", "libssl-3-x64.dll"}
-    assert "tkinterdnd2/tkdnd/win-x64-*/libtkdnd*.dll" in spec_value("REQUIRED_FILES")
+    windows = set(spec_value("UNWANTED_FILES_WINDOWS"))
+    assert windows == {"libcrypto-3-x64.dll", "libssl-3-x64.dll"}
+    assert set(spec_value("UNWANTED_FILES_LINUX")) == {"libcrypto.so*", "libssl.so*"}
+    assert "tkinterdnd2/tkdnd/win-x64-*/libtkdnd*.dll" in spec_value("REQUIRED_FILES_WINDOWS")
+    linux = spec_value("REQUIRED_FILES_LINUX")
+    assert "tkinterdnd2/tkdnd/linux-x64-*/lib*tkdnd*.so" in linux
+    assert "libx11.so.6" in linux
+
+
+def test_spec_patterns_of_files_are_in_lower_case():
+    """The spec compares the patterns with the paths in lower case."""
+    for name in ("SV_TTK_FILES", "REQUIRED_FILES_WINDOWS", "REQUIRED_FILES_LINUX"):
+        for pattern in spec_value(name):
+            assert pattern == pattern.lower(), pattern
+
+
+def test_spec_requires_the_x11_dialogs_on_linux():
+    """The Linux trim must keep the Tcl dialogs. trim_tcltk drops them on Windows only."""
+    files = spec_value("REQUIRED_FILES_LINUX")
+    for name in ("_tk_data/tkfbox.tcl", "_tk_data/msgbox.tcl", "_tk_data/iconlist.tcl"):
+        assert name in files
+        assert not trim_tcltk.linux_dropped(name)
+    assert "tcl9/*/msgcat-*.tm" in files
+    assert "pixheet.png" in files
 
 
 def test_spec_requires_the_sun_valley_theme():
     assert "sv_ttk" in spec_value("REQUIRED_MODULES")
-    files = spec_value("REQUIRED_FILES")
+    files = spec_value("SV_TTK_FILES")
     assert "sv_ttk/sv.tcl" in files
     for mode in ("light", "dark"):
         assert f"sv_ttk/theme/{mode}.tcl" in files
         assert f"sv_ttk/theme/spritesheet_{mode}.png" in files
 
 
-def test_spec_optimizes_the_bytecode_and_does_not_use_upx_or_strip():
-    assert spec_keywords("optimize") == [2]
-    upx = spec_keywords("upx")
-    assert upx == [False] * len(upx)
-    assert len(upx) == 2  # the EXE options and COLLECT
-    strip = spec_keywords("strip")
-    assert strip == [False] * len(strip)
-    assert len(strip) == 2
-
-
-def test_spec_trims_tcl_and_tk_only_on_windows():
+def test_spec_optimizes_the_bytecode_and_strips_only_on_linux():
+    assert spec_keywords("optimize") == ["2"]
+    assert spec_keywords("upx") == ["False", "False"]  # the EXE options and COLLECT
+    assert spec_keywords("strip") == ["not WINDOWS", "not WINDOWS"]
     text = SPEC.read_text(encoding="utf-8")
-    assert 'if sys.platform == "win32":\n    a.binaries = trim_binaries(a.binaries, ' in text
+    assert 'WINDOWS = sys.platform == "win32"\n' in text
+
+
+def test_spec_uses_the_windows_resources_only_on_windows():
+    text = SPEC.read_text(encoding="utf-8")
+    assert "\nif WINDOWS:\n    # PyInstaller.utils.win32 needs pefile" in text
+    assert "\nfrom PyInstaller.utils.win32" not in text
+    assert "if WINDOWS:\n    # An ELF file on Linux has no icon and no version resource.\n" in text
+    assert "    common.update(icon=[str(ICON)], version=version)\n" in text
+
+
+def test_spec_trims_tcl_and_tk_for_each_system():
+    text = SPEC.read_text(encoding="utf-8")
+    assert "if WINDOWS:\n    a.binaries = trim_binaries(a.binaries, " in text
+    assert "else:\n    a.datas, removed, size = trim_datas(a.datas, " in text
     assert text.index("trim_binaries(a.binaries") < text.index("pyz = PYZ(a.pure)")
+    assert text.index("trim_datas(a.datas") < text.index("pyz = PYZ(a.pure)")
+
+
+def test_spec_checks_the_linux_bundle_before_the_trim():
+    text = SPEC.read_text(encoding="utf-8")
+    check = text.index("if LINUX:\n    floor, floor_file, problems = check_bundle(a.binaries)")
+    assert check < text.index("a.binaries = trim_binaries(")
+    assert 'raise SystemExit("linux_guards: " + " ".join(problems))' in text
 
 
 def test_build_script_makes_a_reproducible_build():
@@ -536,6 +576,38 @@ def test_build_script_makes_a_reproducible_build():
     assert seed < build < restore < check
     assert epoch < build < text.index("$env:SOURCE_DATE_EPOCH = $oldEpoch") < check
     assert "git -C $root log -1 --format=%ct" in text
+
+
+def test_linux_build_script_makes_a_reproducible_build():
+    """The variables are set only for the PyInstaller command, not for the check."""
+    text = (PACKAGING / "build.sh").read_text(encoding="utf-8")
+    assert text.startswith("#!/usr/bin/env bash\n")
+    assert "\nset -euo pipefail\n" in text
+    env = text.index('PYTHONHASHSEED=0 SOURCE_DATE_EPOCH="$epoch" \\\n')
+    build = text.index("pyinstaller --noconfirm --clean packaging/pixheet.spec")
+    assert env < build < text.index("python packaging/check_exe.py")
+    assert "export PYTHONHASHSEED" not in text
+    assert "export SOURCE_DATE_EPOCH" not in text
+    assert 'git -C "$root" log -1 --format=%ct' in text
+    assert 'xvfb-run -a "${check[@]}"' in text
+    assert 'final="$root/dist/Pixheet-linux-$(uname -m)"' in text
+    assert 'sha256sum --binary "$name" > "$name.sha256"' in text
+
+
+def test_shell_scripts_have_lf_line_ends_and_can_run():
+    root = PACKAGING.parent
+    assert "*.sh text eol=lf" in (root / ".gitattributes").read_text(encoding="utf-8")
+    assert b"\r" not in (PACKAGING / "build.sh").read_bytes()
+    if shutil.which("git") is None or not (root / ".git").exists():
+        pytest.skip("needs a git checkout")
+    result = subprocess.run(
+        ["git", "ls-files", "--stage", "packaging/build.sh"],
+        cwd=root,
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+    assert result.stdout.startswith("100755 "), result.stdout
 
 
 def imports(path: Path) -> set[str]:
@@ -596,7 +668,7 @@ def test_only_the_main_module_imports_the_cli():
 
 
 def test_app_code_does_not_import_an_excluded_module():
-    """The exe does not have the modules in EXCLUDES. Only cli.py and __main__.py can use them."""
+    """The app does not have the modules in EXCLUDES. Only cli.py and __main__.py can use them."""
     excludes = spec_value("EXCLUDES")
     files = [p for p in sorted(SOURCE.glob("*.py")) if p.name not in ("cli.py", "__main__.py")]
     assert SOURCE / "gui.py" in files
@@ -639,6 +711,172 @@ def test_app_code_does_not_import_an_excluded_module():
 )
 def test_trim_drops_only_unused_files(name, dropped):
     assert trim_tcltk.dropped(name) is dropped
+
+
+@pytest.mark.parametrize(
+    ("name", "dropped"),
+    [
+        ("_tcl_data/tzdata/Europe/Paris", True),
+        ("_tcl_data/msgs/de.msg", True),
+        ("_tcl_data/opt0.4/optparse.tcl", True),
+        ("_tcl_data/encoding/cp932.enc", True),
+        ("_tcl_data/encoding/utf-8.enc", False),
+        ("_tcl_data/encoding/iso8859-15.enc", False),
+        ("_tcl_data/init.tcl", False),
+        ("_tcl_data/clock.tcl", False),
+        ("_tcl_data/safe.tcl", True),
+        ("_tcl_data/tclAppInit.c", True),
+        ("tcl9/9.0/http-2.10.2.tm", True),
+        ("tcl9/9.0/tcltest-2.5.11.tm", True),
+        ("tcl9/9.0/platform-1.1.0.tm", True),
+        ("tcl9/9.0/platform/shell-1.1.4.tm", True),
+        ("tcl9/9.0/msgcat-1.7.1.tm", False),
+        ("_tk_data/images/logo.gif", True),
+        ("_tk_data/demos/widget", True),
+        ("_tk_data/msgs/de.msg", True),
+        ("_tk_data/msgs/en.msg", False),
+        ("_tk_data/console.tcl", True),
+        ("_tk_data/tkfbox.tcl", False),
+        ("_tk_data/iconlist.tcl", False),
+        ("_tk_data/choosedir.tcl", False),
+        ("_tk_data/msgbox.tcl", False),
+        ("_tk_data/clrpick.tcl", False),
+        ("_tk_data/fontchooser.tcl", False),
+        ("_tk_data/xmfbox.tcl", False),
+        ("_tk_data/tk.tcl", False),
+        ("_tk_data/ttk/clamTheme.tcl", False),
+        ("_tk_data/ttk/vistaTheme.tcl", True),
+        ("_tk_data/ttk/aquaTheme.tcl", True),
+        ("sv_ttk/theme/dark.tcl", False),
+        ("pixheet.png", False),
+    ],
+)
+def test_linux_trim_drops_only_unused_files(name, dropped):
+    assert trim_tcltk.linux_dropped(name) is dropped
+
+
+def test_trim_datas_removes_the_files_and_their_index_lines(tmp_path):
+    source = tmp_path / "source"
+    files = {
+        "_tk_data/tk.tcl": "# tk\n",
+        "_tk_data/console.tcl": "# console\n",
+        "_tk_data/tclIndex": (
+            "set auto_index(tk::ConsoleInit) [list source [file join $dir console.tcl]]\n"
+            "set auto_index(tk::MessageBox) [list source [file join $dir msgbox.tcl]]\n"
+        ),
+        "_tcl_data/init.tcl": "# init\n",
+        "_tcl_data/tclIndex": "set auto_index(parray) [list source [file join $dir parray.tcl]]\n",
+    }
+    datas = []
+    for dest, text in files.items():
+        path = source / dest
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(text, encoding="utf-8", newline="\n")
+        datas.append((dest, str(path), "DATA"))
+    result, removed, size = trim_tcltk.trim_datas(datas, tmp_path / "trim")
+    assert (removed, size) == (1, len("# console\n"))
+    by_dest = {dest: Path(src) for dest, src, _kind in result}
+    assert sorted(by_dest) == sorted(set(files) - {"_tk_data/console.tcl"})
+    index = by_dest["_tk_data/tclIndex"]
+    assert index == tmp_path / "trim" / "_tk_data" / "tclIndex"
+    assert index.read_text(encoding="utf-8") == (
+        "set auto_index(tk::MessageBox) [list source [file join $dir msgbox.tcl]]\n"
+    )
+    # An index without a removed file keeps its source.
+    assert by_dest["_tcl_data/tclIndex"] == source / "_tcl_data" / "tclIndex"
+    assert (source / "_tk_data" / "console.tcl").is_file()  # the source does not change
+
+
+# The checks of the Linux bundle
+
+LIBX11_17 = """
+/usr/lib/x86_64-linux-gnu/libX11.so.6:     file format elf64-x86-64
+
+DYNAMIC SYMBOL TABLE:
+0000000000000000      DF *UND*  0000000000000000  GLIBC_2.2.5 malloc
+0000000000000000      DF *UND*  0000000000000000 (GLIBC_2.26) reallocarray
+0000000000000000      DF *UND*  0000000000000000  XSetIOErrorExitHandler
+00000000000377d0 g    DF .text  0000000000000049  Base        XSetIOErrorExitHandler
+0000000000031a20 g    DF .text  00000000000000b0  Base        XOpenDisplay
+"""
+LIBX11_16 = """
+DYNAMIC SYMBOL TABLE:
+0000000000000000      DF *UND*  0000000000000000  GLIBC_2.14  memcpy
+0000000000031a20 g    DF .text  00000000000000b0  Base        XOpenDisplay
+"""
+PILLOW = """
+0000000000000000      DF *UND*  0000000000000000  GLIBC_2.27  powf
+0000000000000000      DF *UND*  0000000000000000  GLIBC_2.3.4 __memcpy_chk
+"""
+
+
+def test_glibc_floor_reads_the_newest_version():
+    assert linux_guards.glibc_floor(LIBX11_17) == (2, 26)
+    assert linux_guards.glibc_floor(PILLOW) == (2, 27)
+    assert linux_guards.glibc_floor("GLIBC_2.9 GLIBC_2.10 GLIBCXX_3.4.30") == (2, 10)
+    assert linux_guards.glibc_floor("DYNAMIC SYMBOL TABLE:\n") is None
+
+
+def test_exports_needs_a_defined_symbol():
+    assert linux_guards.exports(LIBX11_17, "XSetIOErrorExitHandler")
+    assert not linux_guards.exports(LIBX11_16, "XSetIOErrorExitHandler")
+    undefined = "0000000000000000      DF *UND*  0000000000000000  XSetIOErrorExitHandler\n"
+    assert not linux_guards.exports(undefined, "XSetIOErrorExitHandler")
+
+
+def elf_files(folder: Path, texts: dict[str, str]) -> tuple[list, dict[Path, str]]:
+    """Make fake ELF files. Return the binaries of PyInstaller and a fake objdump."""
+    folder.mkdir(parents=True, exist_ok=True)
+    binaries, dumps = [], {}
+    for name, text in texts.items():
+        path = folder / name.replace("/", "_")
+        path.write_bytes(linux_guards.ELF_MAGIC + b"\0" * 12)
+        binaries.append((name, str(path), "BINARY"))
+        dumps[path] = text
+    (folder / "data.txt").write_text("not ELF", encoding="utf-8")
+    binaries.append(("data.txt", str(folder / "data.txt"), "DATA"))
+    return binaries, dumps
+
+
+def test_check_bundle_accepts_a_bundle_of_debian_11(tmp_path):
+    binaries, dumps = elf_files(tmp_path, {"libX11.so.6": LIBX11_17, "PIL/_imagingmath.so": PILLOW})
+    floor, where, problems = linux_guards.check_bundle(binaries, dump=dumps.__getitem__)
+    assert (floor, where, problems) == ((2, 27), "PIL/_imagingmath.so", [])
+    line = linux_guards.describe(floor, where)
+    assert line == (
+        "linux_guards: the app needs glibc 2.27 or later (GLIBC_2.27 in PIL/_imagingmath.so)."
+    )
+
+
+def test_check_bundle_refuses_an_old_libx11_and_a_new_glibc(tmp_path):
+    newer = "0000000000000000      DF *UND*  0000000000000000  GLIBC_2.34  __libc_start_main"
+    binaries, dumps = elf_files(tmp_path, {"libX11.so.6": LIBX11_16, "libgcc_s.so.1": newer})
+    floor, where, problems = linux_guards.check_bundle(binaries, dump=dumps.__getitem__)
+    assert (floor, where) == ((2, 34), "libgcc_s.so.1")
+    assert len(problems) == 2
+    assert "older than 1.7" in problems[0]
+    assert problems[1].startswith("libgcc_s.so.1 needs GLIBC_2.34. The limit is GLIBC_2.27.")
+
+
+def test_check_bundle_needs_libx11(tmp_path):
+    binaries, dumps = elf_files(tmp_path, {"PIL/_imaging.so": PILLOW})
+    _floor, _where, problems = linux_guards.check_bundle(binaries, dump=dumps.__getitem__)
+    assert problems == ["The bundle has no libX11.so.6. tkdnd needs it."]
+
+
+def test_objdump_reports_a_missing_tool_and_a_bad_file(tmp_path):
+    def missing(command, **kwargs):
+        raise FileNotFoundError(2, "No such file", command[0])
+
+    with pytest.raises(linux_guards.GuardError, match="Install binutils"):
+        linux_guards.objdump(tmp_path / "a.so", run=missing)
+
+    def bad(command, **kwargs):
+        assert command == ["objdump", "-T", str(tmp_path / "a.so")]
+        return subprocess.CompletedProcess(command, 1, "", "file format not recognized\n")
+
+    with pytest.raises(linux_guards.GuardError, match="file format not recognized"):
+        linux_guards.objdump(tmp_path / "a.so", run=bad)
 
 
 TCL_PKG_INDEX = """\
@@ -913,8 +1151,8 @@ def test_output_problems_finds_a_missing_or_different_sheet(tmp_path):
     paths[0].with_suffix(".xlsx").unlink()
     pixheet.convert(paths[2], paths[1].with_suffix(".xlsx"))
     assert check_exe.output_problems(expected) == [
-        f"The exe did not write {paths[0].stem}.xlsx.",
-        f"The exe wrote a different xl/worksheets/sheet1.xml, xl/styles.xml for {paths[1].name}.",
+        f"The app did not write {paths[0].stem}.xlsx.",
+        f"The app wrote a different xl/worksheets/sheet1.xml, xl/styles.xml for {paths[1].name}.",
     ]
 
 

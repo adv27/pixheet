@@ -1,29 +1,33 @@
-"""Test a built Pixheet.exe: it must start, convert an image, and give each cell its color.
+"""Test a built Pixheet app: it must start, convert an image, and give each cell its color.
+
+The app is dist/Pixheet.exe on Windows and dist/Pixheet on Linux. The script works on both
+systems. On Linux, it needs an X server, for example Xvfb with xvfb-run.
 
 The script does these steps:
 
-1. It runs the exe with ``--smoke``, one time with the light theme and one time with the
-   dark theme. The exit code must be 0. The exe must name the Sun Valley theme that it
+1. It runs the app with ``--smoke``, one time with the light theme and one time with the
+   dark theme. The exit code must be 0. The app must name the Sun Valley theme that it
    applied, not a fallback theme.
-2. It makes a test image in a temporary folder and runs the exe with ``--smoke`` and the
-   image path. The exe converts the image and closes. The script reads the .xlsx file
+2. It makes a test image in a temporary folder and runs the app with ``--smoke`` and the
+   image path. The app converts the image and closes. The script reads the .xlsx file
    with openpyxl and compares each cell with its pixel.
-3. It makes one image for each of many formats and modes, and the exe converts them all.
+3. It makes one image for each of many formats and modes, and the app converts them all.
    The sheet and the styles of each .xlsx file must be the same, byte for byte, as the
    output of ``pixheet.convert`` in this Python. The spec leaves many modules out of the
-   exe. If the exe needs one of them, this step fails.
+   app. If the app needs one of them, this step fails.
 
-If the exe does not stop in time, the script stops the exe and all processes that the
-exe started. At the end, the script deletes the folder.
+If the app does not stop in time, the script stops the app and all processes that the
+app started. At the end, the script deletes the folder.
 
-Each run of the exe has its own temporary folder: the script sets TEMP, TMP and TMPDIR.
-A one-file exe extracts itself to a folder ``_MEI...`` in that folder. After each run,
-also after the script stops the exe, the script deletes the folder. Thus a stopped exe
+Each run of the app has its own temporary folder: the script sets TEMP, TMP and TMPDIR.
+A one-file app extracts itself to a folder ``_MEI...`` in that folder. After each run,
+also after the script stops the app, the script deletes the folder. Thus a stopped app
 cannot leave a ``_MEI...`` folder in the temporary folder of the user.
 
 Run the script from the repository root:
 
     uv run python packaging/check_exe.py dist/Pixheet.exe
+    xvfb-run -a uv run python packaging/check_exe.py dist/Pixheet
 """
 
 import argparse
@@ -46,11 +50,11 @@ import pixheet
 
 WIDTH, HEIGHT = 48, 32
 TIMEOUT = 120
-"""The maximum time for the exe, in seconds. The first start of a one-file exe is slow."""
+"""The maximum time for the app, in seconds. The first start of a one-file app is slow."""
 KILL_WAIT = 10
-"""The maximum time to wait for the output after the script stops the exe, in seconds."""
+"""The maximum time to wait for the output after the script stops the app, in seconds."""
 REMOVE_WAIT = 10
-"""The maximum time to try again to delete the temporary folder of the exe, in seconds."""
+"""The maximum time to try again to delete the temporary folder of the app, in seconds."""
 TEMP_VARIABLES = ("TEMP", "TMP", "TMPDIR")
 """The environment variables that give the temporary folder. Windows reads TMP and TEMP."""
 MEMBERS = ("xl/worksheets/sheet1.xml", "xl/styles.xml")
@@ -61,6 +65,12 @@ THEME_ENV = "PIXHEET_THEME"
 """The environment variable that sets the theme of the app."""
 THEME_LINE = re.compile(r"^pixheet-gui: theme (\S+)\s*$", re.MULTILINE)
 """The line of ``--smoke`` that names the ttk theme of the window."""
+DND_LINE = re.compile(r"^pixheet-gui: drag and drop (on|off)\s*$", re.MULTILINE)
+"""The line of ``--smoke`` that tells if the window has drag and drop.
+
+The app itself fails the smoke test when it has no drag and drop but tkdnd can load. On
+Linux with a libX11 older than 1.7, tkdnd cannot load, and "off" is correct.
+"""
 
 
 def make_image(path: Path) -> Image.Image:
@@ -125,7 +135,7 @@ def make_format_images(folder: Path) -> tuple[dict[Path, dict[str, bytes]], list
     """Save the format images in ``folder``, and convert each one with ``pixheet.convert``.
 
     Return the parts of each expected .xlsx file, and the problems. Each image has a
-    different stem, because the exe writes the .xlsx file next to the image.
+    different stem, because the app writes the .xlsx file next to the image.
     """
     folder.mkdir(parents=True, exist_ok=True)
     expected = {}
@@ -150,11 +160,11 @@ def output_problems(expected: dict[Path, dict[str, bytes]]) -> list[str]:
     for path, parts in expected.items():
         out = path.with_suffix(".xlsx")
         if not out.is_file():
-            problems.append(f"The exe did not write {out.name}.")
+            problems.append(f"The app did not write {out.name}.")
             continue
         got = sheet_parts(out.read_bytes())
         if different := [m for m in MEMBERS if got[m] != parts[m]]:
-            problems.append(f"The exe wrote a different {', '.join(different)} for {path.name}.")
+            problems.append(f"The app wrote a different {', '.join(different)} for {path.name}.")
     return problems
 
 
@@ -170,16 +180,16 @@ def check_formats(exe: Path, folder: Path, timeout: float = TIMEOUT) -> list[str
         return problems
     if problems := output_problems(expected):
         return problems
-    print(f"The exe converted {len(expected)} images of different formats in {seconds:.1f} s.")
+    print(f"The app converted {len(expected)} images of different formats in {seconds:.1f} s.")
     return []
 
 
 def kill_tree(process: subprocess.Popen[bytes]) -> None:
     """Stop ``process`` and all processes that it started.
 
-    A one-file exe is two processes: the bootloader and the app. When the app shows an
+    A one-file app is two processes: the bootloader and the app. When the app shows an
     error dialog, it does not stop. If the script stops only the bootloader, the app
-    keeps the exe locked and keeps the output pipe open.
+    keeps the app locked and keeps the output pipe open.
     """
     if sys.platform == "win32":
         subprocess.run(
@@ -191,7 +201,7 @@ def kill_tree(process: subprocess.Popen[bytes]) -> None:
 
 
 class CleanupError(Exception):
-    """The script cannot delete the temporary folder of a run of the exe."""
+    """The script cannot delete the temporary folder of a run of the app."""
 
 
 def remove_folder(folder: Path, wait: float = REMOVE_WAIT) -> None:
@@ -259,24 +269,24 @@ def run_process(command: list[str], timeout: float, env: dict[str, str]) -> tupl
 
 
 def result_problems(code: int | None, output: str, timeout: float) -> list[str]:
-    """Return the problems of a run of the exe with the exit code ``code``.
+    """Return the problems of a run of the app with the exit code ``code``.
 
-    A problem includes the output of the exe, because the output tells the cause, for
+    A problem includes the output of the app, because the output tells the cause, for
     example "cannot open a window".
     """
     if code is None:
-        problem = f"The exe did not stop in {timeout:g} s. The script stopped it."
+        problem = f"The app did not stop in {timeout:g} s. The script stopped it."
     elif code != 0:
-        problem = f"The exe stopped with exit code {code}."
+        problem = f"The app stopped with exit code {code}."
     else:
         return []
     return with_output(problem, output)
 
 
 def with_output(problem: str, output: str) -> list[str]:
-    """Return ``problem`` with the output of the exe, because the output tells the cause."""
+    """Return ``problem`` with the output of the app, because the output tells the cause."""
     output = output.strip()
-    return [f"{problem} The output of the exe:\n{output}" if output else problem]
+    return [f"{problem} The output of the app:\n{output}" if output else problem]
 
 
 def theme_problems(output: str, mode: str) -> list[str]:
@@ -287,9 +297,9 @@ def theme_problems(output: str, mode: str) -> list[str]:
     """
     match = THEME_LINE.search(output)
     if match is None:
-        problem = "The exe did not name its theme."
+        problem = "The app did not name its theme."
     elif match[1] != f"sun-valley-{mode}":
-        problem = f"The exe used the theme {match[1]}, not sun-valley-{mode}."
+        problem = f"The app used the theme {match[1]}, not sun-valley-{mode}."
     else:
         return []
     return with_output(problem, output)
@@ -301,7 +311,11 @@ def check_smoke(exe: Path, timeout: float = TIMEOUT) -> list[str]:
         code, output = run_exe([str(exe), "--smoke"], timeout, env={THEME_ENV: mode})
         if problems := result_problems(code, output, timeout) or theme_problems(output, mode):
             return problems
-        print(f"The exe passed the smoke test with the theme sun-valley-{mode}.")
+        dnd = DND_LINE.search(output)
+        print(
+            f"The app passed the smoke test with the theme sun-valley-{mode}. "
+            f"Drag and drop: {dnd[1] if dnd else 'unknown'}."
+        )
     return []
 
 
@@ -319,8 +333,8 @@ def check(exe: Path, timeout: float = TIMEOUT) -> list[str]:
             return problems
         out = src.with_suffix(".xlsx")
         if not out.is_file():
-            return [f"The exe did not write {out.name}."]
-        print(f"The exe converted the test image in {seconds:.1f} s.")
+            return [f"The app did not write {out.name}."]
+        print(f"The app converted the test image in {seconds:.1f} s.")
         workbook = openpyxl.load_workbook(out)
         try:
             sheet = workbook.active
@@ -343,7 +357,7 @@ def check(exe: Path, timeout: float = TIMEOUT) -> list[str]:
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
-    parser.add_argument("exe", type=Path, help="the path of Pixheet.exe")
+    parser.add_argument("exe", type=Path, help="the path of Pixheet.exe or of Pixheet")
     args = parser.parse_args()
     if not args.exe.is_file():
         print(f"check_exe: {args.exe} does not exist.", file=sys.stderr)

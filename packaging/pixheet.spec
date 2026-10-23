@@ -1,23 +1,29 @@
-# PyInstaller spec of the Pixheet desktop app for Windows.
+# PyInstaller spec of the Pixheet desktop app for Windows and Linux.
 #
-# Run it from the repository root. The default makes one file, dist/Pixheet.exe:
+# Run it from the repository root. The default makes one file: dist/Pixheet.exe on
+# Windows, dist/Pixheet on Linux:
 #
 #     uv run --extra gui --group build pyinstaller --noconfirm --clean packaging/pixheet.spec
 #
-# To make the folder dist/Pixheet/ with Pixheet.exe in it, add "-- --onedir". The folder
-# starts faster, because the exe does not extract itself each time:
+# To make the folder dist/Pixheet/ with the app in it, add "-- --onedir". The folder
+# starts faster, because the app does not extract itself each time:
 #
 #     uv run --extra gui --group build pyinstaller --noconfirm --clean packaging/pixheet.spec -- --onedir
 #
-# packaging/build.ps1 runs the build and tests the result.
+# packaging/build.ps1 (Windows) and packaging/build.sh (Linux) run the build and test the
+# result.
 #
-# This spec makes the exe smaller with these changes. Each change keeps all the features:
+# This spec makes the app smaller with these changes. Each change keeps all the features:
 #   1. EXCLUDES removes standard library modules that the app never imports at run time.
 #   2. EXCLUDES also removes Pillow modules that pixheet never uses.
 #   3. optimize=2 removes the docstrings and the assert statements from the bytecode.
-#   4. trim_tcltk.py removes files that the app does not use from the Tcl and Tk DLLs.
-# The spec does not use UPX or strip. See the comments at each change. Together, the
-# changes make the one-file exe about 13.8 MB, from 19.6 MB.
+#   4. trim_tcltk.py removes files that the app does not use from the Tcl and Tk library.
+#   5. On Linux, strip removes the debug symbols from the shared libraries.
+# The spec does not use UPX. See the comments at each change. Together, the changes make
+# the one-file exe about 13.8 MB, from 19.6 MB. The Linux file is about 19.3 MB.
+#
+# On Linux, linux_guards.py stops the build when the bundle needs a glibc newer than 2.27,
+# or has a libX11 older than 1.7. Build the Linux app on Debian 11. See packaging/README.md.
 #
 # If new code in pixheet or in the GUI imports a module in EXCLUDES, the tests pass, but
 # the exe stops with ModuleNotFoundError. After such a change, run packaging/build.ps1.
@@ -28,15 +34,10 @@ import fnmatch
 import sys
 from pathlib import Path
 
-from PyInstaller.utils.win32.versioninfo import (
-    FixedFileInfo,
-    StringFileInfo,
-    StringStruct,
-    StringTable,
-    VarFileInfo,
-    VarStruct,
-    VSVersionInfo,
-)
+WINDOWS = sys.platform == "win32"
+LINUX = sys.platform.startswith("linux")
+if not (WINDOWS or LINUX):
+    raise SystemExit("pixheet.spec supports Windows and Linux.")
 
 parser = argparse.ArgumentParser(prog="pixheet.spec")
 parser.add_argument("--onedir", action="store_true", help="make a folder, not one file")
@@ -44,28 +45,46 @@ options = parser.parse_args()
 
 HERE = Path(SPECPATH)
 sys.path.insert(0, str(HERE))
-from trim_tcltk import trim_binaries  # noqa: E402
-from version_info import read_metadata  # noqa: E402
+from trim_tcltk import trim_binaries, trim_datas  # noqa: E402
 
 NAME = "Pixheet"
-ICON = HERE / "pixheet.ico"
-metadata = read_metadata(HERE.parent)
 
-# The version resource: the Details tab of the file properties in Explorer shows it.
-version = VSVersionInfo(
-    ffi=FixedFileInfo(filevers=metadata.numbers, prodvers=metadata.numbers),
-    kids=[
-        StringFileInfo(
-            [
-                StringTable(
-                    "040904B0",  # U.S. English, Unicode
-                    [StringStruct(k, v) for k, v in metadata.strings(f"{NAME}.exe").items()],
-                )
-            ]
-        ),
-        VarFileInfo([VarStruct("Translation", [0x0409, 1200])]),
-    ],
-)
+if WINDOWS:
+    # PyInstaller.utils.win32 needs pefile, which only Windows has.
+    from PyInstaller.utils.win32.versioninfo import (
+        FixedFileInfo,
+        StringFileInfo,
+        StringStruct,
+        StringTable,
+        VarFileInfo,
+        VarStruct,
+        VSVersionInfo,
+    )
+    from version_info import read_metadata  # noqa: E402
+
+    ICON = HERE / "pixheet.ico"
+    metadata = read_metadata(HERE.parent)
+
+    # The version resource: the Details tab of the file properties in Explorer shows it.
+    version = VSVersionInfo(
+        ffi=FixedFileInfo(filevers=metadata.numbers, prodvers=metadata.numbers),
+        kids=[
+            StringFileInfo(
+                [
+                    StringTable(
+                        "040904B0",  # U.S. English, Unicode
+                        [StringStruct(k, v) for k, v in metadata.strings(f"{NAME}.exe").items()],
+                    )
+                ]
+            ),
+            VarFileInfo([VarStruct("Translation", [0x0409, 1200])]),
+        ],
+    )
+else:
+    from linux_guards import check_bundle, describe  # noqa: E402
+
+    # An ELF file has no icon. The window shows this PNG file with iconphoto.
+    ICON = HERE / "pixheet.png"
 
 EXCLUDES = [
     # Pillow imports numpy only for type checks. Pixheet does not use numpy. Without this
@@ -171,8 +190,9 @@ UNWANTED_MODULES = [
     "PIL.ImageQt",
     "PIL.ImageShow",
 ]
-# The build stops if one of these files is in the bundle.
-UNWANTED_FILES = ["libcrypto-3-x64.dll", "libssl-3-x64.dll"]
+# The build stops if the name of a file in the bundle agrees with one of these patterns.
+UNWANTED_FILES_WINDOWS = ["libcrypto-3-x64.dll", "libssl-3-x64.dll"]
+UNWANTED_FILES_LINUX = ["libcrypto.so*", "libssl.so*"]
 
 # The build stops if one of these modules is not in the bundle. The image formats need
 # the Pillow extension modules. LAB images need PIL._imagingcms. sv_ttk gives the window
@@ -189,13 +209,10 @@ REQUIRED_MODULES = [
     "PIL._webp",
     "PIL._avif",
 ]
-# The build stops if no file in the bundle agrees with one of these patterns.
-# The sv-ttk hook of pyinstaller-hooks-contrib collects the Tcl scripts and images of
-# the theme.
-REQUIRED_FILES = [
-    "tcl90.dll",
-    "tcl9tk90.dll",
-    "tkinterdnd2/tkdnd/win-x64-*/libtkdnd*.dll",
+# The build stops if no file in the bundle agrees with one of these patterns. The
+# patterns are in lower case. The sv-ttk hook of pyinstaller-hooks-contrib collects the
+# Tcl scripts and images of the theme.
+SV_TTK_FILES = [
     "sv_ttk/sv.tcl",
     "sv_ttk/theme/light.tcl",
     "sv_ttk/theme/dark.tcl",
@@ -204,6 +221,35 @@ REQUIRED_FILES = [
     "sv_ttk/theme/spritesheet_light.png",
     "sv_ttk/theme/spritesheet_dark.png",
 ]
+REQUIRED_FILES_WINDOWS = [
+    "tcl90.dll",
+    "tcl9tk90.dll",
+    "tkinterdnd2/tkdnd/win-x64-*/libtkdnd*.dll",
+]
+# Tk on X11 makes the file dialog and the message box with Tcl scripts, and they need
+# msgcat. tkdnd needs libX11.
+REQUIRED_FILES_LINUX = [
+    "libtcl9*.so",
+    "libtcl9tk9*.so",
+    "libx11.so.6",
+    "tkinterdnd2/tkdnd/linux-x64-*/lib*tkdnd*.so",
+    "pixheet.png",
+    "_tcl_data/init.tcl",
+    "_tk_data/tkfbox.tcl",
+    "_tk_data/iconlist.tcl",
+    "_tk_data/msgbox.tcl",
+    "tcl9/*/msgcat-*.tm",
+]
+if WINDOWS:
+    TKDND_FOLDER = "win-x64"
+    EXTENSION = ".pyd"
+    UNWANTED_FILES = UNWANTED_FILES_WINDOWS
+    REQUIRED_FILES = REQUIRED_FILES_WINDOWS + SV_TTK_FILES
+else:
+    TKDND_FOLDER = "linux-x64"
+    EXTENSION = ".so"
+    UNWANTED_FILES = UNWANTED_FILES_LINUX
+    REQUIRED_FILES = REQUIRED_FILES_LINUX + SV_TTK_FILES
 
 a = Analysis(
     [str(HERE / "pixheet_gui.py")],
@@ -229,18 +275,29 @@ tkdnd = {
     for dest, _source, _kind in a.binaries + a.datas
     if Path(dest).parts[:2] == ("tkinterdnd2", "tkdnd") and len(Path(dest).parts) > 3
 }
-if len(tkdnd) != 1 or not next(iter(tkdnd)).startswith("win-x64"):
-    raise SystemExit(f"Expected one win-x64 tkdnd folder in the bundle. Found: {sorted(tkdnd)}")
+if len(tkdnd) != 1 or not next(iter(tkdnd)).startswith(TKDND_FOLDER):
+    raise SystemExit(
+        f"Expected one {TKDND_FOLDER} tkdnd folder in the bundle. Found: {sorted(tkdnd)}"
+    )
 
 # Make sure that the excludes work, and that the bundle has all that the app needs.
 files = [dest.replace("\\", "/").lower() for dest, _source, _kind in a.binaries + a.datas]
 modules = {name.lower() for name, _source, _kind in a.pure}
-# An extension module, for example PIL/_avif.cp315-win_amd64.pyd, is the module PIL._avif.
-modules |= {f.rsplit(".", 2)[0].replace("/", ".") for f in files if f.endswith(".pyd")}
+# An extension module, for example PIL/_avif.cp315-win_amd64.pyd or
+# PIL/_avif.cpython-315-x86_64-linux-gnu.so, is the module PIL._avif. On Linux, the
+# extension modules of the standard library are in python3.15/lib-dynload/.
+# On Windows, the name _tkinter.pyd has no tag. Its module name is _tkinter too.
+modules |= {
+    f.rpartition("lib-dynload/")[2].rsplit(".", 2)[0].replace("/", ".")
+    for f in files
+    if f.endswith(EXTENSION)
+}
 unwanted = sorted(
     {u for u in UNWANTED_MODULES for m in modules if f"{m}.".startswith(f"{u.lower()}.")}
 )
-unwanted += [f for f in files if Path(f).name in UNWANTED_FILES]
+unwanted += [
+    f for f in files if any(fnmatch.fnmatchcase(Path(f).name, p.lower()) for p in UNWANTED_FILES)
+]
 if unwanted:
     raise SystemExit(f"These excluded modules or files are in the bundle: {unwanted}")
 missing = [m for m in REQUIRED_MODULES if m.lower() not in modules]
@@ -248,12 +305,24 @@ missing += [p for p in REQUIRED_FILES if not any(fnmatch.fnmatchcase(f, p) for f
 if missing:
     raise SystemExit(f"These modules or files are not in the bundle: {missing}")
 
-# Tcl 9 and Tk 9 keep their script library in a zip archive after the PE image of
-# tcl90.dll and tcl9tk90.dll. trim_tcltk.py writes a copy of each DLL with a smaller
+# On Linux, stop the build when the bundle needs a newer glibc than the targets have, or
+# when its libX11 makes tkdnd stop the app. The first line tells the glibc floor.
+if LINUX:
+    floor, floor_file, problems = check_bundle(a.binaries)
+    print(describe(floor, floor_file))
+    if problems:
+        raise SystemExit("linux_guards: " + " ".join(problems))
+
+# Tcl 9 and Tk 9 on Windows keep their script library in a zip archive after the PE image
+# of tcl90.dll and tcl9tk90.dll. trim_tcltk.py writes a copy of each DLL with a smaller
 # archive: the exe gets about 1.08 MB smaller. The tool stops the build if a DLL has a
-# different layout. Read trim_tcltk.py for the list of the removed files.
-if sys.platform == "win32":
+# different layout. On Linux, the library is a folder of data files, and the spec removes
+# files from the list (about 0.6 MB). Read trim_tcltk.py for the lists of removed files.
+if WINDOWS:
     a.binaries = trim_binaries(a.binaries, Path(workpath) / "tcltk-trim")
+else:
+    a.datas, removed, size = trim_datas(a.datas, Path(workpath) / "tcltk-trim")
+    print(f"trim_tcltk: {removed} Tcl and Tk files removed, {size:,} bytes")
 
 pyz = PYZ(a.pure)
 
@@ -261,9 +330,9 @@ common = dict(
     name=NAME,
     debug=False,
     bootloader_ignore_signals=False,
-    # strip has no effect on Windows: no strip tool is on PATH. A MinGW strip on PATH
-    # would run on MSVC binaries, which is not supported.
-    strip=False,
+    # On Linux, strip makes the file about 3.8 MB smaller. Windows has no strip tool on
+    # PATH. A MinGW strip on PATH would run on MSVC binaries, which is not supported.
+    strip=not WINDOWS,
     # UPX makes the exe about 4.5 MB smaller. But each start is about 0.4 s slower, and
     # antivirus programs flag UPX-packed exes.
     upx=False,
@@ -273,12 +342,13 @@ common = dict(
     target_arch=None,
     codesign_identity=None,
     entitlements_file=None,
-    icon=[str(ICON)],
-    version=version,
 )
+if WINDOWS:
+    # An ELF file on Linux has no icon and no version resource.
+    common.update(icon=[str(ICON)], version=version)
 
 if options.onedir:
     exe = EXE(pyz, a.scripts, [], exclude_binaries=True, **common)
-    coll = COLLECT(exe, a.binaries, a.datas, strip=False, upx=False, name=NAME)
+    coll = COLLECT(exe, a.binaries, a.datas, strip=not WINDOWS, upx=False, name=NAME)
 else:
     exe = EXE(pyz, a.scripts, a.binaries, a.datas, [], runtime_tmpdir=None, **common)

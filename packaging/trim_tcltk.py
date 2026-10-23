@@ -19,6 +19,12 @@ stops the build when the DLL has a different layout. Check the exe again after a
 update of Python or of Tcl and Tk. Run the tool by hand with:
 
     python packaging/trim_tcltk.py <source DLL> <target DLL>
+
+On Linux, the Tcl and Tk library is a folder of files, not a zip archive. PyInstaller
+collects the files as data in _tcl_data/, _tk_data/ and tcl9/. :func:`trim_datas` removes
+files from that list with the rules of :func:`linux_dropped`. The rules are not the same
+as on Windows: Tk on X11 makes its file dialog and its message box with Tcl scripts, so
+the tool keeps these scripts.
 """
 
 import fnmatch
@@ -35,6 +41,8 @@ DLLS = ("tcl90.dll", "tcl9tk90.dll")
 
 KEEP_ENCODINGS = {"ascii", "cp1252", "cp1258", "cp437", "iso8859-1"}
 KEEP_TK_MSGS = {"en.msg", "en_gb.msg"}
+KEEP_ENCODINGS_LINUX = {"ascii", "cp1252", "cp437", "iso8859-1", "iso8859-15", "utf-8"}
+"""The encodings that the Linux app keeps. Tcl uses the encoding of the locale."""
 
 DROP = [
     # Data that the app never reads.
@@ -62,6 +70,39 @@ DROP = [
     "tcl_library/platform/*",
     "tcl_library/install.tcl",
     "tcl_library/icu.tcl",
+]
+
+DROP_LINUX = [
+    # Data and packages that the app never reads. The names are in lower case.
+    "_tcl_data/tzdata/*",
+    "_tcl_data/msgs/*",
+    "_tcl_data/cookiejar*/*",
+    "_tcl_data/http*/*",
+    "_tcl_data/tcltest*/*",
+    "_tcl_data/opt*/*",
+    "_tcl_data/platform*/*",
+    "tcl9/*/http-*",
+    "tcl9/*/tcltest-*",
+    "tcl9/*/platform*",
+    "tcl9/*/cookiejar*",
+    "_tk_data/images/*",
+    "_tk_data/demos/*",
+    # Tcl: safe interpreters, the install helper, the ICU bridge, and C sources.
+    "_tcl_data/safe.tcl",
+    "_tcl_data/install.tcl",
+    "_tcl_data/icu.tcl",
+    "_tcl_data/tclappinit.c",
+    # Tk: the ttk themes of Windows and macOS, the console, and C sources. Keep the Tcl
+    # dialogs: tkfbox.tcl, iconlist.tcl, choosedir.tcl, msgbox.tcl, clrpick.tcl,
+    # fontchooser.tcl and xmfbox.tcl.
+    "_tk_data/ttk/aquatheme.tcl",
+    "_tk_data/ttk/wintheme.tcl",
+    "_tk_data/ttk/xptheme.tcl",
+    "_tk_data/ttk/vistatheme.tcl",
+    "_tk_data/safetk.tcl",
+    "_tk_data/mkpsenc.tcl",
+    "_tk_data/console.tcl",
+    "_tk_data/tkappinit.c",
 ]
 
 ZIP_MAGIC = b"PK\x03\x04"
@@ -220,6 +261,44 @@ def trim_binaries(binaries: Iterable[tuple[str, str, str]], folder: Path) -> lis
     if sorted(trimmed) != sorted(DLLS):
         raise SystemExit(f"trim_tcltk: expected the DLLs {list(DLLS)}, found {trimmed}.")
     return result
+
+
+def linux_dropped(dest: str) -> bool:
+    """Return True if the Linux app does not need the data file ``dest`` of PyInstaller."""
+    name = dest.replace("\\", "/").lower()
+    if any(fnmatch.fnmatchcase(name, pattern) for pattern in DROP_LINUX):
+        return True
+    if name.startswith("_tcl_data/encoding/") and name.endswith(".enc"):
+        return Path(name).stem not in KEEP_ENCODINGS_LINUX
+    if name.startswith("_tk_data/msgs/"):
+        return Path(name).name not in KEEP_TK_MSGS
+    return False
+
+
+def trim_datas(datas: Iterable[tuple[str, str, str]], folder: Path) -> tuple[list, int, int]:
+    """Remove the Tcl and Tk files that the Linux app does not need from the data files.
+
+    Return the new list, the number of removed files and their size in bytes. The index
+    files tclIndex and pkgIndex.tcl lose the lines of the removed files. Their new copies
+    go into ``folder``.
+    """
+    datas = [(dest.replace("\\", "/"), source, kind) for dest, source, kind in datas]
+    gone = {dest for dest, _source, _kind in datas if linux_dropped(dest)}
+    size = sum(Path(source).stat().st_size for dest, source, _kind in datas if dest in gone)
+    result = []
+    for dest, source, kind in datas:
+        if dest in gone:
+            continue
+        if Path(dest).name in ("tclIndex", "pkgIndex.tcl"):
+            body = Path(source).read_bytes()
+            fixed = fix_index(dest, body, gone)
+            if fixed != body:
+                target = folder / dest
+                target.parent.mkdir(parents=True, exist_ok=True)
+                target.write_bytes(fixed)
+                source = str(target)
+        result.append((dest, source, kind))
+    return result, len(gone), size
 
 
 def main(source: Path, target: Path) -> None:
