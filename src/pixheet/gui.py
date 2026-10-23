@@ -31,6 +31,8 @@ try:
 except ImportError:  # a Python build without Tk
     tk = None
 
+from PIL import UnidentifiedImageError
+
 from pixheet._image import RGB, check_max_side, parse_background
 from pixheet.core import DEFAULT_BACKGROUND, DEFAULT_MAX_SIDE, ConvertResult, convert
 
@@ -236,7 +238,17 @@ def _progress_hook(
     return progress
 
 
+NOT_AN_IMAGE = "the app cannot read this file as an image"
+"""The error text for a file that Pillow cannot open.
+
+The text of Pillow has the full path in quotes, with two backslashes for each one. The
+dialog already shows the file name.
+"""
+
+
 def _describe(error: Exception) -> str:
+    if isinstance(error, UnidentifiedImageError):
+        return NOT_AN_IMAGE
     return str(error) or type(error).__name__
 
 

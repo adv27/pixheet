@@ -171,7 +171,7 @@ def test_run_batch_continues_after_an_error(tmp_path):
     failed = [m for m in messages if isinstance(m, Failed)]
     assert len(failed) == 1
     assert failed[0].src == bad
-    assert "cannot identify" in failed[0].error
+    assert failed[0].error == gui.NOT_AN_IMAGE  # not the path with doubled backslashes
     assert messages[-1] == Finished(1, cancelled=False)
     assert not (tmp_path / "bad.xlsx").exists()
     assert (tmp_path / "good.xlsx").exists()
@@ -353,7 +353,8 @@ def test_batch_with_an_error_continues_and_reports(harness, tmp_path):
     assert h.app.title_var.get() == "Converted 1 of 2 files."
     assert h.app.status_var.get().endswith("1 file not converted.")
     assert len(h.errors) == 1
-    assert "bad.png: cannot identify" in h.errors[0]
+    assert h.errors[0].endswith(f"bad.png: {gui.NOT_AN_IMAGE}")
+    assert "\\\\" not in h.errors[0]
 
 
 @pytest.mark.parametrize("answer", [True, False])
