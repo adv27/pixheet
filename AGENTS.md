@@ -35,7 +35,7 @@ package, except in tests and in `bench/bench.py`, which times each stage.
 
 ```console
 uv sync                                       # install; Python 3.15 per .python-version
-uv run pytest                                 # about 70 s on Windows
+uv run pytest                                 # about 90 s on Windows
 uv run pytest --cov --cov-report=term         # with the coverage, as in CI
 uv run ruff check && uv run ruff format --check
 uv run pixheet --help
@@ -78,9 +78,18 @@ Run the tests, the lint, and the format check before you report a change as comp
 - Add a test for each change in behavior.
 - Do not commit `samples/`, `*.xlsx`, `profiles/`, `build/`, or `dist/`. The
   `.gitignore` file excludes them.
-- In `gui.py`, only the main thread can call Tk. The worker thread sends messages
-  through a queue. A Tk object that Python collects on the worker thread causes an
-  error, so the GUI tests collect garbage on the main thread after each test.
+- In `gui.py`, only the main thread can call Tk. The worker thread takes jobs from a
+  `JobQueue` and sends messages through a queue. A Tk object that Python collects on the
+  worker thread causes an error, so the GUI tests collect garbage on the main thread
+  after each test.
+- The list of the app can have many rows. A message of the worker must change only its
+  row and the counts in the `Tally` objects. Do not read all rows for each message.
+  `test_a_tick_of_500_rows_does_not_count_the_rows` checks this.
+- A change of a ttk style sends `<<ThemeChanged>>` to all widgets. The app sets its
+  colors again on that event. Use `_configure_style()`, which changes a style only when
+  the value is new. Else the event never stops.
+- The GUI tests replace the dialogs of the app: `show_error`, `ask_files`, `ask_folder`
+  and `ask_replace`. A real modal dialog stops the test.
 - `App` does not load the Sun Valley theme. Only `main()` loads it, so most window tests
   use the default ttk theme. A test that needs the theme calls `apply_theme()`.
 - The primary development OS is Windows. Keep paths and shell examples portable.

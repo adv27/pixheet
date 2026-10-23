@@ -48,27 +48,62 @@ themselves (cmd, PowerShell). `python -m pixheet` works too.
 
 ## Desktop app
 
-Pixheet also has a desktop app. Drop images on its window, and the app converts each
-image to an `.xlsx` file in the same folder. Install the app with the `gui` extra:
+Pixheet also has a desktop app. Drop images or folders on its window, and the app
+converts each image to an `.xlsx` file. Install the app with the `gui` extra:
 
 ```console
 $ uv tool install ".[gui]"     # or: pip install ".[gui]"
 $ pixheet-gui                  # or: uv run --extra gui pixheet-gui from the checkout
 ```
 
-- To convert images, drop them on the window, or click **Browse...**.
-- Set the maximum side, the background, and compact mode before you start.
-- A progress bar shows the progress of the current file. **Cancel** stops the batch.
-- When an output file exists, the app asks one time for each batch. If you click
-  **No**, the app does not convert those images.
-- When a file has an error, the app converts the other files. At the end, it shows a
-  list of the errors.
-- **Open folder** shows the folder of the last output file.
+To add images:
+
+- Drop images or folders on the window, or click **Add files...** or **Add folder...**.
+  Ctrl+O also adds files.
+- A folder adds only the images directly in it. When the folder has subfolders, a note
+  shows the button **Include subfolders**.
+- The app ignores files that are not images, and a note names them.
+- Set the maximum side, the background, and compact mode before you add images. During
+  a run, the app locks these options.
+- **Save to** sets the folder of the outputs: **Next to each image** (the default), or a
+  folder that you choose. When two images have the same output name, each output gets a
+  tag. For example, `photo.png` and `photo.jpg` give `photo (png).xlsx` and
+  `photo (jpg).xlsx`.
+
+One image shows in the drop zone, with a progress bar and the result. **Show in folder**
+shows the output in its folder, and **Open** opens it.
+
+Two or more images show in a list, with the name, the folder, and the status of each
+image:
+
+- The conversion starts at once. A drop during a run adds the images to the end of the
+  list.
+- The progress line shows the number of the current file, the counts, and the time
+  left. The window title also shows the progress.
+- The list keeps the current file in view. A click or a scroll in the list stops this.
+  Esc starts it again.
+- **Stop** stops the run. The app does not write the current file. **Convert N**
+  converts the files that wait.
+- An error in one file does not stop the run. The row of the file is red and tells the
+  reason. Select the row to see the full reason below the list.
+- **Retry failed (N)** converts the failed files and the stopped files again.
+  **Failed only (N)** shows only the failed files.
+- **Show folders (N)** opens one of the output folders. **Clear list** removes all rows.
+- Right-click a row, or press Shift+F10, for more actions. Enter opens the selected
+  file. Delete removes the selected rows.
+
+When output files exist, the app asks one time for each drop. Click **Replace all**,
+**Skip these N**, or **Cancel**. The Skip button has the focus, so Enter does not
+replace files.
+
+Screen readers cannot read the rows of the list, because Tk does not give the list to UI
+Automation. The details line below the list shows the full text of the selected row.
 
 The app uses Tkinter from the Python standard library. The `gui` extra adds
 [tkinterdnd2](https://pypi.org/project/tkinterdnd2/) for the drop of files. Without
-tkinterdnd2, the app opens without the drop function, and **Browse...** still works.
-You can also give image paths as arguments: `pixheet-gui photo.jpg`.
+tkinterdnd2, the app opens without the drop function, and **Add files...** and **Add
+folder...** still work. You can also give paths of images and folders as arguments:
+`pixheet-gui photo.jpg`.
 
 The `gui` extra also adds [sv-ttk](https://pypi.org/project/sv-ttk/). It gives the
 window the look of Windows 11:
@@ -88,7 +123,7 @@ window the look of Windows 11:
 
 On Linux, drag and drop needs libX11 1.7 or later, for example Ubuntu 22.04 or Debian 11.
 With an older libX11, tkdnd stops the app when it loads. Thus the app does not load it,
-and you use **Browse...**. The environment variable `PIXHEET_DND=0` turns off drag and
+and you use **Add files...** and **Add folder...**. The environment variable `PIXHEET_DND=0` turns off drag and
 drop on all systems.
 
 To build the Windows app yourself, see [Windows app](#windows-app). For Linux, see
@@ -176,7 +211,7 @@ Known limits:
   in the app has no Xft. Some letters, for example Vietnamese letters in a file name,
   can show as boxes.
 - When drag and drop cannot load, the app shows "Drag and drop is not available. Use
-  Browse.". The app has its own libX11 1.7.2, so this is not usual.
+  Add files or Add folder.". The app has its own libX11 1.7.2, so this is not usual.
 - At each start, the app extracts itself to a folder `/tmp/_MEI...`. If `/tmp` does not
   let programs run (`noexec`), set `TMPDIR` to a different folder.
 - To open a folder, the app uses `xdg-open`.
