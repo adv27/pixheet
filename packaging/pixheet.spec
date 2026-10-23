@@ -226,8 +226,8 @@ REQUIRED_FILES_WINDOWS = [
     "tcl9tk90.dll",
     "tkinterdnd2/tkdnd/win-x64-*/libtkdnd*.dll",
 ]
-# Tk on X11 makes the file dialog and the message box with Tcl scripts, and they need
-# msgcat. tkdnd needs libX11.
+# Tk on X11 makes the file dialog, the folder dialog and the message box with Tcl
+# scripts, and they need msgcat. tkdnd needs libX11.
 REQUIRED_FILES_LINUX = [
     "libtcl9*.so",
     "libtcl9tk9*.so",
@@ -236,6 +236,7 @@ REQUIRED_FILES_LINUX = [
     "pixheet.png",
     "_tcl_data/init.tcl",
     "_tk_data/tkfbox.tcl",
+    "_tk_data/choosedir.tcl",
     "_tk_data/iconlist.tcl",
     "_tk_data/msgbox.tcl",
     "tcl9/*/msgcat-*.tm",

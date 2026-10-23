@@ -518,7 +518,8 @@ def test_spec_patterns_of_files_are_in_lower_case():
 def test_spec_requires_the_x11_dialogs_on_linux():
     """The Linux trim must keep the Tcl dialogs. trim_tcltk drops them on Windows only."""
     files = spec_value("REQUIRED_FILES_LINUX")
-    for name in ("_tk_data/tkfbox.tcl", "_tk_data/msgbox.tcl", "_tk_data/iconlist.tcl"):
+    names = ("tkfbox.tcl", "choosedir.tcl", "msgbox.tcl", "iconlist.tcl")
+    for name in (f"_tk_data/{name}" for name in names):
         assert name in files
         assert not trim_tcltk.linux_dropped(name)
     assert "tcl9/*/msgcat-*.tm" in files

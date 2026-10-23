@@ -2,6 +2,7 @@
 
 import errno
 import sys
+import threading
 import time
 from pathlib import Path
 
@@ -22,6 +23,7 @@ from pixheet._plan import (
     Failed,
     Finished,
     Job,
+    JobQueue,
     Progress,
     ReplaceQuestion,
     Row,
@@ -34,6 +36,7 @@ from pixheet._plan import (
     drop_note,
     eta_text,
     expand_drop,
+    failure_detail,
     failure_kind,
     folder_labels,
     format_size,
@@ -665,6 +668,27 @@ def test_failure_kind(tmp_path):
     assert failure_kind(OSError(errno.ENOSPC, "full", str(dst)), dst) == "other"
 
 
+def test_failure_kind_of_a_source_next_to_the_output(tmp_path):
+    dst = tmp_path / "a.xlsx"
+    src = tmp_path / "a.png"
+    assert failure_kind(FileNotFoundError(errno.ENOENT, "gone", str(src)), dst) == "other"
+    assert failure_kind(PermissionError(errno.EACCES, "denied", str(src)), dst) == "other"
+    assert failure_kind(FileNotFoundError(errno.ENOENT, "gone", str(tmp_path)), dst) == "missing"
+
+
+def test_failure_detail(tmp_path):
+    dst = tmp_path / "Acme" / "a.xlsx"
+    assert failure_detail("write", "denied", dst, platform="win32") == (
+        f"Windows does not let the app write in {dst.parent}. "
+        'Set "Save to" to a folder of your own, then click Retry failed.'
+    )
+    assert failure_detail("write", "denied", dst, platform="linux").startswith(
+        "The system does not let the app write in "
+    )
+    assert failure_detail("image", "the app cannot read it", dst) == "the app cannot read it"
+    assert failure_detail("other", "[Errno 28] No space", dst) == "[Errno 28] No space"
+
+
 @windows
 def test_failure_kind_on_a_share():
     dst = Path(r"\\nas\scans\Đà Lạt\a.xlsx")
@@ -695,6 +719,42 @@ def test_job_has_its_own_skip_event(tmp_path):
     b = Job(2, tmp_path / "b.png", tmp_path / "b.xlsx")
     a.skip.set()
     assert not b.skip.is_set()
+
+
+def test_job_queue_keeps_the_order_and_removes_jobs(tmp_path):
+    jobs = [Job(i, tmp_path / f"{i}.png", tmp_path / f"{i}.xlsx") for i in range(5)]
+    queue = JobQueue()
+    assert queue.take() is None
+    queue.put(jobs[:3])
+    queue.put(jobs[3:])
+    assert len(queue) == 5
+    assert queue.take() is jobs[0]
+    queue.remove([2, 4, 99])
+    assert len(queue) == 2
+    assert queue.take() is jobs[1]
+    queue.clear()
+    assert len(queue) == 0
+    assert queue.take() is None
+
+
+def test_job_queue_is_safe_for_two_threads(tmp_path):
+    queue = JobQueue()
+    taken = []
+
+    def take_all():
+        while len(taken) < 2_000:
+            job = queue.take()
+            if job is not None:
+                taken.append(job.id)
+
+    worker = threading.Thread(target=take_all)
+    worker.start()
+    for start in range(0, 2_000, 100):
+        queue.put(
+            Job(i, tmp_path / "a.png", tmp_path / "a.xlsx") for i in range(start, start + 100)
+        )
+    worker.join(10)
+    assert taken == list(range(2_000))
 
 
 def row(**kwargs):

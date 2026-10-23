@@ -1,12 +1,16 @@
-"""Desktop app: drop images on the window to convert each one to an .xlsx file.
+"""Desktop app: drop images or folders on the window to convert each image to an .xlsx file.
 
 Start it with ``pixheet-gui`` or ``python -m pixheet.gui``. The app converts the image
 paths that you give as arguments when it starts. The option ``--smoke`` opens the window
 and closes it when the app has nothing to do. Use it to test a built app.
 
-Each output file goes next to its image, with the suffix ``.xlsx``. A worker thread does
-the conversion, so the window stays responsive. The worker sends messages to a queue,
-and the window reads the queue each 50 ms.
+Each output file goes next to its image, with the suffix ``.xlsx``, or into the folder
+that "Save to" names. One image shows as today: the drop zone, a progress bar and the
+result. Two or more images show in a list, with one row for each image and its state.
+
+A worker thread does the conversion, so the window stays responsive. The worker takes
+jobs from a queue that the window can add to during a run. It sends messages to a
+second queue, and the window reads that queue each 50 ms. Only the window thread uses Tk.
 
 With sv-ttk, the window has the Sun Valley theme, the look of Windows 11. A toggle at the
 top right sets the theme to System, Light or Dark. With System, the theme is the same as
@@ -21,8 +25,8 @@ import queue
 import sys
 import threading
 import time
-from collections.abc import Callable, Iterable, Mapping, Sequence
-from dataclasses import dataclass
+from collections.abc import Callable, Iterable, Iterator, Mapping, Sequence
+from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Any
 
@@ -35,23 +39,80 @@ except ImportError:  # a Python build without Tk
 
 from PIL import UnidentifiedImageError
 
-from pixheet._desktop import LatestValue, dnd_allowed, open_folder, settings_path, system_theme
+from pixheet._desktop import (
+    LatestValue,
+    dnd_allowed,
+    open_folder,
+    open_path,
+    settings_path,
+    system_theme,
+)
 from pixheet._image import RGB, check_max_side, parse_background
+from pixheet._plan import (
+    CONVERTING,
+    DONE,
+    FAILED,
+    FINISHED_STATES,
+    NOT_AN_IMAGE,
+    SEP,
+    SKIPPED,
+    STOPPED,
+    WAITING,
+    Converted,
+    DropResult,
+    Failed,
+    Finished,
+    Job,
+    JobQueue,
+    Message,
+    Progress,
+    ReplaceQuestion,
+    Row,
+    Started,
+    Stopped,
+    Tally,
+    apply_message,
+    assign_outputs,
+    drop_note,
+    eta_text,
+    expand_drop,
+    failure_detail,
+    failure_kind,
+    folder_labels,
+    middle_ellipsis,
+    path_key,
+    path_problem,
+    progress_text,
+    status_text,
+    subfolder_note,
+    summary_line,
+)
 from pixheet.core import DEFAULT_BACKGROUND, DEFAULT_MAX_SIDE, ConvertResult, convert
 
 TITLE = "Pixheet"
-MIN_WIDTH, MIN_HEIGHT = 460, 400
+MIN_WIDTH, MIN_HEIGHT = 620, 460
 """The smallest size of the window. The window can need more, for example with large text."""
 POLL_MS = 50
 """Time between two reads of the message queue, in milliseconds."""
 PROGRESS_INTERVAL = 0.05
 """Minimum time between two progress messages from the worker, in seconds."""
+NOTE_MS = 10_000
+"""Time until a note without a button closes, in milliseconds."""
+FOLLOW_ABOVE = 3
+"""The maximum number of rows above the converting row when the list follows it."""
+STATUS_WIDTH = 220
+"""The width of the Status column at 100 % scale, in pixels."""
+ARROW = " → "
 MAX_LISTED = 10
 """Maximum number of file names in one dialog."""
 
-DROP_TEXT = "Drop images here"
-NO_DND_TEXT = "Drag and drop is not available. Use Browse."
-BUSY_DROP_TEXT = "The app did not accept the files that you dropped during a conversion."
+DROP_TEXT = "Drop images or folders here"
+NO_DND_TEXT = "Drag and drop is not available. Use Add files or Add folder."
+FOLDER_HINT = "A folder adds only the images directly in it."
+DIALOG_DROP_TEXT = "Close the dialog first. The app did not add the dropped files."
+CANCELLED_TEXT = "The app did not add the dropped images."
+NEXT_TO_IMAGE = "Next to each image"
+CHOOSE_FOLDER = "Choose a folder..."
 IMAGE_TYPES = [
     (
         "Images",
@@ -62,6 +123,23 @@ IMAGE_TYPES = [
 ]
 """The file types of the file dialog on Windows."""
 BACKGROUNDS = ("white", "black", "none")
+
+ROW_COLORS = {
+    "light": {"failed": "#c42b1c", "converting": "#005fb8", "muted": "#6b6b6b"},
+    "dark": {"failed": "#ff99a4", "converting": "#60cdff", "muted": "#9d9d9d"},
+}
+"""The text colors of the rows. The theme does not change them, so they are fixed."""
+NOTE_COLORS = {"light": ("#e8f1fb", "#1c1c1c"), "dark": ("#1f3346", "#ffffff")}
+"""The background color and the text color of the note bar."""
+STATE_TAGS = {
+    WAITING: "muted",
+    CONVERTING: "converting",
+    DONE: "done",
+    FAILED: "failed",
+    SKIPPED: "muted",
+    STOPPED: "muted",
+}
+"""The tag of a row in each state. The tag sets the text color."""
 
 
 def image_types(platform: str | None = None) -> list[tuple[str, str]]:
@@ -82,33 +160,6 @@ def image_types(platform: str | None = None) -> list[tuple[str, str]]:
 
 
 # --- Helpers that do not need Tk -----------------------------------------------------
-
-
-def default_output(src: Path) -> Path:
-    """Return the output path of ``src``: the same folder and name, with an .xlsx suffix."""
-    return src.with_suffix(".xlsx")
-
-
-def _key(path: Path) -> str:
-    """Return a key that is the same for two spellings of one path."""
-    return os.path.normcase(path.absolute())
-
-
-def parse_drop(data: str, splitlist: Callable[[str], Sequence[str]]) -> list[Path]:
-    """Return the files in the data of a file drop, in order and without duplicates.
-
-    ``splitlist`` is ``root.tk.splitlist``. It removes the braces that Tk puts around a
-    path with spaces. The result does not include folders and paths that do not exist.
-    """
-    files: list[Path] = []
-    seen: set[str] = set()
-    for item in splitlist(data):
-        path = Path(item)
-        key = _key(path)
-        if key not in seen and path.is_file():
-            seen.add(key)
-            files.append(path)
-    return files
 
 
 class Throttle:
@@ -159,45 +210,6 @@ def parse_options(max_side: str, background: str, compact: bool) -> Options:
     return Options(max_side=side, background=color, compact=compact)
 
 
-@dataclass(frozen=True, slots=True)
-class Job:
-    """One image to convert, and the file to write."""
-
-    src: Path
-    dst: Path
-
-
-@dataclass(slots=True)
-class Plan:
-    """The jobs of a batch, before the user decides about files that exist."""
-
-    jobs: list[Job]
-    existing: list[Job]
-    """The jobs whose output file exists. Ask the user before the app replaces them."""
-    errors: list[str]
-    """One "name: reason" line for each input that the app cannot convert."""
-
-
-def plan_jobs(sources: Iterable[Path]) -> Plan:
-    """Find the output of each source, and find the sources that the app cannot convert."""
-    jobs: list[Job] = []
-    errors: list[str] = []
-    outputs: dict[str, Path] = {}  # output key -> the source that writes it
-    for src in sources:
-        dst = default_output(src)
-        key = _key(dst)
-        if key in outputs:
-            errors.append(f"{src.name}: {dst.name} is also the output of {outputs[key].name}")
-            continue
-        if _same_file(src, dst):
-            errors.append(f"{src.name}: the output file is the input file")
-            continue
-        outputs[key] = src
-        jobs.append(Job(src, dst))
-    existing = [job for job in jobs if job.dst.exists()]
-    return Plan(jobs=jobs, existing=existing, errors=errors)
-
-
 def _same_file(a: Path, b: Path) -> bool:
     try:
         return a.samefile(b)
@@ -208,93 +220,66 @@ def _same_file(a: Path, b: Path) -> bool:
 # --- The worker ----------------------------------------------------------------------
 
 
-@dataclass(frozen=True, slots=True)
-class Started:
-    index: int
-    """The number of this file in the batch, from 1."""
-    count: int
-    src: Path
-
-
-@dataclass(frozen=True, slots=True)
-class Progress:
-    done: int
-    total: int
-
-
-@dataclass(frozen=True, slots=True)
-class Converted:
-    job: Job
-    result: ConvertResult
-
-
-@dataclass(frozen=True, slots=True)
-class Failed:
-    src: Path
-    error: str
-
-
-@dataclass(frozen=True, slots=True)
-class Finished:
-    converted: int
-    cancelled: bool
-
-
-type Message = Started | Progress | Converted | Failed | Finished
-
-
 class _Cancelled(Exception):
-    """The user stopped the batch. The progress function raises it to stop convert()."""
+    """The user stopped the queue or the job. The progress function raises it."""
 
 
 def _progress_hook(
-    cancel: threading.Event, post: Callable[[Message], None], throttle: Throttle
+    cancel: threading.Event, job: Job, post: Callable[[Message], None], throttle: Throttle
 ) -> Callable[[int, int], None]:
     def progress(done: int, total: int) -> None:
-        if cancel.is_set():
+        if cancel.is_set() or job.skip.is_set():
             raise _Cancelled
         if throttle(done, total):
-            post(Progress(done, total))
+            post(Progress(job.id, done, total))
 
     return progress
 
 
-NOT_AN_IMAGE = "the app cannot read this file as an image"
-"""The error text for a file that Pillow cannot open.
+def _describe(error: BaseException) -> str:
+    """Return the text of an error for the user.
 
-The text of Pillow has the full path in quotes, with two backslashes for each one. The
-dialog already shows the file name.
-"""
-
-
-def _describe(error: Exception) -> str:
+    The text of Pillow for a file that it cannot open has the full path in quotes, with
+    two backslashes for each one. The row already shows the file, so the text is plain.
+    """
     if isinstance(error, UnidentifiedImageError):
         return NOT_AN_IMAGE
     return str(error) or type(error).__name__
 
 
-def run_batch(
-    jobs: Sequence[Job],
+def run_queue(
+    jobs: JobQueue,
     options: Options,
     post: Callable[[Message], None],
     cancel: threading.Event,
     interval: float = PROGRESS_INTERVAL,
 ) -> None:
-    """Convert the jobs one after the other, and post a message for each step.
+    """Convert the jobs in ``jobs`` one after the other, and post a message for each step.
 
-    The worker thread runs this function. An error in one job does not stop the batch.
-    When ``cancel`` is set, the batch stops. The last message is always
-    :class:`Finished`.
+    The worker thread runs this function. It takes jobs until the queue is empty. The
+    window can add jobs during the run. An error in one job does not stop the queue.
+
+    - When the ``skip`` event of a job is set, the job stops, and the worker posts
+      :class:`Stopped` for it. Then the worker continues with the next job.
+    - When ``cancel`` is set, the current job stops, and the worker posts
+      :class:`Stopped` for it. Then the queue stops.
+
+    The last message is always :class:`Finished`.
     """
-    converted = 0
-    cancelled = False
+    stopped = False
     try:
-        for index, job in enumerate(jobs, 1):
+        while True:
             if cancel.is_set():
-                cancelled = True
+                stopped = True
                 break
-            post(Started(index, len(jobs), job.src))
-            progress = _progress_hook(cancel, post, Throttle(interval))
+            job = jobs.take()
+            if job is None:
+                break
+            if job.skip.is_set():
+                post(Stopped(job.id))
+                continue
+            post(Started(job.id))
+            progress = _progress_hook(cancel, job, post, Throttle(interval))
             try:
                 result = convert(
                     job.src,
@@ -305,15 +290,17 @@ def run_batch(
                     progress=progress,
                 )
             except _Cancelled:
-                cancelled = True
-                break
-            except Exception as e:
-                post(Failed(job.src, _describe(e)))
+                post(Stopped(job.id))
                 continue
-            converted += 1
-            post(Converted(job, result))
+            except Exception as e:
+                post(Failed(job.id, _describe(e), failure_kind(e, job.dst)))
+                continue
+            size = 0
+            with contextlib.suppress(OSError):
+                size = job.dst.stat().st_size
+            post(Converted(job.id, result, size))
     finally:
-        post(Finished(converted, cancelled))
+        post(Finished(stopped))
 
 
 def _plural(count: int, word: str) -> str:
@@ -324,6 +311,12 @@ def summary(dst: Path, result: ConvertResult) -> str:
     """Return the status line for one converted file."""
     w, h = result.size
     return f"{dst}  {w}x{h}  {result.colors:,} colors  {result.seconds:.2f} s"
+
+
+def result_text(result: ConvertResult) -> str:
+    """Return the size, the colors and the time of a conversion, for the details line."""
+    w, h = result.size
+    return SEP.join([f"{w}x{h}", f"{result.colors:,} colors", f"{result.seconds:.2f} s"])
 
 
 # --- The window ----------------------------------------------------------------------
@@ -724,11 +717,22 @@ def follow_theme(
     return ThemeFollower(root, source, choice=choice)
 
 
+def _configure_style(root: tk.Tk, style: str, option: str, value: object) -> None:
+    """Set an option of a ttk style in the current theme, when the value is new.
+
+    A change of a style sends <<ThemeChanged>> to all widgets. The app sets its colors
+    again on that event, so a change of the same value each time never ends.
+    """
+    styles = ttk.Style(root)
+    if str(styles.configure(style, query_opt=option)) != str(value):
+        styles.configure(style, **{option: value})
+
+
 class App:
     """The main window. Make it on a Tk root, then call ``root.mainloop()``.
 
     ``dnd_type`` is the result of :func:`enable_dnd`. When it is None, the window has no
-    drop zone, and the user must use Browse.
+    drop zone, and the user must use Add files or Add folder.
 
     ``follower`` is the result of :func:`follow_theme`. With a follower in the Sun Valley
     theme, the header row shows the theme toggle. A choice in the toggle goes to the
@@ -736,6 +740,11 @@ class App:
 
     Without sv-ttk, the window has no toggle. The standard ttk theme has only one look, so
     the choices cannot change the window. A toggle that does nothing only confuses.
+
+    The window has two states. With no image or one image, it shows the drop zone. From
+    the second image, it shows the list, until the user clicks Clear list. The app keeps
+    the counts of the row states in :class:`Tally` objects. Thus a message of the worker
+    changes only one row and some counts, also in a list of many rows.
     """
 
     def __init__(
@@ -750,31 +759,65 @@ class App:
         self.follower = follower if follower is not None and follower.theme else None
         self.settings = settings
         self.queue: queue.SimpleQueue[Message] = queue.SimpleQueue()
+        self.jobs = JobQueue()
         self.cancel_event = threading.Event()
         self.worker: threading.Thread | None = None
+        self.options: Options | None = None
+        """The options of the run. A drop during the run uses them too."""
         self.closing = False
         self._dialogs = 0
         """The number of open modal dialogs. A modal dialog runs a nested event loop."""
-        self.last_output: Path | None = None
-        self.errors: list[str] = []
         self._poll_id: str | None = None
-        self._inputs = 0
-        self._skipped = 0
-        self._last_summary = ""
-        # The dialogs. The tests replace them, because a modal dialog stops the test.
-        self.ask_yes_no: Callable[..., bool] = messagebox.askyesno
+        self._note_id: str | None = None
+        self.note_action: Callable[[], None] | None = None
+
+        self.rows: dict[int, Row] = {}
+        """The rows of the list, in the order of the list."""
+        self._last_id = 0
+        self.tally = Tally()
+        """The counts of the states of all rows."""
+        self.run_ids: set[int] = set()
+        self.run_tally = Tally()
+        """The counts of the states of the rows of the current run, or of the last run."""
+        self.jobs_by_id: dict[int, Job] = {}
+        """The jobs that the worker did not finish."""
+        self.current: int | None = None
+        """The id of the row that converts now."""
+        self._current_text = ""
+        self._stopping_text = ""
+        self._run_started = 0.0
+        self._run_seconds = 0.0
+        self._run_processed = 0
+        self.done_ids: dict[int, None] = {}
+        """The ids of the done rows. A dict keeps the order."""
+        self.done_folders: dict[str, list[Any]] = {}
+        """For each output folder of the done rows: [folder, number of done rows]."""
+        self.out_dir: Path | None = None
+        """The "Save to" folder, or None for the folder of each image."""
+        self.list_mode = False
+        self.follow = True
+        """True when the list keeps the converting row in view."""
+        self.failed_only = False
+        self.labels: dict[str, str] = {}
+        self._status_failed = False
+
+        # The dialogs and the system. The tests replace them, because a modal dialog
+        # stops the test.
         self.show_error: Callable[..., object] = messagebox.showerror
-        self.ask_files: Callable[..., Sequence[str]] = filedialog.askopenfilenames
+        self.ask_files: Callable[..., Any] = filedialog.askopenfilenames
+        self.ask_folder: Callable[..., Any] = filedialog.askdirectory
+        self.ask_replace: Callable[[ReplaceQuestion], str] = self._ask_replace
 
         self._build()
         self.has_icon = set_icon(root)
         self.dnd = dnd_type is not None and self._register_drop(dnd_type)
         if not self.dnd:
             self.zone_label.configure(text="Choose images to convert")
-            self.or_label.grid_remove()  # Browse is the only way
-            self.status_var.set(NO_DND_TEXT)
+            self.or_label.grid_remove()  # the buttons are the only way
         root.protocol("WM_DELETE_WINDOW", self.close)
         root.report_callback_exception = self._report_exception
+        self._apply_colors()
+        self._refresh_all()
         self.fit_min_size()
 
     # Layout
@@ -784,48 +827,47 @@ class App:
         root.title(TITLE)
         root.minsize(MIN_WIDTH, MIN_HEIGHT)
         sun_valley = theme_name(root) in SUN_VALLEY
+        self._scale = root.winfo_fpixels("1i") / 96
         if sun_valley:
-            # The heading font of sv-ttk. Its size follows the screen resolution.
+            # The fonts of sv-ttk. Their size follows the screen resolution.
             self._big_font = tkfont.nametofont("SunValleySubtitleFont", root=root)
+            self._strong_font = tkfont.nametofont("SunValleyBodyStrongFont", root=root)
         else:
             self._big_font = tkfont.nametofont("TkDefaultFont", root=root).copy()
             size = self._big_font.cget("size")
             self._big_font.configure(size=round(size * 1.6))
+            self._strong_font = tkfont.nametofont("TkDefaultFont", root=root).copy()
+            self._strong_font.configure(weight="bold")
 
-        body = ttk.Frame(root, padding=16)
+        body = ttk.Frame(root, padding=(16, 12, 16, 16))
         body.pack(fill="both", expand=True)
         body.columnconfigure(0, weight=1)
-        body.rowconfigure(1, weight=1)
+        body.rowconfigure(2, weight=1)
         self.body = body
 
-        # The header row. Column 0 stretches. It keeps the left part free for more controls.
-        header = ttk.Frame(body)
+        # Row 0: "Save to" at the left, the theme toggle at the right.
+        header = ttk.Frame(body, padding=(0, 0, 0, 10))
         header.grid(row=0, column=0, sticky="ew")
         header.columnconfigure(0, weight=1)
         self.header = header
+        save = ttk.Frame(header)
+        save.grid(row=0, column=0, sticky="w")
+        ttk.Label(save, text="Save to:").grid(row=0, column=0, padx=(0, 6))
+        self.save_var = tk.StringVar(root, value=NEXT_TO_IMAGE)
+        self.save_box = ttk.Combobox(
+            save,
+            textvariable=self.save_var,
+            state="readonly",
+            width=30,
+            values=self._save_values(),
+        )
+        self.save_box.grid(row=0, column=1)
+        self.save_box.bind("<<ComboboxSelected>>", self._on_save_to)
         self._build_theme_toggle(header, sun_valley)
 
-        if sun_valley:
-            zone = ttk.Frame(body, style="Card.TFrame", padding=24)
-        else:
-            zone = ttk.Frame(body, padding=24, borderwidth=2, relief="groove")
-        zone.grid(row=1, column=0, sticky="nsew")
-        zone.columnconfigure(0, weight=1)
-        zone.rowconfigure(0, weight=1)
-        zone.rowconfigure(3, weight=1)
-        self.zone = zone
-        self.zone_label = ttk.Label(zone, text=DROP_TEXT, font=self._big_font, anchor="center")
-        self.zone_label.grid(row=1, column=0, pady=(0, 8))
-        self.or_label = ttk.Label(zone, text="or")
-        self.or_label.grid(row=2, column=0, pady=(0, 8))
-        # Other themes show the style Accent.TButton as a normal button.
-        self.browse_button = ttk.Button(
-            zone, text="Browse...", style="Accent.TButton", command=self.browse
-        )
-        self.browse_button.grid(row=3, column=0, sticky="n")
-
-        options = ttk.Frame(body, padding=(0, 12, 0, 0))
-        options.grid(row=2, column=0, sticky="ew")
+        # Row 1: the conversion options.
+        options = ttk.Frame(body, padding=(0, 0, 0, 10))
+        options.grid(row=1, column=0, sticky="ew")
         self.max_side_var = tk.StringVar(root, value=str(DEFAULT_MAX_SIDE))
         self.background_var = tk.StringVar(root, value=DEFAULT_BACKGROUND)
         self.compact_var = tk.BooleanVar(root, value=False)
@@ -846,29 +888,195 @@ class App:
         for box in (self.max_side_box, self.background_box):
             box.bind("<<ThemeChanged>>", self._use_style_foreground, add="+")
 
+        # Row 2: the drop zone or the list. Both use the same cell.
+        area = ttk.Frame(body)
+        area.grid(row=2, column=0, sticky="nsew")
+        area.columnconfigure(0, weight=1)
+        area.rowconfigure(0, weight=1)
+        self.area = area
+        self._build_zone(area, sun_valley)
+        self._build_list(area)
+
+        # Row 3: a note that the user can close, with an optional action.
+        self._build_note(body)
+
+        # Rows 4 and 5: the progress of the run.
         self.progress_var = tk.DoubleVar(root, value=0.0)
         self.progressbar = ttk.Progressbar(
             body, mode="determinate", maximum=1.0, variable=self.progress_var
         )
-        self.progressbar.grid(row=3, column=0, sticky="ew", pady=(12, 4))
+        self.progressbar.grid(row=4, column=0, sticky="ew", pady=(12, 4))
+        line = ttk.Frame(body)
+        line.grid(row=5, column=0, sticky="ew")
+        line.columnconfigure(0, weight=1)
         self.title_var = tk.StringVar(root, value="")
-        ttk.Label(body, textvariable=self.title_var).grid(row=4, column=0, sticky="w")
+        ttk.Label(line, textvariable=self.title_var).grid(row=0, column=0, sticky="w")
+        self.eta_var = tk.StringVar(root, value="")
+        self.eta_label = ttk.Label(line, textvariable=self.eta_var)
+        self.eta_label.grid(row=0, column=1, sticky="e")
+        self.failed_only_var = tk.BooleanVar(root, value=False)
+        self.failed_only_button = ttk.Checkbutton(
+            line,
+            variable=self.failed_only_var,
+            style="Toggle.TButton",
+            command=lambda: self._set_failed_only(self.failed_only_var.get()),
+        )
+        self.failed_only_button.grid(row=0, column=1, sticky="e")
+        self.failed_only_button.grid_remove()
+
+        # Row 6: the status of one image, or the details of the selected row.
         self.status_var = tk.StringVar(root, value="")
         self.status_label = ttk.Label(body, textvariable=self.status_var, justify="left")
-        self.status_label.grid(row=5, column=0, sticky="ew")
+        self.status_label.grid(row=6, column=0, sticky="ew")
         body.bind("<Configure>", self._wrap_status, add="+")
-        # A note that the worker messages do not replace, for example about a refused drop.
-        self.note_var = tk.StringVar(root, value="")
-        ttk.Label(body, textvariable=self.note_var).grid(row=6, column=0, sticky="w")
 
-        buttons = ttk.Frame(body, padding=(0, 12, 0, 0))
-        buttons.grid(row=7, column=0, sticky="e")
-        self.cancel_button = ttk.Button(buttons, text="Cancel", command=self.cancel)
-        self.cancel_button.grid(row=0, column=0, padx=(0, 8))
-        self.cancel_button.grid_remove()
-        self.open_button = ttk.Button(buttons, text="Open folder", command=self.open_output)
-        self.open_button.grid(row=0, column=1)
-        self.open_button.state(["disabled"])
+        # Row 7: the buttons.
+        self._build_buttons(body)
+        root.bind("<Control-o>", lambda event: self.browse())
+        root.bind("<<ThemeChanged>>", self._on_theme_changed, add="+")
+
+    def _build_zone(self, area: ttk.Frame, sun_valley: bool) -> None:
+        if sun_valley:
+            zone = ttk.Frame(area, style="Card.TFrame", padding=24)
+        else:
+            zone = ttk.Frame(area, padding=24, borderwidth=2, relief="groove")
+        zone.grid(row=0, column=0, sticky="nsew")
+        zone.columnconfigure(0, weight=1)
+        zone.rowconfigure(0, weight=1)
+        zone.rowconfigure(5, weight=1)
+        self.zone = zone
+        self.zone_label = ttk.Label(zone, text=DROP_TEXT, font=self._big_font, anchor="center")
+        self.zone_label.grid(row=1, column=0, pady=(0, 8))
+        self.or_label = ttk.Label(zone, text="or")
+        self.or_label.grid(row=2, column=0, pady=(0, 8))
+        buttons = ttk.Frame(zone)
+        buttons.grid(row=3, column=0)
+        # Other themes show the style Accent.TButton as a normal button.
+        self.browse_button = ttk.Button(
+            buttons, text="Add files...", style="Accent.TButton", command=self.browse
+        )
+        self.browse_button.grid(row=0, column=0, padx=(0, 8))
+        self.folder_button = ttk.Button(buttons, text="Add folder...", command=self.browse_folder)
+        self.folder_button.grid(row=0, column=1)
+        self.hint_label = ttk.Label(zone, text=FOLDER_HINT)
+        self.hint_label.grid(row=4, column=0, pady=(12, 0))
+
+    def _build_list(self, area: ttk.Frame) -> None:
+        frame = ttk.Frame(area)
+        frame.grid(row=0, column=0, sticky="nsew")
+        frame.columnconfigure(0, weight=1)
+        frame.rowconfigure(1, weight=1)
+        self.list_frame = frame
+        head = ttk.Frame(frame, padding=(0, 0, 0, 6))
+        head.grid(row=0, column=0, columnspan=2, sticky="ew")
+        head.columnconfigure(0, weight=1)
+        self.count_var = tk.StringVar(self.root, value="")
+        ttk.Label(head, textvariable=self.count_var, font=self._strong_font).grid(
+            row=0, column=0, sticky="w"
+        )
+        self.list_browse_button = ttk.Button(head, text="Add files...", command=self.browse)
+        self.list_browse_button.grid(row=0, column=1, padx=(0, 6))
+        self.list_folder_button = ttk.Button(head, text="Add folder...", command=self.browse_folder)
+        self.list_folder_button.grid(row=0, column=2)
+        tree = ttk.Treeview(
+            frame,
+            columns=("name", "folder", "status"),
+            show="headings",
+            selectmode="extended",
+            height=4,
+        )
+        tree.heading("name", text="Name", anchor="w")
+        tree.heading("folder", text="Folder", anchor="w")
+        tree.heading("status", text="Status", anchor="w")
+        width = round(STATUS_WIDTH * self._scale)
+        tree.column("name", width=width, minwidth=round(80 * self._scale), stretch=True)
+        tree.column("folder", width=width, minwidth=round(80 * self._scale), stretch=True)
+        tree.column("status", width=width, minwidth=width, stretch=False)
+        bar = ttk.Scrollbar(frame, orient="vertical", command=tree.yview)
+        tree.configure(yscrollcommand=bar.set)
+        tree.grid(row=1, column=0, sticky="nsew")
+        bar.grid(row=1, column=1, sticky="ns", padx=(4, 0))
+        self.tree = tree
+        self._columns: tuple[str, ...] = ("name", "folder", "status")
+        self.scrollbar = bar
+        tree.bind("<<TreeviewSelect>>", self._on_select)
+        tree.bind("<Double-1>", self._on_double_click)
+        tree.bind("<Return>", lambda event: self.activate())
+        tree.bind("<Delete>", lambda event: self.remove_selected())
+        tree.bind("<Control-a>", self._select_all)
+        tree.bind("<Escape>", lambda event: self.follow_again())
+        tree.bind("<Button-3>", self._on_right_click)
+        tree.bind("<Shift-F10>", self._on_menu_key)
+        for key in ("<App>", "<Menu>"):  # the Menu key on Windows and on X11
+            with contextlib.suppress(tk.TclError):
+                tree.bind(key, self._on_menu_key)
+        # A click, a scroll or a move of the selection stops the follow of the current row.
+        for sequence in (
+            "<Button-1>",
+            "<MouseWheel>",
+            "<Button-4>",
+            "<Button-5>",
+            "<Up>",
+            "<Down>",
+            "<Prior>",
+            "<Next>",
+            "<Home>",
+            "<End>",
+        ):
+            tree.bind(sequence, self._stop_follow, add="+")
+        bar.bind("<Button-1>", self._stop_follow, add="+")
+        frame.grid_remove()
+
+    def _build_note(self, body: ttk.Frame) -> None:
+        note = ttk.Frame(body, style="Note.TFrame", padding=(10, 4))
+        note.grid(row=3, column=0, sticky="ew", pady=(8, 0))
+        note.columnconfigure(0, weight=1)
+        self.note_var = tk.StringVar(self.root, value="")
+        # A classic label: a ttk label of sv-ttk draws the theme color behind the text.
+        self.note_label = tk.Label(
+            note, textvariable=self.note_var, justify="left", anchor="w", bd=0
+        )
+        if theme_name(self.root) in SUN_VALLEY:
+            self.note_label.configure(font="SunValleyBodyFont")
+        self.note_label.grid(row=0, column=0, sticky="w")
+        self.note_button = ttk.Button(note, text="", command=self.run_note_action)
+        self.note_button.grid(row=0, column=1, padx=(8, 0))
+        self.note_close = ttk.Button(
+            note, text="✕", width=2, style="Toolbutton", command=lambda: self.set_note("")
+        )
+        self.note_close.grid(row=0, column=2, padx=(4, 0))
+        note.bind("<Configure>", self._wrap_note, add="+")
+        self.note = note
+        note.grid_remove()
+
+    def _build_buttons(self, body: ttk.Frame) -> None:
+        bar = ttk.Frame(body, padding=(0, 12, 0, 0))
+        bar.grid(row=7, column=0, sticky="ew")
+        bar.columnconfigure(3, weight=1)
+        self.buttons = bar
+        self.stop_button = ttk.Button(bar, text="Stop", command=self._left_action)
+        self.stop_button.grid(row=0, column=0, padx=(0, 6))
+        self.retry_button = ttk.Button(bar, text="Retry failed", command=self.retry_failed)
+        self.retry_button.grid(row=0, column=1, padx=(0, 6))
+        self.clear_button = ttk.Button(bar, text="Clear list", command=self.clear_list)
+        self.clear_button.grid(row=0, column=2, padx=(0, 6))
+        self.folders_button = ttk.Menubutton(bar, text="Show folders")
+        self.folders_menu = tk.Menu(
+            self.folders_button, tearoff=False, postcommand=self._fill_folders_menu
+        )
+        self.folders_button.configure(menu=self.folders_menu)
+        self.folders_button.grid(row=0, column=4, padx=(6, 0))
+        self.folder_open_button = ttk.Button(bar, text="Show folder", command=self.show_folder)
+        self.folder_open_button.grid(row=0, column=5, padx=(6, 0))
+        self.show_button = ttk.Button(bar, text="Show in folder", command=self.show_output)
+        self.show_button.grid(row=0, column=6, padx=(6, 0))
+        self.open_button = ttk.Button(bar, text="Open", command=self.open_output)
+        self.open_button.grid(row=0, column=7, padx=(6, 0))
+        self.open_button.bind("<Return>", lambda event: self.open_button.invoke())
+        for button in (self.stop_button, self.retry_button, self.clear_button):
+            button.grid_remove()
+        self.folders_button.grid_remove()
+        self.folder_open_button.grid_remove()
 
     def _build_theme_toggle(self, header: ttk.Frame, sun_valley: bool) -> None:
         """Make the System, Light and Dark toggle at the right of the header row.
@@ -884,7 +1092,7 @@ class App:
         if follower is None or not sun_valley:
             return
         toggle = ttk.Frame(header)
-        toggle.grid(row=0, column=1, sticky="e", pady=(0, 12))
+        toggle.grid(row=0, column=1, sticky="e")
         for column, choice in enumerate(THEME_CHOICES):
             button = ttk.Radiobutton(
                 toggle,
@@ -930,48 +1138,90 @@ class App:
 
         On each theme change, sv-ttk calls tk_setPalette. tk_setPalette gives each widget
         a fixed text color. Then the text does not change to gray when the widget is
-        disabled, and the user cannot see that the options are locked during a batch.
+        disabled, and the user cannot see that the options are locked during a run.
         ttk::ThemeChanged sends the event to the root first, so tk_setPalette is done here.
         """
         event.widget.configure(foreground="")
+
+    def _on_theme_changed(self, event: tk.Event) -> None:
+        # The root gets the event for each widget. sv-ttk runs tk_setPalette after this
+        # handler, and tk_setPalette resets the colors of the classic note label.
+        if event.widget is self.root:
+            self.root.after_idle(self._apply_colors)
+
+    def mode(self) -> str:
+        """Return "dark" for the dark Sun Valley theme. Else return "light"."""
+        return "dark" if theme_name(self.root) == SUN_VALLEY[1] else "light"
+
+    def _apply_colors(self) -> None:
+        """Set the colors that the theme does not set: the rows, the note and the errors."""
+        with contextlib.suppress(tk.TclError):  # the window can be gone
+            mode = self.mode()
+            colors = ROW_COLORS[mode]
+            for tag in ("failed", "converting", "muted"):
+                self.tree.tag_configure(tag, foreground=colors[tag])
+            background, foreground = NOTE_COLORS[mode]
+            _configure_style(self.root, "Note.TFrame", "background", background)
+            self.note_label.configure(bg=background, fg=foreground)
+            if theme_name(self.root) in SUN_VALLEY:
+                # sv-ttk sets the row height from the font size before the scale.
+                font = tkfont.nametofont("SunValleyBodyFont", root=self.root)
+                height = font.metrics("linespace") + 8
+                _configure_style(self.root, "Treeview", "rowheight", height)
+            self.status_label.configure(foreground=colors["failed"] if self._status_failed else "")
 
     def fit_min_size(self) -> None:
         """Make the minimum size of the window large enough for all the widgets.
 
         The size that the widgets need changes with the theme, the fonts, and the screen
-        resolution. A smaller window cuts off a part of the options row.
+        resolution. A smaller window cuts off a part of the options row. The size includes
+        the list and the note bar, so the list keeps some rows at the minimum size.
         """
+        hidden = [widget for widget in (self.list_frame, self.note) if not widget.winfo_manager()]
+        for widget in hidden:
+            widget.grid()
         self.root.update_idletasks()
-        self.root.minsize(
-            max(MIN_WIDTH, self.root.winfo_reqwidth()), max(MIN_HEIGHT, self.root.winfo_reqheight())
-        )
+        width, height = self.root.winfo_reqwidth(), self.root.winfo_reqheight()
+        for widget in hidden:
+            widget.grid_remove()
+        self.root.minsize(max(MIN_WIDTH, width), max(MIN_HEIGHT, height))
 
     def _wrap_status(self, event: tk.Event) -> None:
         self.status_label.configure(wraplength=max(event.width - 32, 100))
 
+    def _wrap_note(self, event: tk.Event) -> None:
+        extra = self.note_button.winfo_reqwidth() if self.note_button.winfo_manager() else 0
+        self.note_label.configure(wraplength=max(event.width - extra - 80, 100))
+
     def _register_drop(self, dnd_type: str) -> bool:
+        # On Windows, each child window needs its own registration.
         try:
-            for widget in (self.body, self.zone):
+            for widget in (self.body, self.zone, self.list_frame, self.tree, self.note):
                 widget.drop_target_register(dnd_type)
                 widget.dnd_bind("<<Drop>>", self.on_drop)
         except tk.TclError:
             return False
         return True
 
-    # Events
+    # State
+
+    @property
+    def running(self) -> bool:
+        """True from the start of the worker until the window reads its last message."""
+        return self.worker is not None
 
     @property
     def busy(self) -> bool:
-        """True while a batch runs or a modal dialog is open.
-
-        A batch runs from its start until the window reads its last message. While a
-        dialog is open, events still come in. The app refuses a drop in that time, so
-        that a second batch cannot start in the middle of the code that opened the dialog.
-        """
+        """True while a run is active or a modal dialog is open."""
         return self.worker is not None or self._dialogs > 0
 
     def _modal[T](self, dialog: Callable[..., T], *args: Any, **kwargs: Any) -> T:
-        """Show a modal dialog. The app is busy until the dialog closes."""
+        """Show a modal dialog. The app refuses drops until the dialog closes.
+
+        A dialog runs a nested event loop, so events still come in. The app refuses a
+        drop in that time, so that a second drop cannot change the list in the middle of
+        the code that opened the dialog.
+        """
         self._dialogs += 1
         try:
             return dialog(*args, **kwargs)
@@ -990,98 +1240,510 @@ class App:
             self.root.destroy()
         return True
 
+    def _next_id(self) -> int:
+        self._last_id += 1
+        return self._last_id
+
+    def _selected_rows(self) -> list[Row]:
+        rows = []
+        for iid in self.tree.selection():
+            row = self.rows.get(int(iid))
+            if row is not None:
+                rows.append(row)
+        return rows
+
+    # Rows
+
+    def _render(self, row: Row) -> None:
+        self.tree.item(
+            str(row.id),
+            values=(row.src.name, self.labels.get(path_key(row.src.parent), ""), status_text(row)),
+            tags=(STATE_TAGS[row.state],),
+        )
+
+    def _count(self, row: Row, old: str | None, new: str | None) -> None:
+        """Count a change of the state of ``row`` in the tallies and the done folders."""
+        if old == new:
+            return
+        self.tally.add(old, new)
+        if row.id in self.run_ids:
+            self.run_tally.add(old, new)
+        if old == DONE:
+            self.done_ids.pop(row.id, None)
+            key = path_key(row.dst.parent)
+            entry = self.done_folders.get(key)
+            if entry is not None:
+                entry[1] -= 1
+                if entry[1] <= 0:
+                    del self.done_folders[key]
+        if new == DONE:
+            self.done_ids[row.id] = None
+            entry = self.done_folders.setdefault(path_key(row.dst.parent), [row.dst.parent, 0])
+            entry[1] += 1
+
+    def _insert_row(self, row: Row) -> None:
+        self.rows[row.id] = row
+        self._count(row, None, row.state)
+        self.tree.insert("", "end", iid=str(row.id))
+        self._render(row)
+
+    def _update_row(self, new: Row, *, to_end: bool = False) -> None:
+        """Put ``new`` in the place of the row with its id, and show it."""
+        old = self.rows.pop(new.id) if to_end else self.rows[new.id]
+        # Count the old state with the old output folder, and the new with the new.
+        self._count(old, old.state, None)
+        self.rows[new.id] = new
+        self._count(new, None, new.state)
+        if to_end:
+            self.tree.move(str(new.id), "", "end")
+        self._render(new)
+
+    def _remove_row(self, row: Row) -> None:
+        del self.rows[row.id]
+        self._count(row, row.state, None)
+        self.run_ids.discard(row.id)
+        self.jobs_by_id.pop(row.id, None)
+
+    # Drops and dialogs
+
     def on_drop(self, event: Any) -> str:
-        """Handle a file drop. Return the drop action for tkdnd."""
-        if self.busy or self.closing:
-            if not self.closing:
-                self.note_var.set(BUSY_DROP_TEXT)
+        """Handle a drop of files and folders. Return the drop action for tkdnd."""
+        if self.closing:
             return "refuse_drop"
-        files = parse_drop(event.data, self.root.tk.splitlist)
+        if self._dialogs:
+            self.set_note(DIALOG_DROP_TEXT)
+            return "refuse_drop"
+        paths = [Path(item) for item in self.root.tk.splitlist(event.data)]
         # Return to tkdnd at once: the file manager waits until the drop handler ends.
-        self.root.after_idle(self.start, files)
+        self.root.after_idle(self.add_paths, paths)
         return "copy"
 
     def browse(self) -> None:
-        """Let the user choose images, then convert them."""
-        if self.busy or self.closing:
+        """Let the user choose images, then add them to the list."""
+        if self.closing or self._dialogs:
             return
         names = self._modal(
-            self.ask_files, parent=self.root, title="Choose images", filetypes=image_types()
+            self.ask_files, parent=self.root, title="Add images", filetypes=image_types()
         )
         if self._close_if_asked():
             return
         if names:
-            self.start([Path(name) for name in names])
+            self.add_paths([Path(name) for name in names])
 
-    def start(self, sources: Sequence[Path]) -> None:
-        """Convert ``sources`` on a worker thread. Refuse them while the app is busy."""
-        if self.closing:
+    def browse_folder(self) -> None:
+        """Let the user choose a folder, then add the images in it to the list."""
+        if self.closing or self._dialogs:
             return
-        if self.busy:
-            self.note_var.set(BUSY_DROP_TEXT)
+        name = self._modal(
+            self.ask_folder, parent=self.root, title="Add a folder of images", mustexist=True
+        )
+        if self._close_if_asked():
             return
-        self.note_var.set("")  # before the dialogs, which can refuse a new drop
-        if not sources:
-            self.status_var.set("The drop has no files. Drop image files, not folders.")
+        if name:
+            self.add_paths([Path(name)])
+
+    def _ask_replace(self, question: ReplaceQuestion) -> str:
+        """Ask about the outputs that exist. Return "replace", "skip" or "cancel"."""
+        names = [str(path) for path in question.existing[:MAX_LISTED]]
+        if len(question.existing) > MAX_LISTED:
+            names.append(f"and {len(question.existing) - MAX_LISTED:,} more")
+        lines = [f"{question.heading}.", "", *names, "", question.text, ""]
+        lines.append("Yes replaces the files. No skips these images.")
+        answer = messagebox.askyesnocancel(TITLE, "\n".join(lines), parent=self.root)
+        return {True: "replace", False: "skip"}.get(answer, "cancel")
+
+    @contextlib.contextmanager
+    def _watch_cursor(self) -> Iterator[None]:
+        """Show the "watch" cursor while the app reads the disk on the window thread."""
+        try:
+            self.root.configure(cursor="watch")
+        except tk.TclError:
+            yield
             return
         try:
-            options = parse_options(
+            yield
+        finally:
+            with contextlib.suppress(tk.TclError):
+                self.root.configure(cursor="")
+
+    def _run_options(self) -> Options | None:
+        """Return the options for new rows, or None after an error dialog.
+
+        During a run, the options are locked, and new rows use the options of the run.
+        """
+        if self.running and self.options is not None:
+            return self.options
+        try:
+            return parse_options(
                 self.max_side_var.get(), self.background_var.get(), self.compact_var.get()
             )
         except ValueError as e:
             self._modal(self.show_error, TITLE, str(e), parent=self.root)
             self._close_if_asked()
+            return None
+
+    def add_paths(
+        self, paths: Sequence[Path], *, recursive: bool = False, include: bool = False
+    ) -> None:
+        """Add the images in the dropped ``paths`` to the list, and convert them.
+
+        ``paths`` holds files and folders. With ``recursive``, the app adds the images of
+        the subfolders too. ``include`` is for the Include subfolders action: the images
+        that are in the list already do not count as duplicates, and they do not convert
+        again.
+        """
+        if self.closing:
             return
-        plan = plan_jobs(sources)
-        jobs = plan.jobs
-        self._skipped = 0
-        replace = not plan.existing or self._replace(plan.existing)
-        if self._close_if_asked():
+        if self._dialogs:
+            self.set_note(DIALOG_DROP_TEXT)
             return
-        if not replace:
-            skip = set(plan.existing)
-            jobs = [job for job in jobs if job not in skip]
-            self._skipped = len(skip)
-        self.errors = list(plan.errors)
-        self._inputs = len(sources)
-        self._last_summary = ""
-        # A new queue for each batch, so that no message of an earlier batch can arrive.
+        with self._watch_cursor():
+            if include:
+                known = {path_key(row.src) for row in self.rows.values()}
+            else:
+                known = {
+                    path_key(row.src)
+                    for row in self.rows.values()
+                    if row.state not in FINISHED_STATES
+                }
+            result = expand_drop(paths, known=known, recursive=recursive)
+            if include:
+                # The note of the first drop named the files in the folders already.
+                folders = {path_key(path) for path in paths}
+                result.duplicates = 0
+                result.ignored = [p for p in result.ignored if path_key(p.parent) not in folders]
+            notes = [drop_note(result)]
+            if not result.images:
+                self._show_drop_notes(notes, result)
+                return
+            during_run = self.running
+            added = self._add_images(result.images)
+        if added is None:
+            return
+        if added and self.list_mode:
+            self.tree.focus_set()
+        if added and during_run and not include:
+            notes.insert(0, f"Added {_plural(added, 'image')} to the end of the list.")
+        self._show_drop_notes(notes, result)
+
+    def _show_drop_notes(self, notes: list[str], result: DropResult) -> None:
+        subfolders = subfolder_note(result)
+        text = " ".join(note for note in [*notes, subfolders] if note)
+        if subfolders:
+            folders = list(result.skipped_subfolders)
+            self.set_note(
+                text,
+                "Include subfolders",
+                lambda: self.add_paths(folders, recursive=True, include=True),
+            )
+        elif text:
+            self.set_note(text)
+
+    def _add_images(self, images: Sequence[Path]) -> int | None:
+        """Add rows for ``images``, ask about outputs that exist, and queue the rows.
+
+        An image that is in a finished row goes back to the end of the queue, without a
+        second row. Return the number of rows that the app added or queued again. Return
+        None when the user clicked Cancel, or when the options have an error.
+        """
+        by_key = {path_key(row.src): row for row in self.rows.values()}
+        fresh: list[Path] = []
+        again: list[Row] = []
+        for path in images:
+            row = by_key.get(path_key(path))
+            if row is None:
+                fresh.append(path)
+            elif row.state in FINISHED_STATES:
+                again.append(row)
+        taken = {path_key(row.dst) for row in self.rows.values()}
+        outputs = assign_outputs(fresh, self.out_dir, taken)
+        new_rows = [Row(self._next_id(), src, dst) for src, dst in zip(fresh, outputs, strict=True)]
+        decision = self._decide(new_rows + again)
+        if decision is None:
+            return None
+        options = self._run_options()
+        if options is None:
+            return None
+        if self.failed_only:
+            self._set_failed_only(False)
+        queued: list[Row] = []
+        for row in new_rows:
+            new = decision(row)
+            self._insert_row(new)
+            queued.append(new)
+        for row in again:
+            if row.id not in self.rows:  # the user removed it in the meantime
+                continue
+            new = decision(self.rows[row.id])
+            self._update_row(new, to_end=True)
+            queued.append(new)
+        self._refresh_list()
+        self._enqueue(queued, options)
+        return len(queued)
+
+    def _decide(self, rows: Sequence[Row], *, ask: bool = True) -> Callable[[Row], Row] | None:
+        """Find the rows that cannot run, and ask about the outputs that exist.
+
+        Return a function that gives the new state of each row. Return None when the
+        user clicked Cancel. A row whose output path is too long fails at once. Without
+        ``ask``, the app replaces the outputs that exist.
+        """
+        problems: dict[int, str] = {}
+        for row in rows:
+            problem = path_problem(row.dst)
+            if problem is None and _same_file(row.src, row.dst):
+                problem = "The output file is the input file."
+            if problem is not None:
+                problems[row.id] = problem
+        existing = []
+        if ask:
+            existing = [row for row in rows if row.id not in problems and row.dst.exists()]
+        skip: set[int] = set()
+        if existing:
+            question = ReplaceQuestion(
+                [row.dst for row in existing], other_count=len(rows) - len(existing)
+            )
+            answer = self._modal(self.ask_replace, question)
+            if self._close_if_asked() or self.closing:
+                return None
+            if answer == "cancel":
+                self.set_note(CANCELLED_TEXT)
+                return None
+            if answer == "skip":
+                skip = {row.id for row in existing}
+
+        def decide(row: Row) -> Row:
+            fresh = replace(row, percent=0, size=0, error="", kind="", result=None)
+            if row.id in problems:
+                return replace(fresh, state=FAILED, error=problems[row.id], kind="long")
+            if row.id in skip:
+                return replace(fresh, state=SKIPPED)
+            return replace(fresh, state=WAITING)
+
+        return decide
+
+    # "Save to"
+
+    def _save_values(self) -> list[str]:
+        values = [NEXT_TO_IMAGE]
+        if self.out_dir is not None:
+            values.append(f"In {middle_ellipsis(str(self.out_dir), 40)}")
+        values.append(CHOOSE_FOLDER)
+        return values
+
+    def _on_save_to(self, event: Any = None) -> None:
+        value = self.save_var.get()
+        if value == CHOOSE_FOLDER:
+            name = self._modal(
+                self.ask_folder, parent=self.root, title="Save the .xlsx files in", mustexist=True
+            )
+            if self._close_if_asked():
+                return
+            self.set_out_dir(Path(name) if name else self.out_dir)
+        elif value == NEXT_TO_IMAGE:
+            self.set_out_dir(None)
+
+    def set_out_dir(self, folder: Path | None) -> None:
+        """Save the outputs in ``folder``, or next to each image for None.
+
+        The rows that wait, failed or stopped get new outputs. The done rows and the
+        skipped rows keep their outputs.
+        """
+        self.out_dir = folder
+        values = self._save_values()
+        self.save_box.configure(values=values)
+        self.save_var.set(values[1] if folder is not None else values[0])
+        targets = [row for row in self.rows.values() if row.state in (WAITING, FAILED, STOPPED)]
+        ids = {row.id for row in targets}
+        taken = {path_key(row.dst) for row in self.rows.values() if row.id not in ids}
+        outputs = assign_outputs([row.src for row in targets], folder, taken)
+        for row, dst in zip(targets, outputs, strict=True):
+            if dst != row.dst:
+                self._update_row(replace(row, dst=dst))
+        self._refresh_details()
+
+    # The run
+
+    def _enqueue(self, rows: Sequence[Row], options: Options) -> None:
+        """Put the waiting rows of ``rows`` into the queue. Start a run if none is active.
+
+        A new run also takes the rows that wait from an earlier run that the user
+        stopped. A drop during a run adds its rows to that run.
+        """
+        if not self.running:
+            ids = {row.id for row in rows}
+            earlier = [
+                row for row in self.rows.values() if row.state == WAITING and row.id not in ids
+            ]
+            rows = [*earlier, *rows]
+            self.options = options
+            self.run_ids = set()
+            self.run_tally = Tally()
+            self._run_started = time.monotonic()
+            self._run_seconds = 0.0
+            self._run_processed = 0
+            self.follow = True
+        for row in rows:
+            if row.id not in self.run_ids:
+                self.run_ids.add(row.id)
+                self.run_tally.add(None, row.state)
+        jobs = [Job(row.id, row.src, row.dst) for row in rows if row.state == WAITING]
+        for job in jobs:
+            self.jobs_by_id[job.id] = job
+        self.jobs.put(jobs)
+        if self.running:
+            self._refresh_progress()
+            self._refresh_buttons()
+        elif jobs:
+            self._start_worker()
+        else:
+            self._end_run(stopped=False)
+
+    def _start_worker(self) -> None:
+        # A new message queue for each worker, so that no message of an earlier worker
+        # can arrive.
         self.queue = queue.SimpleQueue()
         self.cancel_event = threading.Event()
+        self._stopping_text = ""
         self.worker = threading.Thread(
-            target=run_batch,
-            args=(jobs, options, self.queue.put, self.cancel_event),
+            target=run_queue,
+            args=(self.jobs, self.options, self.queue.put, self.cancel_event),
             name="pixheet-convert",
             daemon=True,
         )
-        self._set_busy(True)
-        self.progress_var.set(0.0)
+        if self.failed_only:
+            self._set_failed_only(False)
+        self._set_running(True)
         self.worker.start()
-        self._poll_id = self.root.after(POLL_MS, self._poll)
+        if self._poll_id is None:
+            self._poll_id = self.root.after(POLL_MS, self._poll)
+        self._refresh_progress()
+        self._refresh_details()
 
-    def _replace(self, existing: Sequence[Job]) -> bool:
-        """Ask once if the batch can replace the output files that exist."""
-        names = [str(job.dst) for job in existing[:MAX_LISTED]]
-        if len(existing) > MAX_LISTED:
-            names.append(f"and {len(existing) - MAX_LISTED:,} more")
-        if len(existing) == 1:
-            question = "An output file exists. Do you want to replace it?"
+    def _left_action(self) -> None:
+        if self.running:
+            self.cancel()
         else:
-            question = f"{len(existing):,} output files exist. Do you want to replace them?"
-        detail = "If you click No, the app does not convert these images."
-        message = f"{question}\n\n" + "\n".join(names) + f"\n\n{detail}"
-        return bool(self._modal(self.ask_yes_no, TITLE, message, parent=self.root))
+            self.convert_waiting()
 
     def cancel(self) -> None:
-        """Stop the batch. The current file stops at its next row."""
+        """Stop the run. The current file stops at its next row. The other rows wait."""
         if self.worker is None:
             return
         self.cancel_event.set()
-        self.cancel_button.state(["disabled"])
-        self.status_var.set("Stopping.")
+        self.stop_button.state(["disabled"])
+        self._stopping_text = "Stopping."
+        self._refresh_details()
+
+    def convert_waiting(self) -> None:
+        """Start a run with the rows that wait, for example after Stop."""
+        if self.running or self.closing or self._dialogs:
+            return
+        rows = [row for row in self.rows.values() if row.state == WAITING]
+        options = self._run_options()
+        if rows and options is not None:
+            self._enqueue(rows, options)
+
+    def skip_current(self) -> None:
+        """Stop the file that converts now. The queue continues with the next file."""
+        job = self.jobs_by_id.get(self.current) if self.current is not None else None
+        if job is not None:
+            job.skip.set()
+
+    def retry_failed(self) -> None:
+        """Convert the failed rows and the stopped rows again."""
+        self.retry([row for row in self.rows.values() if row.state in (FAILED, STOPPED)])
+
+    def retry(self, rows: Sequence[Row], *, ask: bool = True) -> None:
+        """Convert ``rows`` again with the current "Save to" folder.
+
+        The rows get new outputs. With ``ask``, the app asks before it replaces an output
+        that exists. Without ``ask``, the rows keep their outputs, and the app replaces
+        them. The user chose these rows, for example with Convert again.
+        """
+        if self.closing or self._dialogs:
+            return
+        rows = [self.rows[row.id] for row in rows if row.id in self.rows]
+        rows = [row for row in rows if row.state in FINISHED_STATES]
+        if not rows:
+            return
+        if ask:
+            ids = {row.id for row in rows}
+            taken = {path_key(row.dst) for row in self.rows.values() if row.id not in ids}
+            outputs = assign_outputs([row.src for row in rows], self.out_dir, taken)
+            rows = [replace(row, dst=dst) for row, dst in zip(rows, outputs, strict=True)]
+        decision = self._decide(rows, ask=ask)
+        if decision is None:
+            return
+        options = self._run_options()
+        if options is None:
+            return
+        if self.failed_only:
+            self._set_failed_only(False)
+        queued = []
+        for row in rows:
+            if row.id not in self.rows:
+                continue
+            new = decision(row)
+            self._update_row(new)
+            queued.append(new)
+        self._enqueue(queued, options)
+
+    def retry_selected(self) -> None:
+        self.retry([row for row in self._selected_rows() if row.state in (FAILED, STOPPED)])
+
+    def convert_again(self) -> None:
+        """Convert the selected skipped rows. Their outputs exist, and the app replaces them."""
+        self.retry([row for row in self._selected_rows() if row.state == SKIPPED], ask=False)
+
+    def remove_rows(self, rows: Iterable[Row]) -> None:
+        """Remove ``rows`` from the list. The row that converts now stays."""
+        removed = [row for row in rows if row.id in self.rows and row.id != self.current]
+        if not removed:
+            return
+        ids = [row.id for row in removed]
+        self.jobs.remove(ids)
+        for row in removed:
+            job = self.jobs_by_id.get(row.id)
+            if job is not None:
+                job.skip.set()  # the worker can have taken it already
+            self._remove_row(row)
+        self.tree.delete(*(str(i) for i in ids))
+        self._refresh_list()
+        if self.running:
+            self._refresh_progress()
+        self._refresh_buttons()
+        self._refresh_details()
+
+    def remove_selected(self) -> None:
+        self.remove_rows(self._selected_rows())
+
+    def remove_done(self) -> None:
+        """Remove the done rows from the list."""
+        self.remove_rows([self.rows[i] for i in list(self.done_ids)])
+
+    def clear_list(self) -> None:
+        """Remove all rows when no run is active. Show the drop zone again."""
+        if self.running:
+            return
+        self.tree.delete(*(str(row_id) for row_id in self.rows))  # also the detached rows
+        self.rows.clear()
+        self.tally = Tally()
+        self.run_ids = set()
+        self.run_tally = Tally()
+        self.jobs.clear()
+        self.jobs_by_id.clear()
+        self.done_ids.clear()
+        self.done_folders.clear()
+        self.failed_only = False
+        self.failed_only_var.set(False)
+        self.set_note("")
+        self.title_var.set("")
+        self.progress_var.set(0.0)
+        self._refresh_all()
 
     def close(self) -> None:
-        """Close the window. During a batch, stop it first and close when the worker ends.
+        """Close the window. During a run, stop it first and close when the worker ends.
 
         The worker must end before the process does. If it does not, a temporary file
         can stay next to the output.
@@ -1094,116 +1756,517 @@ class App:
         if self.worker is None:
             return  # a dialog is open; the window closes after the dialog
         self.cancel()
-        self.status_var.set("Stopping. The window closes when the current file stops.")
+        self._stopping_text = "Stopping. The window closes when the current file stops."
+        self._refresh_details()
 
     def dispose(self) -> None:
-        """Cancel the timer that reads the queue."""
-        if self._poll_id is not None:
-            self.root.after_cancel(self._poll_id)
-            self._poll_id = None
+        """Cancel the timers of the window."""
+        for name in ("_poll_id", "_note_id"):
+            after_id = getattr(self, name)
+            if after_id is not None:
+                with contextlib.suppress(tk.TclError):
+                    self.root.after_cancel(after_id)
+                setattr(self, name, None)
 
-    def open_output(self) -> None:
-        if self.last_output is None:
-            return
-        try:
-            open_folder(self.last_output)
-        except OSError as e:
-            self._modal(self.show_error, TITLE, f"Cannot open the folder: {e}", parent=self.root)
-            self._close_if_asked()
-
-    def _set_busy(self, busy: bool) -> None:
-        state = ["disabled"] if busy else ["!disabled"]
-        for widget in (
-            self.browse_button,
-            self.max_side_box,
-            self.background_box,
-            self.compact_check,
-        ):
+    def _set_running(self, running: bool) -> None:
+        state = ["disabled"] if running else ["!disabled"]
+        for widget in (self.max_side_box, self.background_box, self.compact_check):
             widget.state(state)
-        if busy:
-            self.cancel_button.state(["!disabled"])
-            self.cancel_button.grid()
-            self.open_button.state(["disabled"])
-        else:
-            self.cancel_button.grid_remove()
-            if self.last_output is not None:
-                self.open_button.state(["!disabled"])
+        self.save_box.state(["disabled"] if running else ["!disabled", "readonly"])
+        if running:
+            self.stop_button.state(["!disabled"])
+            self.failed_only_button.grid_remove()
+            self.eta_label.grid()
+        self._refresh_buttons()
 
     # Messages from the worker
 
     def _poll(self) -> None:
         self._poll_id = None
+        messages = self.queue
         while True:
             try:
-                message = self.queue.get_nowait()
+                message = messages.get_nowait()
             except queue.Empty:
                 break
             self._handle(message)
-            if self.worker is None:  # the batch ended, and the window can be gone
-                return
-        self._poll_id = self.root.after(POLL_MS, self._poll)
+            if self.worker is None or self.queue is not messages:
+                break  # the run ended, a new worker started, or the window is gone
+        if self.worker is not None and self._poll_id is None:
+            self._poll_id = self.root.after(POLL_MS, self._poll)
 
     def _handle(self, message: Message) -> None:
+        if isinstance(message, Finished):
+            self._finish(message.stopped)
+            return
+        row = self.rows.get(message.job_id)
+        if row is None:
+            return  # the user removed the row
+        old_state = row.state
+        new = apply_message(row, message)
         match message:
-            case Started(index, count, src):
-                self.title_var.set(f"File {index:,} of {count:,}: {src.name}")
-                self.progress_var.set(0.0)
-                if not self.cancel_event.is_set():  # keep the text "Stopping."
-                    self.status_var.set("Reading the image.")
-            case Progress(done, total):
-                self.progress_var.set(done / total)
-                if not self.cancel_event.is_set():
-                    self.status_var.set(f"Writing row {done:,} of {total:,}.")
-            case Converted(job, result):
-                self.last_output = job.dst
-                self._last_summary = summary(job.dst, result)
-                self.progress_var.set(1.0)
-                self.status_var.set(self._last_summary)
-            case Failed(src, error):
-                self.errors.append(f"{src.name}: {error}")
-            case Finished(converted, cancelled):
-                self._finish(converted, cancelled)
+            case Started():
+                self.current = row.id
+                self._current_text = "Reading the image."
+            case Progress(_, done, total):
+                self._current_text = f"Writing row {done:,} of {total:,}."
+            case Converted() | Failed() | Stopped():
+                if self.current == row.id:
+                    self.current = None
+                self.jobs_by_id.pop(row.id, None)
+                self._run_processed += 1
+                self._run_seconds = time.monotonic() - self._run_started
+        self._update_row(new)
+        if isinstance(message, Started):
+            self._follow_row(row.id)
+        self._refresh_progress()
+        if new.state != old_state:
+            self._refresh_buttons()
+        selection = self.tree.selection() if self.list_mode else ()
+        if not selection or str(row.id) in selection:
+            self._refresh_details()
 
-    def _finish(self, converted: int, cancelled: bool) -> None:
+    def _finish(self, stopped: bool) -> None:
         if self.worker is not None:
             self.worker.join()
             self.worker = None
         if self.closing:
-            self.root.destroy()
+            if not self._dialogs:  # else the window closes after the dialog
+                self.dispose()
+                with contextlib.suppress(tk.TclError):
+                    self.root.destroy()
             return
-        self._set_busy(False)
-        self.title_var.set(self._result_text(converted, cancelled))
-        lines = [self._last_summary] if self._last_summary else []
-        if cancelled:
-            self.progress_var.set(0.0)
-            lines.append("The app did not write the current file.")
+        if stopped:
+            self.jobs.clear()  # the rows that wait stay in the list
+        elif len(self.jobs):
+            # The window added jobs while the worker ended. The run continues.
+            self._start_worker()
+            return
+        self.jobs_by_id.clear()
+        self.current = None
+        self._end_run(stopped)
+
+    def _end_run(self, stopped: bool) -> None:
+        self._stopping_text = ""
+        tally = self.run_tally
+        total = tally.total
+        self.title_var.set(summary_line(tally, total, stopped) if total else "")
+        self.progress_var.set(tally.finished / total if total and not stopped else 0.0)
+        self.eta_var.set("")
+        self.root.title(TITLE)
+        self._set_running(False)
+        if self.list_mode and self.tally.failed:
+            self._show_failed_toggle()
+            first = next(row for row in self.rows.values() if row.state == FAILED)
+            self.tree.selection_set(str(first.id))
+            self.tree.see(str(first.id))
+            self.tree.focus(str(first.id))
+        elif not self.list_mode and self.tally.done:
+            self.open_button.focus_set()
+        self._refresh_details()
+
+    def _show_failed_toggle(self) -> None:
+        self.eta_label.grid_remove()
+        self.failed_only_button.configure(text=f"Failed only ({self.tally.failed:,})")
+        self.failed_only_button.grid()
+
+    def _set_failed_only(self, on: bool) -> None:
+        """Show only the failed rows, or all rows in their order."""
+        self.failed_only = on
+        self.failed_only_var.set(on)
+        if on:
+            for row in self.rows.values():
+                if row.state != FAILED:
+                    self.tree.detach(str(row.id))
         else:
-            self.progress_var.set(1.0)
-        if self.errors:
-            lines.append(f"{_plural(len(self.errors), 'file')} not converted.")
-        self.status_var.set("\n".join(lines))
-        if self.errors:
-            lines = self.errors[:MAX_LISTED]
-            if len(self.errors) > MAX_LISTED:
-                lines.append(f"and {len(self.errors) - MAX_LISTED:,} more")
+            for index, row_id in enumerate(self.rows):
+                self.tree.move(str(row_id), "", index)
+            if not self.running and not self.tally.failed:
+                self.failed_only_button.grid_remove()
+                self.eta_label.grid()
+
+    # Views
+
+    def _refresh_all(self) -> None:
+        self._refresh_list()
+        self._refresh_progress()
+        self._refresh_buttons()
+        self._refresh_details()
+
+    def _refresh_list(self) -> None:
+        """Show the zone or the list, the count line and the Folder column.
+
+        The app calls it when rows come or go, not for each message of the worker.
+        """
+        count = len(self.rows)
+        if count >= 2 and not self.list_mode:
+            self.list_mode = True
+            self.zone.grid_remove()
+            self.list_frame.grid()
+        elif count == 0 and self.list_mode:
+            self.list_mode = False
+            self.list_frame.grid_remove()
+            self.zone.grid()
+        heading, labels = folder_labels([row.src.parent for row in self.rows.values()])
+        if len(labels) == 1:
+            folder = next(iter(self.rows.values())).src.parent
+            where = middle_ellipsis(str(folder), 48)
+            self.count_var.set(f"{_plural(count, 'image')} in {where}")
+            columns: tuple[str, ...] = ("name", "status")
+        else:
+            self.count_var.set(f"{_plural(count, 'image')} from {len(labels):,} folders")
+            columns = ("name", "folder", "status")
+        self.tree.heading("folder", text=heading)
+        if tuple(self.tree.cget("displaycolumns")) != columns:
+            self.tree.configure(displaycolumns=columns)
+            self._fit_columns(columns)
+        if labels != self.labels:
+            self.labels = labels
+            for row in self.rows.values():
+                self.tree.set(str(row.id), "folder", labels.get(path_key(row.src.parent), ""))
+
+    def _fit_columns(self, columns: Sequence[str]) -> None:
+        """Give the width of a hidden Folder column to the Name column, and back.
+
+        The sum of the widths stays the same. Thus the window does not get wider.
+        """
+        total = sum(int(self.tree.column(name, "width")) for name in self._columns)
+        self._columns = tuple(columns)
+        status = int(self.tree.column("status", "width"))
+        free = max(total - status, 2 * round(80 * self._scale))
+        if "folder" in columns:
+            self.tree.column("name", width=free // 2)
+            self.tree.column("folder", width=free - free // 2)
+        else:
+            self.tree.column("name", width=free)
+
+    def _refresh_progress(self) -> None:
+        """Show the progress of the run: the bar, the progress line and the window title."""
+        if not self.running:
+            return
+        tally = self.run_tally
+        total = max(tally.total, 1)
+        current = self.rows.get(self.current) if self.current is not None else None
+        fraction = current.percent / 100 if current is not None else 0.0
+        index = min(tally.finished + 1, total)
+        name = current.src.name if current is not None else ""
+        self.title_var.set(progress_text(index, total, name, tally))
+        self.progress_var.set(min(1.0, (tally.finished + fraction) / total))
+        left = tally.waiting + (1 - fraction if current is not None else 0)
+        self.eta_var.set(eta_text(self._run_seconds, self._run_processed, left))
+        self.root.title(f"{TITLE} - {index:,} of {total:,}")
+
+    def _open_target(self) -> Row | None:
+        """Return the done row that Open and Show in folder use, or None."""
+        if self.list_mode:
+            rows = self._selected_rows()
+            if rows:
+                return rows[0] if len(rows) == 1 and rows[0].state == DONE else None
+        if len(self.done_ids) == 1:
+            return self.rows[next(iter(self.done_ids))]
+        return None
+
+    def _refresh_buttons(self) -> None:
+        """Show the buttons that fit the state. The app uses only the counts here."""
+        running = self.running
+        tally = self.tally
+        if running:
+            self.stop_button.configure(text="Stop", style="TButton")
+            self.stop_button.grid()
+        elif tally.waiting:
+            self.stop_button.configure(text=f"Convert {tally.waiting:,}", style="Accent.TButton")
+            self.stop_button.state(["!disabled"])
+            self.stop_button.grid()
+        else:
+            self.stop_button.grid_remove()
+        retry = tally.failed + tally.stopped
+        if retry and not running:
+            self.retry_button.configure(text=f"Retry failed ({retry:,})")
+            self.retry_button.grid()
+        else:
+            self.retry_button.grid_remove()
+        if self.list_mode and not running:
+            self.clear_button.grid()
+        else:
+            self.clear_button.grid_remove()
+        folders = len(self.done_folders)
+        if self.list_mode and folders >= 2:
+            self.folders_button.configure(text=f"Show folders ({folders:,})")
+            self.folders_button.grid()
+        else:
+            self.folders_button.grid_remove()
+        if self.list_mode and folders == 1:
+            self.folder_open_button.grid()
+        else:
+            self.folder_open_button.grid_remove()
+        target = self._open_target()
+        state = ["!disabled"] if target is not None else ["disabled"]
+        self.show_button.state(state)
+        self.open_button.state(state)
+        accent = target is not None and not running
+        self.open_button.configure(style="Accent.TButton" if accent else "TButton")
+
+    def _row_details(self, row: Row) -> tuple[str, bool]:
+        lines = [f"{row.src}{ARROW}{row.dst}"]
+        failed = False
+        if row.state == DONE and row.result is not None:
+            lines.append(result_text(row.result))
+        elif row.state == FAILED:
+            lines.append(f"Failed: {failure_detail(row.kind, row.error, row.dst)}")
+            failed = True
+        elif row.state == CONVERTING and self._current_text:
+            lines.append(self._current_text)
+        return "\n".join(lines), failed
+
+    def _zone_details(self, row: Row | None) -> tuple[str, bool]:
+        if row is None:
+            return ("" if self.dnd else NO_DND_TEXT), False
+        match row.state:
+            case "converting":
+                return self._current_text, False
+            case "done":
+                return (summary(row.dst, row.result) if row.result else str(row.dst)), False
+            case "failed":
+                detail = failure_detail(row.kind, row.error, row.dst)
+                return f"The app did not convert {row.src.name}.\n{detail}", True
+            case "stopped":
+                return "The app did not write the current file.", False
+            case "skipped":
+                return f"{row.dst.name} exists. The app did not replace it.", False
+        return "", False
+
+    def _refresh_details(self) -> None:
+        """Show the status line of one image, or the details line of the list."""
+        failed = False
+        if self._stopping_text:
+            text = self._stopping_text
+        elif not self.list_mode:
+            text, failed = self._zone_details(next(iter(self.rows.values()), None))
+        else:
+            rows = self._selected_rows()
+            current = self.rows.get(self.current) if self.current is not None else None
+            if len(rows) == 1:
+                text, failed = self._row_details(rows[0])
+            elif rows:
+                text = f"{len(rows):,} files selected."
+            elif current is not None:
+                text = f"{current.src}{SEP}{self._current_text.rstrip('.')}"
+            else:
+                text = ""
+        self.status_var.set(text)
+        if failed != self._status_failed:
+            self._status_failed = failed
+            colors = ROW_COLORS[self.mode()]
+            self.status_label.configure(foreground=colors["failed"] if failed else "")
+
+    # Notes
+
+    def set_note(
+        self, text: str, action_text: str = "", action: Callable[[], None] | None = None
+    ) -> None:
+        """Show ``text`` in the note bar. An empty text closes the note bar.
+
+        A note with an action has a button, and it stays until the user clicks the button
+        or the close button. A note without an action closes after 10 seconds.
+        """
+        if self._note_id is not None:
+            with contextlib.suppress(tk.TclError):
+                self.root.after_cancel(self._note_id)
+            self._note_id = None
+        self.note_var.set(text)
+        self.note_action = action
+        if action is not None:
+            self.note_button.configure(text=action_text)
+            self.note_button.grid()
+        else:
+            self.note_button.grid_remove()
+        if not text:
+            self.note.grid_remove()
+            return
+        self.note.grid()
+        if action is None:
+            self._note_id = self.root.after(NOTE_MS, self._close_note)
+
+    def _close_note(self) -> None:
+        self._note_id = None
+        self.set_note("")
+
+    def run_note_action(self) -> None:
+        action = self.note_action
+        self.set_note("")
+        if action is not None:
+            action()
+
+    # The list: follow, selection, keys and menus
+
+    def _stop_follow(self, event: Any = None) -> None:
+        self.follow = False
+
+    def follow_again(self) -> str:
+        """Clear the selection and keep the converting row in view again (Esc)."""
+        selection = self.tree.selection()
+        if selection:
+            self.tree.selection_remove(*selection)
+        self.follow = True
+        if self.current is not None:
+            self._follow_row(self.current)
+        return "break"
+
+    def _follow_row(self, row_id: int) -> None:
+        """Scroll the list to the converting row, with up to 3 finished rows above it."""
+        if not self.follow or not self.list_mode or self.failed_only:
+            return
+        iid = str(row_id)
+        try:
+            index = self.tree.index(iid)
+        except tk.TclError:
+            return
+        height = int(ttk.Style(self.root).lookup("Treeview", "rowheight") or 20)
+        visible = max(1, self.tree.winfo_height() // height - 1)  # minus the heading
+        above = max(0, min(FOLLOW_ABOVE, visible - 2))
+        self.tree.yview_moveto(max(0, index - above) / max(len(self.rows), 1))
+
+    def _on_select(self, event: Any = None) -> None:
+        if self.tree.selection():
+            self.follow = False
+        self._refresh_buttons()
+        self._refresh_details()
+
+    def _select_all(self, event: Any = None) -> str:
+        self.tree.selection_set(self.tree.get_children())
+        return "break"
+
+    def activate(self) -> str:
+        """Open the selected done row (Enter). For a failed row, the details show the error."""
+        rows = self._selected_rows()
+        if len(rows) == 1 and rows[0].state == DONE:
+            self.open_output()
+        return "break"
+
+    def _on_double_click(self, event: tk.Event) -> None:
+        iid = self.tree.identify_row(event.y)
+        if iid:
+            self.tree.selection_set(iid)
+            self.activate()
+
+    def _on_right_click(self, event: tk.Event) -> str:
+        iid = self.tree.identify_row(event.y)
+        if iid and iid not in self.tree.selection():
+            self.tree.selection_set(iid)
+        self._popup(self.context_menu(), event.x_root, event.y_root)
+        return "break"
+
+    def _on_menu_key(self, event: Any = None) -> str:
+        focus = self.tree.focus()
+        box = self.tree.bbox(focus) if focus else ""
+        x = self.tree.winfo_rootx() + (box[0] + 20 if box else 20)
+        y = self.tree.winfo_rooty() + (box[1] + box[3] if box else 20)
+        self._popup(self.context_menu(), x, y)
+        return "break"
+
+    def _popup(self, menu: tk.Menu, x: int, y: int) -> None:
+        try:
+            menu.tk_popup(x, y)
+        finally:
+            menu.grab_release()
+
+    def context_menu(self) -> tk.Menu:
+        """Return the context menu for the selected rows. The items fit the selection."""
+        rows = self._selected_rows()
+        states = {row.state for row in rows}
+        one_done = len(rows) == 1 and rows[0].state == DONE
+        menu = tk.Menu(self.root, tearoff=False)
+
+        def add(label: str, command: Callable[[], object], enabled: bool, key: str = "") -> None:
+            menu.add_command(
+                label=label,
+                command=command,
+                accelerator=key,
+                state="normal" if enabled else "disabled",
+            )
+
+        add("Open", self.open_output, one_done, "Enter")
+        add("Show in folder", self.show_output, one_done)
+        add("Copy full path", self.copy_paths, bool(rows))
+        add("Copy error", self.copy_errors, FAILED in states)
+        menu.add_separator()
+        add("Retry", self.retry_selected, bool(states & {FAILED, STOPPED}))
+        add("Convert again", self.convert_again, SKIPPED in states)
+        add("Skip this file", self.skip_current, CONVERTING in states)
+        add("Remove from list", self.remove_selected, bool(states - {CONVERTING}), "Delete")
+        menu.add_separator()
+        add("Select failed files", self.select_failed, self.tally.failed > 0)
+        add("Remove converted files", self.remove_done, self.tally.done > 0)
+        return menu
+
+    def _copy(self, lines: Iterable[str]) -> None:
+        self.root.clipboard_clear()
+        self.root.clipboard_append("\n".join(lines))
+
+    def copy_paths(self) -> None:
+        """Copy the full paths of the selected images to the clipboard."""
+        self._copy(str(row.src) for row in self._selected_rows())
+
+    def copy_errors(self) -> None:
+        """Copy the errors of the selected failed rows to the clipboard."""
+        self._copy(
+            f"{row.src}: {failure_detail(row.kind, row.error, row.dst)}"
+            for row in self._selected_rows()
+            if row.state == FAILED
+        )
+
+    def select_failed(self) -> None:
+        failed = [str(row.id) for row in self.rows.values() if row.state == FAILED]
+        self.tree.selection_set(failed)
+        if failed:
+            self.tree.see(failed[0])
+
+    # Open and show
+
+    def open_output(self) -> None:
+        """Open the .xlsx file of the selected done row, or of the only done row."""
+        row = self._open_target()
+        if row is None:
+            return
+        try:
+            open_path(row.dst)
+        except OSError as e:
             self._modal(
-                self.show_error,
-                TITLE,
-                "The app did not convert these files:\n\n" + "\n".join(lines),
-                parent=self.root,
+                self.show_error, TITLE, f"Cannot open the file: {_describe(e)}", parent=self.root
             )
             self._close_if_asked()
 
-    def _result_text(self, converted: int, cancelled: bool) -> str:
-        if cancelled:
-            text = f"Stopped. Converted {converted:,} of {_plural(self._inputs, 'file')}."
-        elif converted == self._inputs:
-            text = f"Converted {_plural(converted, 'file')}."
-        else:
-            text = f"Converted {converted:,} of {_plural(self._inputs, 'file')}."
-        if self._skipped:
-            text += f" Skipped {_plural(self._skipped, 'file')} that exist."
-        return text
+    def show_output(self) -> None:
+        """Show the .xlsx file of the selected done row in its folder."""
+        row = self._open_target()
+        if row is not None:
+            self._show(lambda: open_folder(row.dst, select=True))
+
+    def show_folder(self, folder: Path | None = None) -> None:
+        """Open an output folder. Without ``folder``, open the only output folder."""
+        if folder is None:
+            if len(self.done_folders) != 1:
+                return
+            folder = next(iter(self.done_folders.values()))[0]
+        self._show(lambda: open_path(folder))
+
+    def _show(self, action: Callable[[], None]) -> None:
+        try:
+            action()
+        except OSError as e:
+            self._modal(
+                self.show_error, TITLE, f"Cannot open the folder: {_describe(e)}", parent=self.root
+            )
+            self._close_if_asked()
+
+    def _fill_folders_menu(self) -> None:
+        """Make one menu item for each output folder, with its number of files."""
+        self.folders_menu.delete(0, "end")
+        for folder, count in self.done_folders.values():
+            self.folders_menu.add_command(
+                label=f"{middle_ellipsis(str(folder), 60)} ({count:,})",
+                command=lambda folder=folder: self.show_folder(folder),
+            )
 
     def _report_exception(self, exc: type[BaseException], value: BaseException, tb) -> None:
         """Show an error in a Tk callback in a dialog. A windowed app has no console."""
@@ -1241,6 +2304,7 @@ def _set_dpi_awareness() -> None:
 
 X11_DIALOGS = {
     "::tk::dialog::file::": "the file dialog (tkfbox.tcl)",
+    "::tk::dialog::file::chooseDir::": "the folder dialog (choosedir.tcl)",
     "::tk::MessageBox": "the message box (msgbox.tcl)",
 }
 """The Tcl commands of the dialogs that Tk on X11 makes with Tcl scripts."""
@@ -1262,12 +2326,12 @@ def missing_x11_dialogs(call: Callable[..., Any]) -> list[str]:
 def smoke_test(app: App) -> list[str]:
     """Prepare ``app`` for a smoke test, and return the list that collects the problems.
 
-    The window closes 200 ms after the start, or later when a batch runs, after the
-    batch. The app does not show dialogs. It records each error message as a problem,
-    and it does not replace output files that exist. A built app must also have the
-    window icon and the Sun Valley theme. It must have drag and drop when tkdnd can load
-    (see :func:`pixheet._desktop.dnd_allowed`). On X11, Tk must find the scripts of its
-    dialogs.
+    The window closes 200 ms after the start, or later when a run is active, after the
+    run. The app does not show dialogs. It records each error message and each failed
+    row as a problem, and it skips the images whose output exists. A built app must also
+    have the window icon and the Sun Valley theme. It must have drag and drop when tkdnd
+    can load (see :func:`pixheet._desktop.dnd_allowed`). On X11, Tk must find the scripts
+    of its dialogs.
     """
     problems: list[str] = []
     if getattr(sys, "frozen", False):
@@ -1284,20 +2348,25 @@ def smoke_test(app: App) -> list[str]:
         problems.append(message)
 
     app.show_error = record
-    app.ask_yes_no = lambda *args, **kwargs: False
+    app.ask_replace = lambda question: "skip"
 
     def close_when_idle() -> None:
         if app.busy:
             app.root.after(POLL_MS, close_when_idle)
-        else:
-            app.close()
+            return
+        problems.extend(
+            f"{row.src.name}: {failure_detail(row.kind, row.error, row.dst)}"
+            for row in app.rows.values()
+            if row.state == FAILED
+        )
+        app.close()
 
     app.root.after(200, close_when_idle)
     return problems
 
 
 def main(argv: Sequence[str] | None = None) -> int:
-    """Open the window. Convert the image paths in ``argv``, if there are some.
+    """Open the window. Convert the images and folders in ``argv``, if there are some.
 
     With ``--smoke``, the window closes when it has nothing to do. Then the exit status is
     1 if the app found a problem. See :func:`smoke_test`. The window uses the theme choice
@@ -1326,7 +2395,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     app = App(root, dnd_type=dnd_type, follower=follower, settings=settings)
     problems = smoke_test(app) if smoke else []
     if files:
-        root.after_idle(app.start, files)
+        root.after_idle(app.add_paths, files)
     if smoke and sys.stdout is not None:
         print(f"pixheet-gui: drag and drop {'on' if app.dnd else 'off'}", flush=True)
         print(f"pixheet-gui: theme {theme_name(root)}", flush=True)

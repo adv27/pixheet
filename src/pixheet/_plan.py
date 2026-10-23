@@ -16,6 +16,7 @@ import os
 import re
 import sys
 import threading
+from collections import deque
 from collections.abc import Callable, Collection, Iterable, Sequence
 from dataclasses import dataclass, field, replace
 from pathlib import Path
@@ -430,12 +431,23 @@ def group_by_folder(paths: Iterable[Path]) -> list[tuple[Path, list[Path]]]:
 NOT_AN_IMAGE = "the app cannot read this file as an image"
 
 
-def _in_folder_of(filename: object, dst: Path) -> bool:
+TEMP_PREFIX = ".pixheet-"
+"""The start of the name of the temporary file that convert() writes next to the output."""
+
+
+def _is_output_path(filename: object, dst: Path) -> bool:
+    """Return True when ``filename`` is ``dst``, its temporary file, or its folder.
+
+    An error about another file, for example the source next to the output, gives False.
+    """
     if not isinstance(filename, (str, os.PathLike)):
         return False
     key = path_key(filename)
     folder = path_key(dst.parent)
-    return key == folder or path_key(Path(key).parent) == folder
+    if key in (folder, path_key(dst)):
+        return True
+    path = Path(key)
+    return path_key(path.parent) == folder and path.name.startswith(TEMP_PREFIX)
 
 
 def failure_kind(error: BaseException, dst: Path) -> str:
@@ -453,11 +465,11 @@ def failure_kind(error: BaseException, dst: Path) -> str:
         return "other"
     filename = error.filename
     if isinstance(error, PermissionError) or error.errno == errno.EROFS:
-        return "write" if filename is None or _in_folder_of(filename, dst) else "other"
+        return "write" if filename is None or _is_output_path(filename, dst) else "other"
     if isinstance(error, FileNotFoundError):
         if filename is None:
             return "other" if dst.parent.is_dir() else "missing"
-        return "missing" if _in_folder_of(filename, dst) else "other"
+        return "missing" if _is_output_path(filename, dst) else "other"
     return "other"
 
 
@@ -469,6 +481,20 @@ SHORT_REASONS = {
 }
 
 _ERRNO_PREFIX = re.compile(r"^\[(?:Errno|WinError) -?\d+\] ")
+
+
+def failure_detail(kind: str, error: str, dst: Path, platform: str | None = None) -> str:
+    """Return the full reason of a failed row, for the details line.
+
+    For "write", the text tells the user what to do. For the other kinds, it is ``error``.
+    """
+    if kind != "write":
+        return error
+    system = "Windows" if (platform or sys.platform) == "win32" else "The system"
+    return (
+        f"{system} does not let the app write in {dst.parent}. "
+        'Set "Save to" to a folder of your own, then click Retry failed.'
+    )
 
 
 def short_reason(kind: str, text: str) -> str:
@@ -499,6 +525,43 @@ class Job:
     src: Path
     dst: Path
     skip: threading.Event = field(default_factory=threading.Event)
+
+
+class JobQueue:
+    """The jobs that wait for the worker. The window thread and the worker share it.
+
+    A lock protects the jobs. Thus the window can add jobs and remove jobs while the
+    worker takes them.
+    """
+
+    def __init__(self) -> None:
+        self._jobs: deque[Job] = deque()
+        self._lock = threading.Lock()
+
+    def put(self, jobs: Iterable[Job]) -> None:
+        """Add ``jobs`` at the end of the queue."""
+        with self._lock:
+            self._jobs.extend(jobs)
+
+    def take(self) -> Job | None:
+        """Remove the first job and return it. Return None when the queue is empty."""
+        with self._lock:
+            return self._jobs.popleft() if self._jobs else None
+
+    def remove(self, ids: Collection[int]) -> None:
+        """Remove the jobs whose id is in ``ids``."""
+        ids = set(ids)
+        with self._lock:
+            self._jobs = deque(job for job in self._jobs if job.id not in ids)
+
+    def clear(self) -> None:
+        """Remove all jobs."""
+        with self._lock:
+            self._jobs.clear()
+
+    def __len__(self) -> int:
+        with self._lock:
+            return len(self._jobs)
 
 
 @dataclass(frozen=True, slots=True)

@@ -14,25 +14,24 @@ import pytest
 from images import noise
 
 from pixheet import _desktop, gui
-from pixheet._plan import IMAGE_SUFFIXES
-from pixheet.core import convert as real_convert
-from pixheet.gui import (
+from pixheet._plan import (
+    IMAGE_SUFFIXES,
     Converted,
     Failed,
     Finished,
     Job,
-    Options,
+    JobQueue,
     Progress,
     Started,
-    Throttle,
-    default_output,
-    parse_drop,
-    parse_options,
-    plan_jobs,
-    run_batch,
+    Stopped,
+    Tally,
+    middle_ellipsis,
 )
+from pixheet.core import convert as real_convert
+from pixheet.gui import Options, Throttle, parse_options, run_queue
 
 tk = pytest.importorskip("tkinter")
+ttk = pytest.importorskip("tkinter.ttk")
 
 
 @pytest.fixture(autouse=True)
@@ -61,12 +60,6 @@ def settings_folder(tmp_path, monkeypatch):
     return folder
 
 
-@pytest.fixture
-def splitlist():
-    """The Tcl list parser of a Tcl interpreter. It does not need a display."""
-    return tk.Tcl().splitlist
-
-
 def image(path: Path, w: int = 4, h: int = 3) -> Path:
     path.parent.mkdir(parents=True, exist_ok=True)
     noise(w, h, min(w * h, 10)).save(path)
@@ -85,25 +78,6 @@ def no_temp_files(folder: Path) -> bool:
 
 
 # --- Helpers without a display -------------------------------------------------------
-
-
-def test_default_output_is_next_to_the_input(tmp_path):
-    assert default_output(tmp_path / "a b" / "pic.png") == tmp_path / "a b" / "pic.xlsx"
-    assert default_output(Path("x.tar.png")) == Path("x.tar.xlsx")
-
-
-def test_parse_drop_handles_braces_and_skips_folders_and_missing(tmp_path, splitlist):
-    spaced = image(tmp_path / "my pics" / "one pic.png")
-    plain = image(tmp_path / "two.png")
-    data = (
-        f"{{{spaced.as_posix()}}} {plain.as_posix()} {{{tmp_path.as_posix()}}} "
-        f"{(tmp_path / 'missing.png').as_posix()} {plain.as_posix()}"
-    )
-    assert parse_drop(data, splitlist) == [spaced, plain]
-
-
-def test_parse_drop_of_nothing(splitlist):
-    assert parse_drop("", splitlist) == []
 
 
 def test_throttle_limits_updates_but_lets_the_first_and_last_through():
@@ -160,68 +134,62 @@ def test_parse_options_refuses_bad_text(side, background, match):
         parse_options(side, background, False)
 
 
-def test_plan_jobs_finds_existing_outputs_and_conflicts(tmp_path):
-    a_png = image(tmp_path / "a.png")
-    a_jpg = tmp_path / "a.jpg"
-    a_jpg.write_bytes(b"")
-    b_png = image(tmp_path / "b.png")
-    (tmp_path / "b.xlsx").write_bytes(b"old")
-    sheet = tmp_path / "c.xlsx"
-    sheet.write_bytes(b"old")
-
-    plan = plan_jobs([a_png, a_jpg, b_png, sheet])
-
-    assert plan.jobs == [Job(a_png, tmp_path / "a.xlsx"), Job(b_png, tmp_path / "b.xlsx")]
-    assert plan.existing == [Job(b_png, tmp_path / "b.xlsx")]
-    assert plan.errors == [
-        "a.jpg: a.xlsx is also the output of a.png",
-        "c.xlsx: the output file is the input file",
-    ]
-
-
 def run(jobs, cancel=None, interval=0.05):
+    queue = JobQueue()
+    queue.put(jobs)
     messages = []
-    run_batch(jobs, Options(), messages.append, cancel or threading.Event(), interval)
+    run_queue(queue, Options(), messages.append, cancel or threading.Event(), interval)
     return messages
 
 
-def test_run_batch_messages(tmp_path):
+def test_run_queue_messages(tmp_path):
     src = image(tmp_path / "in.png", 6, 5)
-    messages = run([Job(src, tmp_path / "out.xlsx")], interval=0)
+    dst = tmp_path / "out.xlsx"
+    messages = run([Job(7, src, dst)], interval=0)
 
-    assert messages[0] == Started(1, 1, src)
+    assert messages[0] == Started(7)
     progress = [m for m in messages if isinstance(m, Progress)]
-    assert [(m.done, m.total) for m in progress] == [(i, 5) for i in range(6)]
-    assert isinstance(messages[-2], Converted)
-    assert messages[-2].result.size == (6, 5)
-    assert messages[-1] == Finished(1, cancelled=False)
-    assert (tmp_path / "out.xlsx").exists()
+    assert [(m.job_id, m.done, m.total) for m in progress] == [(7, i, 5) for i in range(6)]
+    converted = messages[-2]
+    assert isinstance(converted, Converted)
+    assert converted.job_id == 7
+    assert converted.result.size == (6, 5)
+    assert converted.size == dst.stat().st_size > 0
+    assert messages[-1] == Finished(stopped=False)
 
 
-def test_run_batch_continues_after_an_error(tmp_path):
+def test_run_queue_continues_after_an_error(tmp_path):
     bad = tmp_path / "bad.png"
     bad.write_text("not an image")
     good = image(tmp_path / "good.png")
-    messages = run([Job(bad, tmp_path / "bad.xlsx"), Job(good, tmp_path / "good.xlsx")])
+    messages = run([Job(1, bad, tmp_path / "bad.xlsx"), Job(2, good, tmp_path / "good.xlsx")])
 
     failed = [m for m in messages if isinstance(m, Failed)]
-    assert len(failed) == 1
-    assert failed[0].src == bad
-    assert failed[0].error == gui.NOT_AN_IMAGE  # not the path with doubled backslashes
-    assert messages[-1] == Finished(1, cancelled=False)
+    assert failed == [Failed(1, gui.NOT_AN_IMAGE, "image")]  # no path with two backslashes
+    assert messages[-1] == Finished(stopped=False)
     assert not (tmp_path / "bad.xlsx").exists()
     assert (tmp_path / "good.xlsx").exists()
 
 
-def test_run_batch_cancelled_before_the_start(tmp_path):
+def test_run_queue_gives_the_kind_of_a_write_error(tmp_path, monkeypatch):
+    def convert(src, dst, **kwargs):
+        raise PermissionError(13, "Access is denied", str(dst.with_name(".pixheet-0.tmp")))
+
+    monkeypatch.setattr(gui, "convert", convert)
+    messages = run([Job(1, image(tmp_path / "a.png"), tmp_path / "a.xlsx")])
+    assert isinstance(messages[1], Failed)
+    assert (messages[1].job_id, messages[1].kind) == (1, "write")
+
+
+def test_run_queue_cancelled_before_the_start(tmp_path):
     cancel = threading.Event()
     cancel.set()
-    messages = run([Job(image(tmp_path / "in.png"), tmp_path / "out.xlsx")], cancel)
-    assert messages == [Finished(0, cancelled=True)]
+    messages = run([Job(1, image(tmp_path / "in.png"), tmp_path / "out.xlsx")], cancel)
+    assert messages == [Finished(stopped=True)]
     assert not (tmp_path / "out.xlsx").exists()
 
 
-def test_run_batch_cancelled_while_writing_keeps_the_old_file(tmp_path, monkeypatch):
+def test_run_queue_cancelled_while_writing_keeps_the_old_file(tmp_path, monkeypatch):
     src = image(tmp_path / "in.png")
     dst = tmp_path / "out.xlsx"
     dst.write_bytes(b"old")
@@ -229,18 +197,60 @@ def test_run_batch_cancelled_while_writing_keeps_the_old_file(tmp_path, monkeypa
 
     def convert(*args, progress, **kwargs):
         def cancel_at_once(done, total):
-            cancel.set()  # the user clicks Cancel while convert writes the sheet
+            cancel.set()  # the user clicks Stop while convert writes the sheet
             progress(done, total)
 
         return real_convert(*args, progress=cancel_at_once, **kwargs)
 
     monkeypatch.setattr(gui, "convert", convert)
-    messages = run([Job(src, dst), Job(src, tmp_path / "second.xlsx")], cancel)
+    messages = run([Job(1, src, dst), Job(2, src, tmp_path / "second.xlsx")], cancel)
 
-    assert messages == [Started(1, 2, src), Finished(0, cancelled=True)]
+    assert messages == [Started(1), Stopped(1), Finished(stopped=True)]
     assert dst.read_bytes() == b"old"
     assert not (tmp_path / "second.xlsx").exists()
     assert no_temp_files(tmp_path)
+
+
+def test_run_queue_skips_one_job_and_continues(tmp_path, monkeypatch):
+    first = Job(1, image(tmp_path / "a.png"), tmp_path / "a.xlsx")
+    second = Job(2, image(tmp_path / "b.png"), tmp_path / "b.xlsx")
+    removed = Job(3, image(tmp_path / "c.png"), tmp_path / "c.xlsx")
+    removed.skip.set()  # the user removed the row after the worker took the job
+
+    def convert(*args, progress, **kwargs):
+        def skip_first(done, total):
+            first.skip.set()  # the user clicks "Skip this file"
+            progress(done, total)
+
+        return real_convert(*args, progress=skip_first, **kwargs)
+
+    monkeypatch.setattr(gui, "convert", convert)
+    messages = run([first, removed, second])
+
+    assert messages[:3] == [Started(1), Stopped(1), Stopped(3)]
+    assert messages[3] == Started(2)
+    assert isinstance(messages[-2], Converted)
+    assert messages[-2].job_id == 2
+    assert not first.dst.exists()
+    assert not removed.dst.exists()
+    assert messages[-1] == Finished(stopped=False)
+
+
+def test_run_queue_takes_jobs_that_come_during_the_run(tmp_path):
+    queue = JobQueue()
+    later = Job(2, image(tmp_path / "b.png"), tmp_path / "b.xlsx")
+    messages = []
+
+    def post(message):
+        messages.append(message)
+        if message == Started(1):
+            queue.put([later])  # a drop during the run
+
+    queue.put([Job(1, image(tmp_path / "a.png"), tmp_path / "a.xlsx")])
+    run_queue(queue, Options(), post, threading.Event())
+
+    assert [m.job_id for m in messages if isinstance(m, Converted)] == [1, 2]
+    assert messages[-1] == Finished(stopped=False)
 
 
 def test_main_without_tkinter(monkeypatch, capsys):
@@ -319,13 +329,15 @@ def new_root():
 class Harness:
     """An App on a hidden root, with dialogs that record their calls."""
 
-    def __init__(self, answer=True):
+    def __init__(self, answer="replace"):
         self.root = new_root()
         self.app = gui.App(self.root, dnd_type=None)
         self.errors = []
         self.questions = []
+        self.folder = ""
         self.app.show_error = lambda title, message, **kw: self.errors.append(message)
-        self.app.ask_yes_no = lambda title, message, **kw: self.questions.append(message) or answer
+        self.app.ask_replace = lambda question: self.questions.append(question) or answer
+        self.app.ask_folder = lambda **kw: self.folder
 
     def drop(self, *paths):
         data = " ".join(f"{{{Path(p).as_posix()}}}" for p in paths)
@@ -338,15 +350,30 @@ class Harness:
             self.root.update()
             time.sleep(0.005)
 
-    def run_batch(self, *paths):
-        """Drop the paths, and wait until the batch ends."""
+    def run(self, *paths):
+        """Drop the paths, and wait until the run ends."""
         assert self.drop(*paths) == "copy"
-        self.root.update()  # runs start()
+        self.root.update()  # runs add_paths()
+        self.wait()
+
+    def wait(self):
         self.pump(lambda: not self.app.busy)
+
+    def rows(self):
+        """Return (name, status) for each row in the order of the list."""
+        return [(row.src.name, gui.status_text(row)) for row in self.app.rows.values()]
+
+    def states(self):
+        return [row.state for row in self.app.rows.values()]
+
+    def iid(self, name):
+        return next(str(row.id) for row in self.app.rows.values() if row.src.name == name)
 
     def close(self):
         app = self.app
         app.cancel_event.set()
+        for job in app.jobs_by_id.values():
+            job.skip.set()
         if app.worker is not None:
             app.worker.join(10)
         try:
@@ -369,95 +396,6 @@ def harness():
         h.close()
 
 
-def test_drop_converts_a_file(harness, tmp_path):
-    h = harness()
-    src = image(tmp_path / "my pics" / "one pic.png", 8, 6)
-
-    h.run_batch(src)
-
-    dst = tmp_path / "my pics" / "one pic.xlsx"
-    assert dst.exists()
-    assert h.app.title_var.get() == "Converted 1 file."
-    status = h.app.status_var.get()
-    assert status.startswith(str(dst))
-    assert "8x6" in status
-    assert "10 colors" in status
-    assert h.app.progress_var.get() == 1.0
-    assert h.app.last_output == dst
-    assert h.app.open_button.instate(["!disabled"])
-    assert h.app.browse_button.instate(["!disabled"])
-    assert h.errors == []
-    assert no_temp_files(dst.parent)
-
-
-def test_batch_with_an_error_continues_and_reports(harness, tmp_path):
-    h = harness()
-    bad = tmp_path / "bad.png"
-    bad.write_text("not an image")
-    good = image(tmp_path / "good.png")
-
-    h.run_batch(bad, good)
-
-    assert (tmp_path / "good.xlsx").exists()
-    assert h.app.title_var.get() == "Converted 1 of 2 files."
-    assert h.app.status_var.get().endswith("1 file not converted.")
-    assert len(h.errors) == 1
-    assert h.errors[0].endswith(f"bad.png: {gui.NOT_AN_IMAGE}")
-    assert "\\\\" not in h.errors[0]
-
-
-@pytest.mark.parametrize("answer", [True, False])
-def test_existing_output_asks_once(harness, tmp_path, answer):
-    h = harness(answer=answer)
-    a = image(tmp_path / "a.png")
-    b = image(tmp_path / "b.png")
-    for src in (a, b):
-        src.with_suffix(".xlsx").write_bytes(b"old")
-
-    h.run_batch(a, b)
-
-    assert len(h.questions) == 1
-    assert "2 output files exist" in h.questions[0]
-    if answer:
-        assert h.app.title_var.get() == "Converted 2 files."
-        assert a.with_suffix(".xlsx").read_bytes() != b"old"
-    else:
-        assert h.app.title_var.get() == "Converted 0 of 2 files. Skipped 2 files that exist."
-        assert a.with_suffix(".xlsx").read_bytes() == b"old"
-        assert b.with_suffix(".xlsx").read_bytes() == b"old"
-
-
-def test_drop_of_folders_only(harness, tmp_path):
-    h = harness()
-    assert h.drop(tmp_path) == "copy"
-    h.root.update()
-    assert not h.app.busy
-    assert "no files" in h.app.status_var.get()
-
-
-def test_bad_options_show_an_error_and_do_not_start(harness, tmp_path):
-    h = harness()
-    h.app.max_side_var.set("abc")
-    h.app.start([image(tmp_path / "a.png")])
-    assert not h.app.busy
-    assert len(h.errors) == 1
-    assert "maximum side" in h.errors[0]
-
-
-def test_options_go_to_convert(harness, tmp_path):
-    h = harness()
-    h.app.max_side_var.set("5")
-    h.app.background_var.set("black")
-    h.app.compact_var.set(True)
-    src = image(tmp_path / "a.png", 20, 10)
-
-    h.run_batch(src)
-
-    assert "5x2" in h.app.status_var.get()
-    with zipfile.ZipFile(tmp_path / "a.xlsx") as z:
-        assert 'r="A1"' not in z.read("xl/worksheets/sheet1.xml").decode()
-
-
 def gate_convert(monkeypatch):
     """Make convert wait at its first progress call until the test opens the gate."""
     gate = threading.Event()
@@ -473,32 +411,696 @@ def gate_convert(monkeypatch):
     return gate
 
 
-def test_drop_while_busy_is_refused(harness, tmp_path, monkeypatch):
+def converting(h):
+    return lambda: gui.CONVERTING in h.states()
+
+
+# One file: the zone, as before the list.
+
+
+def test_one_file_converts_in_the_zone(harness, tmp_path):
+    h = harness()
+    src = image(tmp_path / "my pics" / "one pic.png", 8, 6)
+
+    h.run(src)
+
+    dst = tmp_path / "my pics" / "one pic.xlsx"
+    assert dst.exists()
+    assert not h.app.list_mode
+    assert h.app.zone.winfo_manager() == "grid"
+    assert h.app.list_frame.winfo_manager() == ""
+    assert h.app.title_var.get() == "Converted 1 file."
+    status = h.app.status_var.get()
+    assert status.startswith(str(dst))
+    assert "8x6" in status
+    assert "10 colors" in status
+    assert h.app.progress_var.get() == 1.0
+    assert h.app.open_button.instate(["!disabled"])
+    assert h.app.open_button.cget("style") == "Accent.TButton"
+    assert h.app.show_button.instate(["!disabled"])
+    assert h.app.browse_button.instate(["!disabled"])
+    assert h.app.stop_button.winfo_manager() == ""
+    assert h.app.clear_button.winfo_manager() == ""
+    assert h.root.title() == "Pixheet"
+    assert h.errors == []
+    assert no_temp_files(dst.parent)
+
+
+def test_one_file_shows_its_progress_and_stop(harness, tmp_path, monkeypatch):
     gate = gate_convert(monkeypatch)
     h = harness()
-    first = image(tmp_path / "first.png")
-    second = image(tmp_path / "second.png")
-    assert h.drop(first) == "copy"
+    assert h.drop(image(tmp_path / "IMG_2041.jpg")) == "copy"
     h.root.update()
-    assert h.app.busy
-    assert h.app.browse_button.instate(["disabled"])
-    assert h.app.cancel_button.winfo_manager() == "grid"
+    h.pump(lambda: h.app.title_var.get() == "File 1 of 1: IMG_2041.jpg")
+    assert h.root.title() == "Pixheet - 1 of 1"
+    assert h.app.status_var.get() == "Reading the image."
+    assert h.app.stop_button.winfo_manager() == "grid"
+    assert h.app.stop_button.cget("text") == "Stop"
+    assert h.app.max_side_box.instate(["disabled"])
+    assert h.app.save_box.instate(["disabled"])
+    assert h.app.browse_button.instate(["!disabled"])  # a drop during the run is fine
+    gate.set()
+    h.wait()
+    assert h.app.max_side_box.instate(["!disabled"])
+    assert h.app.save_box.instate(["!disabled", "readonly"])
 
-    assert h.drop(second) == "refuse_drop"
-    assert h.app.note_var.get() == gui.BUSY_DROP_TEXT
-    h.app._handle(Progress(1, 3))  # a worker message does not replace the note
-    assert h.app.note_var.get() == gui.BUSY_DROP_TEXT
+
+def test_one_file_that_fails_shows_the_error_in_red_without_a_dialog(harness, tmp_path):
+    h = harness()
+    bad = tmp_path / "IMG_2041.jpg"
+    bad.write_text("not an image")
+
+    h.run(bad)
+
+    assert h.errors == []  # no message box
+    assert h.app.title_var.get() == "Converted 0 of 1 file. 1 failed."
+    assert h.app.status_var.get() == f"The app did not convert IMG_2041.jpg.\n{gui.NOT_AN_IMAGE}"
+    assert "\\\\" not in h.app.status_var.get()
+    assert str(h.app.status_label.cget("foreground")) == gui.ROW_COLORS["light"]["failed"]
+    assert h.app.retry_button.cget("text") == "Retry failed (1)"
+    assert h.app.open_button.instate(["disabled"])
+
+
+def test_drop_of_no_images_changes_nothing(harness, tmp_path):
+    h = harness()
+    (tmp_path / "notes.txt").write_text("x")
+    assert h.drop(tmp_path / "notes.txt") == "copy"
+    h.root.update()
+    assert not h.app.busy
+    assert h.app.rows == {}
+    assert h.app.note_var.get() == (
+        "The drop has no images. Ignored 1 file that is not an image: notes.txt."
+    )
+    assert h.app.note.winfo_manager() == "grid"
+
+
+def test_bad_options_show_an_error_and_do_not_add_rows(harness, tmp_path):
+    h = harness()
+    h.app.max_side_var.set("abc")
+    h.app.add_paths([image(tmp_path / "a.png")])
+    assert not h.app.busy
+    assert h.app.rows == {}
+    assert len(h.errors) == 1
+    assert "maximum side" in h.errors[0]
+
+
+def test_options_go_to_convert(harness, tmp_path):
+    h = harness()
+    h.app.max_side_var.set("5")
+    h.app.background_var.set("black")
+    h.app.compact_var.set(True)
+    src = image(tmp_path / "a.png", 20, 10)
+
+    h.run(src)
+
+    assert "5x2" in h.app.status_var.get()
+    with zipfile.ZipFile(tmp_path / "a.xlsx") as z:
+        assert 'r="A1"' not in z.read("xl/worksheets/sheet1.xml").decode()
+
+
+# Two or more files: the list.
+
+
+def five_from_three_folders(tmp_path):
+    return [
+        image(tmp_path / "Photos" / "2024" / "Da Lat" / "IMG_1042.jpg"),
+        image(tmp_path / "Photos" / "2024" / "Da Lat" / "IMG_1043.jpg"),
+        image(tmp_path / "Photos" / "2023" / "Beach" / "sunset.png"),
+        image(tmp_path / "Photos" / "2023" / "Beach" / "pier.jpg"),
+        image(tmp_path / "Scans" / "Family" / "grandma 1972.tif"),
+    ]
+
+
+def test_five_files_from_three_folders_show_the_list(harness, tmp_path, monkeypatch):
+    gate = gate_convert(monkeypatch)
+    h = harness()
+    sources = five_from_three_folders(tmp_path)
+    h.drop(*sources)
+    h.root.update()
+
+    assert h.app.list_mode
+    assert h.app.list_frame.winfo_manager() == "grid"
+    assert h.app.zone.winfo_manager() == ""
+    assert h.app.count_var.get() == "5 images from 3 folders"
+    where = middle_ellipsis(str(tmp_path.parent), 40)
+    assert h.app.tree.heading("folder", "text") == f"Folder (in {where})"
+    folders = [h.app.tree.set(h.iid(src.name), "folder") for src in sources]
+    base = tmp_path.name
+    assert folders == [
+        str(Path(base, "Photos", "2024", "Da Lat")),
+        str(Path(base, "Photos", "2024", "Da Lat")),
+        str(Path(base, "Photos", "2023", "Beach")),
+        str(Path(base, "Photos", "2023", "Beach")),
+        str(Path(base, "Scans", "Family")),
+    ]
+    assert tuple(h.app.tree.cget("displaycolumns")) == ("name", "folder", "status")
+    h.pump(converting(h))
+    assert h.app.title_var.get() == "File 1 of 5 · 0 done"
+    assert h.root.title() == "Pixheet - 1 of 5"
+    assert h.rows()[0] == ("IMG_1042.jpg", "Converting 0%")
+    assert h.app.tree.item(h.iid("IMG_1042.jpg"), "tags") == ("converting",)
+    assert h.rows()[1] == ("IMG_1043.jpg", "Waiting")
+    assert h.app.clear_button.winfo_manager() == ""  # hidden during a run
+    assert h.app.status_var.get() == f"{sources[0]} · Reading the image"
 
     gate.set()
-    h.pump(lambda: not h.app.busy)
-    assert (tmp_path / "first.xlsx").exists()
-    assert not (tmp_path / "second.xlsx").exists()
-    assert h.app.cancel_button.winfo_manager() == ""
-    assert h.app.note_var.get() == gui.BUSY_DROP_TEXT  # it stays true after the batch
+    h.wait()
+    assert h.app.title_var.get() == "Converted 5 files."
+    assert h.root.title() == "Pixheet"
+    assert all(status.startswith("✓ Done · ") for _name, status in h.rows())
+    assert all(src.with_suffix(".xlsx").exists() for src in sources)
+    assert h.app.clear_button.winfo_manager() == "grid"
+    assert h.app.folders_button.cget("text") == "Show folders (3)"
+    h.app._fill_folders_menu()
+    labels = [h.app.folders_menu.entrycget(i, "label") for i in range(3)]
+    assert labels[0] == f"{middle_ellipsis(str(sources[0].parent), 60)} (2)"
+    assert labels[2] == f"{middle_ellipsis(str(sources[4].parent), 60)} (1)"
+    assert h.app.open_button.instate(["disabled"])  # five outputs and no selection
 
-    h.run_batch(second)  # the next batch removes the note
+
+def test_one_folder_hides_the_folder_column(harness, tmp_path):
+    h = harness()
+    folder = tmp_path / "Đà Lạt"
+    h.run(image(folder / "a.png"), image(folder / "b.png"))
+    assert h.app.count_var.get() == f"2 images in {middle_ellipsis(str(folder), 48)}"
+    assert tuple(h.app.tree.cget("displaycolumns")) == ("name", "status")
+    assert h.app.folder_open_button.winfo_manager() == "grid"
+    assert h.app.folders_button.winfo_manager() == ""
+
+
+def test_show_folders_opens_one_folder(harness, tmp_path, monkeypatch):
+    opened = []
+    monkeypatch.setattr(gui, "open_path", opened.append)
+    h = harness()
+    h.run(*five_from_three_folders(tmp_path))
+    h.app._fill_folders_menu()
+    h.app.folders_menu.invoke(1)
+    assert opened == [tmp_path / "Photos" / "2023" / "Beach"]
+
+
+def test_drop_during_a_run_adds_rows_at_the_end(harness, tmp_path, monkeypatch):
+    gate = gate_convert(monkeypatch)
+    h = harness()
+    first = [image(tmp_path / "a.png"), image(tmp_path / "b.png")]
+    later = [image(tmp_path / "more" / "c.png"), image(tmp_path / "more" / "d.png")]
+    h.drop(*first)
+    h.root.update()
+    h.pump(converting(h))
+
+    assert h.drop(*later) == "copy"
+    h.root.update()
+    assert h.app.note_var.get() == "Added 2 images to the end of the list."
+    assert [name for name, _status in h.rows()] == ["a.png", "b.png", "c.png", "d.png"]
+    assert h.app.title_var.get().startswith("File 1 of 4")
+    assert h.questions == []
+
+    gate.set()
+    h.wait()
+    assert h.app.title_var.get() == "Converted 4 files."
+    assert all(src.with_suffix(".xlsx").exists() for src in first + later)
+
+
+def test_drop_during_a_run_uses_the_options_of_the_run(harness, tmp_path, monkeypatch):
+    gate = gate_convert(monkeypatch)
+    h = harness()
+    h.app.max_side_var.set("2")
+    h.drop(image(tmp_path / "a.png", 8, 8), image(tmp_path / "b.png", 8, 8))
+    h.root.update()
+    h.pump(converting(h))
+    h.app.max_side_var.set("abc")  # locked: the run does not read it
+    h.drop(image(tmp_path / "c.png", 8, 8))
+    h.root.update()
+    gate.set()
+    h.wait()
+    assert h.errors == []
+    assert sheet_size(tmp_path / "c.xlsx") == (2, 2)
+
+
+def test_the_same_file_again(harness, tmp_path, monkeypatch):
+    gate = gate_convert(monkeypatch)
+    h = harness()
+    a = image(tmp_path / "a.png")
+    b = image(tmp_path / "b.png")
+    h.drop(a, b)
+    h.root.update()
+    h.pump(converting(h))
+
+    h.drop(a)  # it converts now: ignore it
+    h.root.update()
+    assert h.app.note_var.get() == "1 image is already in the list."
+    assert len(h.app.rows) == 2
+
+    gate.set()
+    h.wait()
+    h.run(a)  # done: it goes back to the end of the queue, and the app asks first
+    assert len(h.app.rows) == 2
+    assert [name for name, _status in h.rows()] == ["b.png", "a.png"]
+    assert [q.existing for q in h.questions] == [[tmp_path / "a.xlsx"]]
+    assert h.questions[0].other_count == 0
+    assert h.app.title_var.get() == "Converted 1 file."
+    assert h.states() == ["done", "done"]
+
+
+def test_stop_then_continue(harness, tmp_path, monkeypatch):
+    gate = gate_convert(monkeypatch)
+    h = harness()
+    sources = [image(tmp_path / f"{name}.png") for name in "abc"]
+    h.drop(*sources)
+    h.root.update()
+    h.pump(converting(h))
+
+    h.app.stop_button.invoke()
+    assert h.app.status_var.get() == "Stopping."
+    gate.set()
+    h.wait()
+
+    assert h.states() == ["stopped", "waiting", "waiting"]
+    assert h.rows()[0] == ("a.png", "\u2013 Stopped")
+    assert h.app.title_var.get() == "Stopped. Converted 0 of 3 files. 1 stopped."
+    assert h.app.stop_button.cget("text") == "Convert 2"
+    assert h.app.stop_button.cget("style") == "Accent.TButton"
+    assert h.app.retry_button.cget("text") == "Retry failed (1)"
+    assert not any(src.with_suffix(".xlsx").exists() for src in sources)
+    assert no_temp_files(tmp_path)
+
+    h.app.stop_button.invoke()  # Convert 2
+    h.wait()
+    assert h.states() == ["stopped", "done", "done"]
+    assert h.app.title_var.get() == "Converted 2 files."
+
+    h.app.retry_button.invoke()
+    h.wait()
+    assert h.states() == ["done", "done", "done"]
+    assert h.app.retry_button.winfo_manager() == ""
+
+
+def test_skip_this_file_stops_one_file_and_the_run_continues(harness, tmp_path, monkeypatch):
+    gate = gate_convert(monkeypatch)
+    h = harness()
+    h.drop(image(tmp_path / "a.png"), image(tmp_path / "b.png"))
+    h.root.update()
+    h.pump(converting(h))
+    h.app.tree.selection_set(h.iid("a.png"))
+    menu = h.app.context_menu()
+    assert menu.entrycget("Skip this file", "state") == "normal"
+    menu.invoke("Skip this file")
+    gate.set()
+    h.wait()
+    assert h.states() == ["stopped", "done"]
+    assert h.app.title_var.get() == "Converted 1 of 2 files. 1 stopped."
+
+
+def test_retry_failed_converts_the_failed_rows_again(harness, tmp_path):
+    h = harness()
+    bad = tmp_path / "bad.png"
+    bad.write_text("not an image")
+    good = image(tmp_path / "good.png")
+
+    h.run(bad, good)
+    assert h.states() == ["failed", "done"]
+    assert h.rows()[0] == ("bad.png", "✕ Failed: not an image")
+    assert h.app.tree.item(h.iid("bad.png"), "tags") == ("failed",)
+    assert h.app.title_var.get() == "Converted 1 of 2 files. 1 failed."
+    assert h.app.tree.selection() == (h.iid("bad.png"),)  # the first failed row
+    assert h.app.status_var.get() == f"{bad}{gui.ARROW}{bad.with_suffix('.xlsx')}\n" + (
+        f"Failed: {gui.NOT_AN_IMAGE}"
+    )
+    assert h.errors == []
+
+    image(bad)  # the user fixes the file
+    h.app.retry_button.invoke()
+    h.wait()
+    assert h.states() == ["done", "done"]
+    assert h.app.title_var.get() == "Converted 1 file."
+
+
+def test_failed_only_shows_only_the_failed_rows(harness, tmp_path):
+    h = harness()
+    bad = tmp_path / "b.png"
+    bad.write_text("not an image")
+    h.run(image(tmp_path / "a.png"), bad, image(tmp_path / "c.png"))
+    button = h.app.failed_only_button
+    assert button.winfo_manager() == "grid"
+    assert button.cget("text") == "Failed only (1)"
+    assert h.app.eta_label.winfo_manager() == ""
+
+    button.invoke()
+    assert h.app.tree.get_children() == (h.iid("b.png"),)
+    button.invoke()
+    assert h.app.tree.get_children() == tuple(h.iid(n) for n in ("a.png", "b.png", "c.png"))
+
+
+@pytest.mark.parametrize("answer", ["replace", "skip", "cancel"])
+def test_outputs_that_exist_ask_once(harness, tmp_path, answer):
+    h = harness(answer=answer)
+    a = image(tmp_path / "x" / "a.png")
+    b = image(tmp_path / "y" / "b.png")
+    c = image(tmp_path / "y" / "c.png")
+    for src in (a, b):
+        src.with_suffix(".xlsx").write_bytes(b"old")
+
+    h.run(a, b, c)
+
+    [question] = h.questions
+    assert question.existing == [a.with_suffix(".xlsx"), b.with_suffix(".xlsx")]
+    assert question.other_count == 1
+    assert question.heading == "2 output files exist"
+    if answer == "replace":
+        assert h.app.title_var.get() == "Converted 3 files."
+        assert a.with_suffix(".xlsx").read_bytes() != b"old"
+    elif answer == "skip":
+        assert h.states() == ["skipped", "skipped", "done"]
+        assert h.rows()[0] == ("a.png", "\u2013 Skipped: output exists")
+        assert h.app.title_var.get() == "Converted 1 of 3 files. 2 skipped."
+        assert a.with_suffix(".xlsx").read_bytes() == b"old"
+        assert b.with_suffix(".xlsx").read_bytes() == b"old"
+        assert c.with_suffix(".xlsx").exists()
+    else:
+        assert h.app.rows == {}
+        assert h.app.note_var.get() == "The app did not add the dropped images."
+        assert not c.with_suffix(".xlsx").exists()
+
+
+def test_convert_again_replaces_a_skipped_output_without_a_question(harness, tmp_path):
+    h = harness(answer="skip")
+    a = image(tmp_path / "a.png")
+    a.with_suffix(".xlsx").write_bytes(b"old")
+    h.run(a, image(tmp_path / "b.png"))
+    assert h.states() == ["skipped", "done"]
+
+    h.app.tree.selection_set(h.iid("a.png"))
+    menu = h.app.context_menu()
+    assert menu.entrycget("Convert again", "state") == "normal"
+    menu.invoke("Convert again")
+    h.wait()
+    assert len(h.questions) == 1
+    assert h.states() == ["done", "done"]
+    assert a.with_suffix(".xlsx").read_bytes() != b"old"
+
+
+def test_two_types_in_one_folder_give_two_outputs(harness, tmp_path):
+    h = harness()
+    png = image(tmp_path / "photo.png")
+    jpg = image(tmp_path / "photo.jpg")
+    h.run(png, jpg)
+    assert (tmp_path / "photo (png).xlsx").exists()
+    assert (tmp_path / "photo (jpg).xlsx").exists()
+    assert not (tmp_path / "photo.xlsx").exists()
+
+
+def test_folder_drop_without_and_with_subfolders(harness, tmp_path):
+    h = harness()
+    beach = tmp_path / "Beach"
+    for name in ("IMG_10.png", "IMG_2.png"):
+        image(beach / name)
+    image(beach / "day 1" / "IMG_5.png")
+    image(beach / "day 2" / "IMG_6.png")
+    (beach / "notes.txt").write_text("x")
+
+    h.run(beach)
+    assert [name for name, _status in h.rows()] == ["IMG_2.png", "IMG_10.png"]
+    assert h.app.note_var.get() == (
+        "Ignored 1 file that is not an image: notes.txt. "
+        "The app did not open 2 subfolders of Beach."
+    )
+    assert h.app.note_button.winfo_manager() == "grid"
+    assert h.app.note_button.cget("text") == "Include subfolders"
+    assert h.app._note_id is None  # a note with a button stays
+
+    h.app.note_button.invoke()
+    h.root.update()
+    h.wait()
+    assert [name for name, _status in h.rows()] == [
+        "IMG_2.png",
+        "IMG_10.png",
+        "IMG_5.png",
+        "IMG_6.png",
+    ]
+    assert h.states() == ["done"] * 4
+    assert h.questions == []  # the first two did not convert again
     assert h.app.note_var.get() == ""
-    assert (tmp_path / "second.xlsx").exists()
+
+
+def test_unwritable_output_folder_fails_in_its_row(harness, tmp_path, monkeypatch):
+    def convert(src, dst, **kwargs):
+        if src.name == "logo.png":
+            temp = dst.with_name(".pixheet-0123456789abcdef.tmp")
+            raise PermissionError(13, "Access is denied", str(temp))
+        return real_convert(src, dst, **kwargs)
+
+    monkeypatch.setattr(gui, "convert", convert)
+    h = harness()
+    logo = image(tmp_path / "Program Files" / "logo.png")
+    h.run(logo, image(tmp_path / "ok.png"))
+
+    assert h.rows()[0] == ("logo.png", "✕ Failed: cannot write here")
+    assert h.app.tree.selection() == (h.iid("logo.png"),)
+    system = "Windows" if sys.platform == "win32" else "The system"
+    assert h.app.status_var.get().splitlines()[1] == (
+        f"Failed: {system} does not let the app write in {logo.parent}. "
+        'Set "Save to" to a folder of your own, then click Retry failed.'
+    )
+    assert h.app.retry_button.cget("text") == "Retry failed (1)"
+
+
+def test_a_long_output_path_fails_at_once(harness, tmp_path):
+    h = harness()
+    h.app.set_out_dir(tmp_path.joinpath(*["x" * 200] * 21))  # too long on all systems
+    h.run(image(tmp_path / "a.png"), image(tmp_path / "b.png"))
+    assert h.states() == ["failed", "failed"]
+    assert h.rows()[0][1] == "✕ Failed: path too long"
+    assert h.app.title_var.get() == "Converted 0 of 2 files. 2 failed."
+
+
+def test_save_to_one_folder_with_collisions(harness, tmp_path, monkeypatch):
+    gate = gate_convert(monkeypatch)
+    h = harness()
+    out = tmp_path / "out"
+    out.mkdir()
+    h.folder = str(out)
+    h.app.save_var.set(gui.CHOOSE_FOLDER)
+    h.app._on_save_to()
+    assert h.app.out_dir == out
+    assert h.app.save_var.get() == f"In {middle_ellipsis(str(out), 40)}"
+    assert h.app.save_box.cget("values")[1] == h.app.save_var.get()
+
+    b = image(tmp_path / "b" / "photo.png")
+    c = image(tmp_path / "c" / "photo.png")
+    h.drop(b, c, image(tmp_path / "c" / "other.png"))
+    h.root.update()
+    h.pump(converting(h))
+    assert h.rows()[1] == ("photo.png", "Waiting · as photo (c).xlsx")
+    h.app.tree.selection_set(h.iid("other.png"))
+    h.root.update()
+    other = tmp_path / "c" / "other.png"
+    assert h.app.status_var.get() == f"{other}{gui.ARROW}{out / 'other.xlsx'}"
+
+    gate.set()
+    h.wait()
+    assert sorted(p.name for p in out.iterdir()) == [
+        "other.xlsx",
+        "photo (b).xlsx",
+        "photo (c).xlsx",
+    ]
+
+
+def test_save_to_cancel_keeps_the_old_value_and_next_to_each_image_goes_back(harness, tmp_path):
+    h = harness()
+    h.folder = str(tmp_path)
+    h.app.save_var.set(gui.CHOOSE_FOLDER)
+    h.app._on_save_to()
+    h.folder = ""  # the user clicks Cancel
+    h.app.save_var.set(gui.CHOOSE_FOLDER)
+    h.app._on_save_to()
+    assert h.app.out_dir == tmp_path
+    assert h.app.save_var.get() == f"In {middle_ellipsis(str(tmp_path), 40)}"
+    h.app.save_var.set(gui.NEXT_TO_IMAGE)
+    h.app._on_save_to()
+    assert h.app.out_dir is None
+    assert list(h.app.save_box.cget("values")) == [gui.NEXT_TO_IMAGE, gui.CHOOSE_FOLDER]
+
+
+def test_a_change_of_save_to_gives_new_outputs_to_waiting_rows(harness, tmp_path, monkeypatch):
+    gate = gate_convert(monkeypatch)
+    h = harness()
+    h.drop(image(tmp_path / "a.png"), image(tmp_path / "b.png"))
+    h.root.update()
+    h.pump(converting(h))
+    h.app.cancel()
+    gate.set()
+    h.wait()
+    out = tmp_path / "out"
+    h.app.set_out_dir(out)
+    assert [row.dst for row in h.app.rows.values()] == [out / "a.xlsx", out / "b.xlsx"]
+
+
+def test_clear_list_goes_back_to_the_zone(harness, tmp_path, monkeypatch):
+    gate = gate_convert(monkeypatch)
+    h = harness()
+    h.drop(image(tmp_path / "a.png"), image(tmp_path / "b.png"))
+    h.root.update()
+    h.app.clear_list()  # no effect during a run
+    assert len(h.app.rows) == 2
+    gate.set()
+    h.wait()
+
+    h.app.clear_button.invoke()
+    assert h.app.rows == {}
+    assert h.app.tree.get_children() == ()
+    assert not h.app.list_mode
+    assert h.app.zone.winfo_manager() == "grid"
+    assert h.app.tally == Tally()
+    assert h.app.title_var.get() == ""
+    assert h.app.clear_button.winfo_manager() == ""
+
+    h.run(image(tmp_path / "a.png"))  # alone again: the zone, and the plain name
+    assert not h.app.list_mode
+    assert (tmp_path / "a.xlsx").exists()
+
+
+def test_keys_of_the_list(harness, tmp_path, monkeypatch):
+    opened = []
+    monkeypatch.setattr(gui, "open_path", opened.append)
+    h = harness()
+    sources = [image(tmp_path / f"{name}.png") for name in "abc"]
+    h.run(*sources)
+    tree = h.app.tree
+
+    h.app._select_all()
+    h.root.update()
+    assert len(tree.selection()) == 3
+    assert h.app.status_var.get() == "3 files selected."
+    h.app.follow_again()  # Esc
+    assert tree.selection() == ()
+    assert h.app.follow
+
+    tree.selection_set(h.iid("b.png"))
+    h.app.activate()  # Enter
+    assert opened == [tmp_path / "b.xlsx"]
+    h.app.open_button.invoke()
+    assert opened[-1] == tmp_path / "b.xlsx"
+
+    h.app.remove_selected()  # Delete
+    assert [name for name, _status in h.rows()] == ["a.png", "c.png"]
+    assert h.app.list_mode  # the list stays until Clear list
+
+
+def test_delete_during_a_run_keeps_the_converting_row(harness, tmp_path, monkeypatch):
+    gate = gate_convert(monkeypatch)
+    h = harness()
+    sources = [image(tmp_path / f"{name}.png") for name in "abc"]
+    h.drop(*sources)
+    h.root.update()
+    h.pump(converting(h))
+    h.app._select_all()
+    menu = h.app.context_menu()
+    assert menu.entrycget("Remove from list", "state") == "normal"
+    h.app.remove_selected()
+    assert [name for name, _status in h.rows()] == ["a.png"]
+    gate.set()
+    h.wait()
+    assert (tmp_path / "a.xlsx").exists()
+    assert not (tmp_path / "b.xlsx").exists()
+    assert not (tmp_path / "c.xlsx").exists()
+    assert h.app.title_var.get() == "Converted 1 file."
+
+
+def test_context_menu_items_follow_the_selection(harness, tmp_path):
+    h = harness()
+    bad = tmp_path / "bad.png"
+    bad.write_text("not an image")
+    h.run(image(tmp_path / "a.png"), bad)
+
+    def states(*names):
+        h.app.tree.selection_set([h.iid(name) for name in names])
+        menu = h.app.context_menu()
+        labels = ["Open", "Show in folder", "Copy error", "Retry", "Convert again"]
+        labels += ["Skip this file", "Remove from list", "Remove converted files"]
+        return {label: menu.entrycget(label, "state") for label in labels}
+
+    assert states("a.png") == {
+        "Open": "normal",
+        "Show in folder": "normal",
+        "Copy error": "disabled",
+        "Retry": "disabled",
+        "Convert again": "disabled",
+        "Skip this file": "disabled",
+        "Remove from list": "normal",
+        "Remove converted files": "normal",
+    }
+    failed = states("bad.png")
+    assert (failed["Open"], failed["Copy error"], failed["Retry"]) == (
+        "disabled",
+        "normal",
+        "normal",
+    )
+    h.app.copy_errors()
+    assert h.root.clipboard_get() == f"{bad}: {gui.NOT_AN_IMAGE}"
+    h.app.copy_paths()
+    assert h.root.clipboard_get() == str(bad)
+
+
+def test_the_list_follows_the_converting_row(harness, tmp_path, monkeypatch):
+    gate = gate_convert(monkeypatch)
+    h = harness()
+    sources = [image(tmp_path / f"IMG_{i}.png", 2, 2) for i in range(30)]
+    moves = []
+    monkeypatch.setattr(h.app.tree, "yview_moveto", moves.append)
+    h.drop(*sources)
+    h.root.update()
+    h.pump(converting(h))
+    assert moves == [0.0]
+    h.app._stop_follow()  # a click in the list
+    gate.set()
+    h.wait()
+    assert moves == [0.0]
+
+
+def test_a_tick_of_500_rows_does_not_count_the_rows(harness, tmp_path, monkeypatch):
+    h = harness()
+    app = h.app
+    paths = [tmp_path / f"IMG_{i}.png" for i in range(500)]
+    rows = [gui.Row(app._next_id(), path, path.with_suffix(".xlsx")) for path in paths]
+    for row in rows:
+        app._insert_row(row)
+    app._refresh_list()
+    app.worker = threading.current_thread()  # a run without a worker
+    app.run_ids = {row.id for row in rows}
+    app.run_tally = Tally(waiting=500)
+    app._handle(Started(rows[250].id))
+    monkeypatch.setattr(app, "_refresh_list", lambda: pytest.fail("counts the rows"))
+    worst = 0.0
+    for done in range(1, 101):
+        t0 = time.perf_counter()
+        app._handle(Progress(rows[250].id, done, 100))
+        worst = max(worst, time.perf_counter() - t0)
+    app.worker = None
+    assert app.tree.set(str(rows[250].id), "status") == "Converting 100%"
+    assert worst < 0.05, f"the worst tick took {worst * 1000:.1f} ms"
+
+
+def test_open_and_show_in_folder_buttons(harness, tmp_path, monkeypatch):
+    opened = []
+    shown = []
+    monkeypatch.setattr(gui, "open_path", opened.append)
+    monkeypatch.setattr(gui, "open_folder", lambda path, select=False: shown.append((path, select)))
+    h = harness()
+    h.run(image(tmp_path / "a.png"))
+    h.app.open_button.invoke()
+    h.app.show_button.invoke()
+    assert opened == [tmp_path / "a.xlsx"]
+    assert shown == [(tmp_path / "a.xlsx", True)]
+
+
+def test_open_folder_error_is_shown(harness, tmp_path, monkeypatch):
+    def fail(path, select=False):
+        raise OSError("no file manager")
+
+    monkeypatch.setattr(gui, "open_folder", fail)
+    h = harness()
+    h.run(image(tmp_path / "a.png"))
+    h.app.show_output()
+    assert h.errors == ["Cannot open the folder: no file manager"]
 
 
 @pytest.mark.parametrize("stop", ["cancel", "close"])
@@ -506,7 +1108,7 @@ def test_stopping_text_stays_until_the_worker_stops(harness, tmp_path, monkeypat
     gate = gate_convert(monkeypatch)
     h = harness()
     h.drop(image(tmp_path / "a.png"))
-    h.root.update()  # runs start(); the window reads the Started message later
+    h.root.update()  # runs add_paths(); the window reads the Started message later
     getattr(h.app, stop)()
     text = h.app.status_var.get()
     assert text.startswith("Stopping.")
@@ -518,34 +1120,12 @@ def test_stopping_text_stays_until_the_worker_stops(harness, tmp_path, monkeypat
     h.pump(lambda: not h.app.busy)
 
 
-def test_cancel_stops_the_batch(harness, tmp_path, monkeypatch):
-    gate = gate_convert(monkeypatch)
-    h = harness()
-    a = image(tmp_path / "a.png")
-    b = image(tmp_path / "b.png")
-    h.drop(a, b)
-    h.root.update()
-    h.pump(lambda: h.app.title_var.get().startswith("File 1 of 2"))
-
-    h.app.cancel()
-    gate.set()
-    h.pump(lambda: not h.app.busy)
-
-    assert h.app.title_var.get() == "Stopped. Converted 0 of 2 files."
-    assert "did not write" in h.app.status_var.get()
-    assert not (tmp_path / "a.xlsx").exists()
-    assert not (tmp_path / "b.xlsx").exists()
-    assert no_temp_files(tmp_path)
-    assert h.errors == []
-
-
-def test_close_during_a_batch_waits_for_the_worker(harness, tmp_path, monkeypatch):
+def test_close_during_a_run_waits_for_the_worker(harness, tmp_path, monkeypatch):
     gate = gate_convert(monkeypatch)
     h = harness()
     src = image(tmp_path / "a.png")
     dst = tmp_path / "a.xlsx"
     dst.write_bytes(b"old")
-    h.app.ask_yes_no = lambda *a, **k: True
     h.drop(src)
     h.root.update()
     worker = h.app.worker
@@ -566,30 +1146,30 @@ def convert_threads() -> list[threading.Thread]:
     return [t for t in threading.enumerate() if t.name == "pixheet-convert"]
 
 
-def drop_inside(h, path, seen):
+def drop_inside(h, path, seen, result):
     """Return a dialog that drops ``path`` and runs the event loop, as a modal dialog does."""
 
     def dialog(*args, **kwargs):
         seen.append(h.drop(path))
-        h.root.update()  # runs a start() that the drop scheduled
-        seen.append(len(convert_threads()))
-        return kwargs.pop("result", True)
+        h.root.update()  # runs an add_paths() that the drop scheduled
+        seen.append(len(h.app.rows))
+        return result
 
     return dialog
 
 
-def test_drop_during_the_replace_prompt_is_refused(harness, tmp_path):
+def test_drop_during_the_replace_dialog_is_refused(harness, tmp_path):
     h = harness()
     a = image(tmp_path / "a.png")
     a.with_suffix(".xlsx").write_bytes(b"old")
     b = image(tmp_path / "b.png")
     seen = []
-    h.app.ask_yes_no = drop_inside(h, b, seen)
+    h.app.ask_replace = drop_inside(h, b, seen, "replace")
 
-    h.run_batch(a)
+    h.run(a)
 
-    assert seen == ["refuse_drop", 0]  # no worker started inside the prompt
-    assert h.app.note_var.get() == gui.BUSY_DROP_TEXT
+    assert seen == ["refuse_drop", 0]  # no row came in during the dialog
+    assert h.app.note_var.get() == gui.DIALOG_DROP_TEXT
     assert h.app.title_var.get() == "Converted 1 file."
     assert a.with_suffix(".xlsx").read_bytes() != b"old"
     assert not (tmp_path / "b.xlsx").exists()
@@ -601,53 +1181,57 @@ def test_drop_during_the_file_dialog_is_refused(harness, tmp_path):
     a = image(tmp_path / "a.png")
     b = image(tmp_path / "b.png")
     seen = []
-    pick = drop_inside(h, b, seen)
-    h.app.ask_files = lambda **kw: pick(**kw, result=(str(a),))
+    h.app.ask_files = drop_inside(h, b, seen, (str(a),))
 
     h.app.browse()
-    h.pump(lambda: not h.app.busy)
+    h.wait()
 
     assert seen == ["refuse_drop", 0]
     assert (tmp_path / "a.xlsx").exists()
     assert not (tmp_path / "b.xlsx").exists()
 
 
+def test_add_folder_adds_the_images_of_the_folder(harness, tmp_path):
+    h = harness()
+    image(tmp_path / "pics" / "a.png")
+    image(tmp_path / "pics" / "b.png")
+    h.folder = str(tmp_path / "pics")
+    h.app.folder_button.invoke()
+    h.wait()
+    assert h.states() == ["done", "done"]
+    h.folder = ""
+    h.app.browse_folder()  # Cancel
+    assert len(h.app.rows) == 2
+
+
 def test_drop_during_the_error_dialog_is_refused(harness, tmp_path):
     h = harness()
-    bad = tmp_path / "bad.png"
-    bad.write_text("not an image")
+    h.app.max_side_var.set("abc")
     good = image(tmp_path / "good.png")
     seen = []
-    h.app.show_error = drop_inside(h, good, seen)
+    h.app.show_error = drop_inside(h, good, seen, None)
 
-    h.run_batch(bad)
+    h.app.add_paths([image(tmp_path / "a.png")])
 
     assert seen == ["refuse_drop", 0]
-    assert not (tmp_path / "good.xlsx").exists()
-    # No second batch and no second timer that reads the queue.
     assert h.app.worker is None
     assert h.app._poll_id is None
-    deadline = time.monotonic() + 0.2
-    while time.monotonic() < deadline:
-        h.root.update()
-    assert h.app._poll_id is None
 
 
-def test_second_start_before_idle_is_refused_with_a_note(harness, tmp_path, monkeypatch):
+def test_two_drops_before_idle_both_convert(harness, tmp_path, monkeypatch):
     gate = gate_convert(monkeypatch)
     h = harness()
     a = image(tmp_path / "a.png")
     b = image(tmp_path / "b.png")
     assert h.drop(a) == "copy"
-    assert h.drop(b) == "copy"  # the first start() did not run yet
+    assert h.drop(b) == "copy"
     h.root.update()
     assert len(convert_threads()) == 1
-    assert h.app.note_var.get() == gui.BUSY_DROP_TEXT
 
     gate.set()
-    h.pump(lambda: not h.app.busy)
+    h.wait()
     assert (tmp_path / "a.xlsx").exists()
-    assert not (tmp_path / "b.xlsx").exists()
+    assert (tmp_path / "b.xlsx").exists()
 
 
 def test_close_during_a_dialog_closes_after_it(harness, tmp_path):
@@ -656,13 +1240,13 @@ def test_close_during_a_dialog_closes_after_it(harness, tmp_path):
     a.with_suffix(".xlsx").write_bytes(b"old")
     alive = []
 
-    def ask(*args, **kwargs):
+    def ask(question):
         h.app.close()
         alive.append(h.root.winfo_exists())  # the window waits for the dialog
-        return True
+        return "replace"
 
-    h.app.ask_yes_no = ask
-    h.app.start([a])
+    h.app.ask_replace = ask
+    h.app.add_paths([a])
 
     assert alive == [1]
     assert destroyed(h.root)
@@ -670,14 +1254,55 @@ def test_close_during_a_dialog_closes_after_it(harness, tmp_path):
     assert a.with_suffix(".xlsx").read_bytes() == b"old"
 
 
-def test_old_messages_do_not_reach_a_new_batch(harness, tmp_path):
+def test_close_during_a_dialog_in_a_run_closes_when_both_end(harness, tmp_path, monkeypatch):
+    gate = gate_convert(monkeypatch)
     h = harness()
-    h.app.queue.put(Finished(0, cancelled=True))  # a message that no batch reads
+    h.drop(image(tmp_path / "a.png"), image(tmp_path / "b.png"))
+    h.root.update()
+    h.pump(converting(h))
+    c = image(tmp_path / "c.png")
+    c.with_suffix(".xlsx").write_bytes(b"old")
 
-    h.run_batch(image(tmp_path / "a.png"))
+    def ask(question):
+        h.app.close()
+        gate.set()
+        h.pump(lambda: h.app.worker is None)  # the worker ends during the dialog
+        assert h.root.winfo_exists()
+        return "replace"
+
+    h.app.ask_replace = ask
+    h.app.add_paths([c])
+    assert destroyed(h.root)
+    assert c.with_suffix(".xlsx").read_bytes() == b"old"
+
+
+def test_old_messages_do_not_reach_a_new_run(harness, tmp_path):
+    h = harness()
+    h.app.queue.put(Finished(stopped=True))  # a message that no run reads
+
+    h.run(image(tmp_path / "a.png"))
 
     assert h.app.title_var.get() == "Converted 1 file."
     assert (tmp_path / "a.xlsx").exists()
+
+
+def test_a_job_that_comes_when_the_worker_ends_starts_a_new_worker(harness, tmp_path):
+    h = harness()
+    h.run(image(tmp_path / "a.png"), image(tmp_path / "b.png"))
+    app = h.app
+    # The worker ends, and the window puts a job at the same time.
+    app.worker = threading.Thread(target=lambda: None)
+    app.worker.start()
+    c = image(tmp_path / "c.png")
+    row = gui.Row(app._next_id(), c, tmp_path / "c.xlsx")
+    app._insert_row(row)
+    app.run_ids.add(row.id)
+    app.run_tally.add(None, row.state)
+    app.jobs.put([Job(row.id, c, row.dst)])
+    app._handle(Finished(stopped=False))
+    assert app.worker is not None
+    h.wait()
+    assert (tmp_path / "c.xlsx").exists()
 
 
 def test_close_when_idle_destroys_the_root(harness):
@@ -691,7 +1316,7 @@ def test_browse_converts_the_chosen_files(harness, tmp_path):
     src = image(tmp_path / "a.png")
     h.app.ask_files = lambda **kw: (str(src),)
     h.app.browse()
-    h.pump(lambda: not h.app.busy)
+    h.wait()
     assert (tmp_path / "a.xlsx").exists()
 
 
@@ -702,32 +1327,21 @@ def test_browse_cancelled_does_nothing(harness):
     assert not h.app.busy
 
 
-def test_open_folder_button(harness, tmp_path, monkeypatch):
-    opened = []
-    monkeypatch.setattr(gui, "open_folder", opened.append)
-    h = harness()
-    h.run_batch(image(tmp_path / "a.png"))
-    h.app.open_button.invoke()
-    assert opened == [tmp_path / "a.xlsx"]
-
-
-def test_open_folder_error_is_shown(harness, tmp_path, monkeypatch):
-    def fail(path):
-        raise OSError("no file manager")
-
-    monkeypatch.setattr(gui, "open_folder", fail)
-    h = harness()
-    h.app.last_output = tmp_path / "a.xlsx"
-    h.app.open_output()
-    assert h.errors == ["Cannot open the folder: no file manager"]
-
-
 def test_window_without_dnd_says_so(harness):
     h = harness()
     assert not h.app.dnd
     assert h.app.status_var.get() == gui.NO_DND_TEXT
     assert h.app.zone_label.cget("text") == "Choose images to convert"
-    assert h.app.or_label.winfo_manager() == ""  # no "or" above Browse
+    assert h.app.or_label.winfo_manager() == ""  # no "or" above the buttons
+
+
+def test_notes_without_a_button_close_after_some_time(harness, monkeypatch):
+    monkeypatch.setattr(gui, "NOTE_MS", 10)
+    h = harness()
+    h.app.set_note("x")
+    assert h.app.note.winfo_manager() == "grid"
+    h.pump(lambda: h.app.note.winfo_manager() == "")
+    assert h.app.note_var.get() == ""
 
 
 def test_callback_error_is_shown_in_a_dialog(harness, capsys):
@@ -748,10 +1362,10 @@ def test_main_smoke(monkeypatch, capsys):
     assert "pixheet-gui: drag and drop" in capsys.readouterr().out
 
 
-def test_main_starts_the_files_in_argv(monkeypatch):
+def test_main_adds_the_files_in_argv(monkeypatch):
     new_root().destroy()
     started = []
-    monkeypatch.setattr(gui.App, "start", lambda self, files: started.append(files))
+    monkeypatch.setattr(gui.App, "add_paths", lambda self, files: started.append(files))
     assert gui.main(["--smoke", "a b.png", "c.png"]) == 0
     assert started == [[Path("a b.png"), Path("c.png")]]
 
@@ -771,7 +1385,7 @@ def test_main_smoke_waits_for_the_batch(tmp_path):
     new_root().destroy()
     src = image(tmp_path / "pic.png", 40, 30)
     assert gui.main(["--smoke", str(src)]) == 0
-    assert sheet_size(default_output(src)) == (40, 30)
+    assert sheet_size(src.with_suffix(".xlsx")) == (40, 30)
     assert no_temp_files(tmp_path)
 
 
@@ -782,15 +1396,15 @@ def test_main_smoke_fails_when_a_file_fails(tmp_path, capsys):
     good = image(tmp_path / "good.png")
     assert gui.main(["--smoke", str(bad), str(good)]) == 1
     assert "bad.png" in capsys.readouterr().err
-    assert default_output(good).is_file()
+    assert good.with_suffix(".xlsx").is_file()
 
 
 def test_main_smoke_does_not_replace_files(tmp_path):
     new_root().destroy()
     src = image(tmp_path / "pic.png")
-    default_output(src).write_bytes(b"old")
+    src.with_suffix(".xlsx").write_bytes(b"old")
     assert gui.main(["--smoke", str(src)]) == 0
-    assert default_output(src).read_bytes() == b"old"
+    assert src.with_suffix(".xlsx").read_bytes() == b"old"
 
 
 def test_main_smoke_of_a_built_app_needs_the_icon_and_dnd(tmp_path, monkeypatch, capsys):
@@ -816,7 +1430,8 @@ def test_main_smoke_of_a_built_app_accepts_no_dnd_when_tkdnd_cannot_load(monkeyp
 
 
 def test_missing_x11_dialogs():
-    found = {"::tk::dialog::file::": "1", "::tk::MessageBox": "0"}
+    found = {"::tk::dialog::file::": "1", "::tk::dialog::file::chooseDir::": "1"}
+    found["::tk::MessageBox"] = "0"
 
     def call(command, name):
         assert command == "auto_load"
@@ -1062,6 +1677,30 @@ def test_disabled_spinbox_and_combobox_use_the_gray_text_of_the_style():
             assert [str(box.cget("foreground")) for box in boxes] == ["", ""], mode
             assert str(app.or_label.cget("foreground")) != ""  # tk_setPalette did run
             gui.apply_theme(root, mode)
+        app.dispose()
+    finally:
+        root.destroy()
+
+
+def test_row_colors_and_row_height_follow_the_theme():
+    pytest.importorskip("sv_ttk")
+    root = new_root()
+    try:
+        gui.apply_theme(root, "light")
+        app = gui.App(root, dnd_type=None)
+        for mode in ("light", "dark", "light"):
+            gui.apply_theme(root, mode)
+            root.update()
+            for tag in ("failed", "converting", "muted"):
+                assert str(app.tree.tag_configure(tag, "foreground")) == gui.ROW_COLORS[mode][tag]
+            assert str(app.note_label.cget("bg")) == gui.NOTE_COLORS[mode][0]
+            assert (
+                str(ttk.Style(root).lookup("Note.TFrame", "background"))
+                == (gui.NOTE_COLORS[mode][0])
+            )
+            font = gui.tkfont.nametofont("SunValleyBodyFont", root=root)
+            height = ttk.Style(root).lookup("Treeview", "rowheight")
+            assert int(height) == font.metrics("linespace") + 8
         app.dispose()
     finally:
         root.destroy()
@@ -1465,7 +2104,8 @@ def test_toggle_is_at_the_right_of_the_header_row(tmp_path):
         assert toggle.grid_info()["sticky"] == "e"
         assert app.header.grid_info()["row"] == 0
         assert app.header.columnconfigure(0)["weight"] == 1  # the left part is free
-        assert app.zone.grid_info()["row"] == 1
+        assert app.area.grid_info()["row"] == 2
+        assert app.save_box.master.master is app.header
         assert app.theme_var.get() == "system"
     finally:
         app.dispose()
@@ -1624,9 +2264,23 @@ def test_minimum_size_is_at_least_the_requested_size(harness):
     assert height >= max(gui.MIN_HEIGHT, root.winfo_reqheight())
 
 
+def fill_the_list(app, tmp_path):
+    """Put rows in three states and two output folders into ``app``, and a note."""
+    a, b, c = tmp_path / "a" / "x.png", tmp_path / "b" / "y.png", tmp_path / "c" / "z.png"
+    for row in (
+        gui.Row(1, a, a.with_suffix(".xlsx"), state="done"),
+        gui.Row(2, b, b.with_suffix(".xlsx"), state="failed", error="e", kind="other"),
+        gui.Row(3, c, c.with_suffix(".xlsx"), state="done"),
+    ):
+        app._insert_row(row)
+    app._refresh_all()
+    app.set_note("Ignored 1 file that is not an image: notes.txt.", "Include subfolders", print)
+
+
 @pytest.mark.parametrize("percent", [100, 125, 150])
 @pytest.mark.parametrize("themed", [True, False])
-def test_nothing_is_cut_off_at_the_minimum_size(percent, themed):
+@pytest.mark.parametrize("mode", ["zone", "list"])
+def test_nothing_is_cut_off_at_the_minimum_size(percent, themed, mode, tmp_path):
     if themed:
         pytest.importorskip("sv_ttk")
     root = new_root()
@@ -1638,28 +2292,49 @@ def test_nothing_is_cut_off_at_the_minimum_size(percent, themed):
             assert follower.theme is not None
         app = gui.App(root, dnd_type=None, follower=follower)
         assert len(app.theme_buttons) == (3 if themed else 0)
-        app._set_busy(True)  # the Cancel button shows too
-        width, height = root.minsize()
-        root.geometry(f"{width}x{height}")
-        root.deiconify()
-        root.update()
-        for widget in (
-            app.zone_label,
-            app.browse_button,
+        widgets = [
+            app.save_box,
             app.max_side_box,
             app.background_box,
             app.compact_check,
             app.progressbar,
-            app.cancel_button,
+            app.show_button,
             app.open_button,
             *app.theme_buttons,
-        ):
+        ]
+        if mode == "zone":
+            app.worker = threading.current_thread()  # a run: the Stop button shows too
+            app._set_running(True)
+            widgets += [app.zone_label, app.browse_button, app.folder_button, app.stop_button]
+        else:
+            fill_the_list(app, tmp_path)
+            assert app.list_mode
+            widgets += [
+                app.list_browse_button,
+                app.list_folder_button,
+                app.tree,
+                app.note_button,
+                app.note_close,
+                app.retry_button,
+                app.clear_button,
+                app.folders_button,
+            ]
+        width, height = root.minsize()
+        root.geometry(f"{width}x{height}")
+        root.deiconify()
+        root.update()
+        for widget in widgets:
+            assert widget.winfo_ismapped(), widget
             parent = widget.nametowidget(widget.winfo_parent())
-            assert widget.winfo_width() >= widget.winfo_reqwidth(), widget
-            assert widget.winfo_height() >= widget.winfo_reqheight(), widget
+            if widget is not app.tree:  # the list gets smaller
+                assert widget.winfo_width() >= widget.winfo_reqwidth(), widget
+                assert widget.winfo_height() >= widget.winfo_reqheight(), widget
             assert widget.winfo_x() + widget.winfo_width() <= parent.winfo_width(), widget
             assert widget.winfo_y() + widget.winfo_height() <= parent.winfo_height(), widget
-        app._set_busy(False)
+        if mode == "list":  # at least 3 rows of the list show
+            rowheight = int(ttk.Style(root).lookup("Treeview", "rowheight") or 20)
+            assert app.tree.winfo_height() >= 4 * rowheight, app.tree.winfo_height()
+        app.worker = None
         app.dispose()
     finally:
         root.destroy()
