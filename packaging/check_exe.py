@@ -2,7 +2,9 @@
 
 The script does these steps:
 
-1. It runs the exe with ``--smoke``. The exit code must be 0.
+1. It runs the exe with ``--smoke``, one time with the light theme and one time with the
+   dark theme. The exit code must be 0. The exe must name the Sun Valley theme that it
+   applied, not a fallback theme.
 2. It makes a test image in a temporary folder and runs the exe with ``--smoke`` and the
    image path. The exe converts the image and closes. The script reads the .xlsx file
    with openpyxl and compares each cell with its pixel.
@@ -20,6 +22,7 @@ exe started. At the end, the script deletes the folder. Run it from the reposito
 import argparse
 import io
 import os
+import re
 import signal
 import subprocess
 import sys
@@ -42,6 +45,10 @@ MEMBERS = ("xl/worksheets/sheet1.xml", "xl/styles.xml")
 """The parts of an .xlsx file that the format check compares."""
 FORMATS_FOLDER = "formats ảnh"
 """The folder of the format images. The name has a space and Vietnamese letters."""
+THEME_ENV = "PIXHEET_THEME"
+"""The environment variable that sets the theme of the app."""
+THEME_LINE = re.compile(r"^pixheet-gui: theme (\S+)\s*$", re.MULTILINE)
+"""The line of ``--smoke`` that names the ttk theme of the window."""
 
 
 def make_image(path: Path) -> Image.Image:
@@ -171,16 +178,22 @@ def kill_tree(process: subprocess.Popen[bytes]) -> None:
     process.kill()
 
 
-def run_exe(command: list[str], timeout: float = TIMEOUT) -> tuple[int | None, str]:
+def run_exe(
+    command: list[str], timeout: float = TIMEOUT, env: dict[str, str] | None = None
+) -> tuple[int | None, str]:
     """Run ``command``, and return its exit code and its output (stdout and stderr).
 
-    If the command does not stop in ``timeout`` seconds, stop it and all processes that it
-    started. Then the exit code is None.
+    ``env`` adds environment variables. If the command does not stop in ``timeout``
+    seconds, stop it and all processes that it started. Then the exit code is None.
     """
     # On POSIX, a new session lets kill_tree stop the child processes too.
     new_session = sys.platform != "win32"
     process = subprocess.Popen(
-        command, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, start_new_session=new_session
+        command,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+        start_new_session=new_session,
+        env=None if env is None else {**os.environ, **env},
     )
     try:
         # communicate() closes the pipe and waits for the process.
@@ -210,16 +223,45 @@ def result_problems(code: int | None, output: str, timeout: float) -> list[str]:
         problem = f"The exe stopped with exit code {code}."
     else:
         return []
+    return with_output(problem, output)
+
+
+def with_output(problem: str, output: str) -> list[str]:
+    """Return ``problem`` with the output of the exe, because the output tells the cause."""
     output = output.strip()
     return [f"{problem} The output of the exe:\n{output}" if output else problem]
 
 
+def theme_problems(output: str, mode: str) -> list[str]:
+    """Return a problem if the output of ``--smoke`` does not name the theme ``mode``.
+
+    ``mode`` is "light" or "dark". The app prints the ttk theme of its window. A
+    different name, for example "vista", tells that the Sun Valley theme did not load.
+    """
+    match = THEME_LINE.search(output)
+    if match is None:
+        problem = "The exe did not name its theme."
+    elif match[1] != f"sun-valley-{mode}":
+        problem = f"The exe used the theme {match[1]}, not sun-valley-{mode}."
+    else:
+        return []
+    return with_output(problem, output)
+
+
+def check_smoke(exe: Path, timeout: float = TIMEOUT) -> list[str]:
+    """Run ``exe --smoke`` with the light theme and with the dark theme. Return the problems."""
+    for mode in ("light", "dark"):
+        code, output = run_exe([str(exe), "--smoke"], timeout, env={THEME_ENV: mode})
+        if problems := result_problems(code, output, timeout) or theme_problems(output, mode):
+            return problems
+        print(f"The exe passed the smoke test with the theme sun-valley-{mode}.")
+    return []
+
+
 def check(exe: Path, timeout: float = TIMEOUT) -> list[str]:
     """Run ``exe``, then run it on a test image. Return the problems, or an empty list."""
-    code, output = run_exe([str(exe), "--smoke"], timeout)
-    if problems := result_problems(code, output, timeout):
+    if problems := check_smoke(exe, timeout):
         return problems
-    print("The exe passed the smoke test.")
     with tempfile.TemporaryDirectory(prefix="pixheet-check-") as folder:
         src = Path(folder) / "test image.png"
         expected = make_image(src)

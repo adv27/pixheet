@@ -240,6 +240,71 @@ sys.exit(3)
 """
 
 
+def test_run_exe_adds_the_environment_variables():
+    script = "import os; print(os.environ['PIXHEET_THEME'], 'PATH' in os.environ)"
+    code, output = check_exe.run_exe(
+        [sys.executable, "-c", script], timeout=60, env={"PIXHEET_THEME": "dark"}
+    )
+    assert code == 0
+    assert output.split() == ["dark", "True"]
+
+
+@pytest.mark.parametrize("mode", ["light", "dark"])
+def test_theme_problems_accepts_the_sun_valley_theme(mode):
+    output = f"pixheet-gui: drag and drop on\r\npixheet-gui: theme sun-valley-{mode}\r\n"
+    assert check_exe.theme_problems(output, mode) == []
+
+
+@pytest.mark.parametrize(
+    ("output", "problem"),
+    [
+        ("pixheet-gui: drag and drop on\n", "The exe did not name its theme."),
+        ("", "The exe did not name its theme."),
+        ("pixheet-gui: theme vista\n", "The exe used the theme vista, not sun-valley-dark."),
+        (
+            "pixheet-gui: theme sun-valley-light\n",
+            "The exe used the theme sun-valley-light, not sun-valley-dark.",
+        ),
+    ],
+)
+def test_theme_problems_refuses_a_fallback_theme(output, problem):
+    [found] = check_exe.theme_problems(output, "dark")
+    assert found.startswith(problem)
+    if output:
+        assert found.endswith(f"The output of the exe:\n{output.strip()}")
+    else:
+        assert found == problem
+
+
+SMOKE_EXE = """
+import os
+print("pixheet-gui: drag and drop on")
+print("pixheet-gui: theme sun-valley-" + os.environ["PIXHEET_THEME"])
+"""
+
+
+def test_check_smoke_runs_both_themes(monkeypatch, capsys):
+    runs = []
+    real_run_exe = check_exe.run_exe
+
+    def run_exe(command, timeout, env=None):
+        runs.append(env)
+        return real_run_exe([sys.executable, "-c", SMOKE_EXE], timeout, env)
+
+    monkeypatch.setattr(check_exe, "run_exe", run_exe)
+    assert check_exe.check_smoke(Path("Pixheet.exe"), 60) == []
+    assert runs == [{"PIXHEET_THEME": "light"}, {"PIXHEET_THEME": "dark"}]
+    assert "sun-valley-dark" in capsys.readouterr().out
+
+
+def test_check_smoke_fails_without_the_theme(monkeypatch):
+    monkeypatch.setattr(
+        check_exe, "run_exe", lambda command, timeout, env=None: (0, "pixheet-gui: theme vista\n")
+    )
+    [problem] = check_exe.check_smoke(Path("Pixheet.exe"), 60)
+    assert problem.startswith("The exe used the theme vista, not sun-valley-light.")
+
+
 def test_problem_includes_the_output_of_a_failed_exe():
     code, output = check_exe.run_exe([sys.executable, "-c", FAILED_EXE], timeout=60)
     assert code == 3
@@ -325,6 +390,15 @@ def test_spec_guards_the_excludes():
     assert unwanted.isdisjoint(spec_value("REQUIRED_MODULES"))
     assert set(spec_value("UNWANTED_FILES")) == {"libcrypto-3-x64.dll", "libssl-3-x64.dll"}
     assert "tkinterdnd2/tkdnd/win-x64-*/libtkdnd*.dll" in spec_value("REQUIRED_FILES")
+
+
+def test_spec_requires_the_sun_valley_theme():
+    assert "sv_ttk" in spec_value("REQUIRED_MODULES")
+    files = spec_value("REQUIRED_FILES")
+    assert "sv_ttk/sv.tcl" in files
+    for mode in ("light", "dark"):
+        assert f"sv_ttk/theme/{mode}.tcl" in files
+        assert f"sv_ttk/theme/spritesheet_{mode}.png" in files
 
 
 def test_spec_optimizes_the_bytecode_and_does_not_use_upx_or_strip():

@@ -29,11 +29,12 @@ The script does these steps:
 
 1. It installs the locked dependencies with the `gui` extra and the `build` group.
 2. It builds `dist\Pixheet.exe` from `pixheet.spec`.
-3. It runs `check_exe.py`. The exe must pass the smoke test, and it must convert a test
-   image correctly. Then the exe converts images of 11 formats and modes, for example
-   AVIF, WebP, a CMYK JPEG with an ICC profile, and a LAB TIFF. Each sheet must be the
-   same, byte for byte, as the sheet of `pixheet.convert` in Python. If the exe does not
-   stop in 120 seconds, `check_exe.py` stops it and all processes that it started.
+3. It runs `check_exe.py`. The exe must pass the smoke test with the light and the dark
+   Sun Valley theme, and it must convert a test image correctly. Then the exe converts
+   images of 11 formats and modes, for example AVIF, WebP, a CMYK JPEG with an ICC
+   profile, and a LAB TIFF. Each sheet must be the same, byte for byte, as the sheet of
+   `pixheet.convert` in Python. If the exe does not stop in 120 seconds, `check_exe.py`
+   stops it and all processes that it started.
 4. It writes `dist\Pixheet.exe.sha256`.
 
 The script sets `PYINSTALLER_CONFIG_DIR` to `build\pyinstaller-config`. With `--clean`,
@@ -60,7 +61,11 @@ PyInstaller without the script, use these commands:
 
 With `--smoke`, the app opens the window and closes it when it has nothing to do. When
 you give image paths, the app converts them first. The exit code is 1 when the app
-finds a problem. A built app must also have the window icon and drag and drop.
+finds a problem. A built app must also have the window icon, drag and drop, and the
+Sun Valley theme of sv-ttk. The app also prints the name of its ttk theme.
+`check_exe.py` runs the smoke test with `PIXHEET_THEME=light` and with
+`PIXHEET_THEME=dark`. The name must be `sun-valley-light` or `sun-valley-dark`, not the
+name of a standard Tk theme.
 
 The exe shows the version of `pyproject.toml` in its properties. To change the icon,
 edit `make_icon.py`, then run `uv run python packaging/make_icon.py`. Commit the script
@@ -68,8 +73,9 @@ and the new `pixheet.ico`. A test makes sure that the two agree.
 
 ## The size of the exe
 
-The one-file exe is about 13.7 MB. Without the changes below, it is about
-19.6 MB. `build.ps1` shows 13.1 MB, because it counts 1 MB as 1,048,576 bytes. The spec
+The one-file exe is about 13.8 MB. Without the changes below, it is about
+19.6 MB. `build.ps1` shows 13.2 MB, because it counts 1 MB as 1,048,576 bytes. The
+Sun Valley theme adds about 55 KB. The spec
 keeps all the features. It makes these changes. Each number is the saving of one change
 alone:
 
@@ -79,7 +85,7 @@ alone:
 | `EXCLUDES`: `multiprocessing`, `decimal`, `xml`, `lzma`, `bz2`, `compression.zstd`, `argparse` and more | about 1.8 MB | pixheet uses threads, not processes. The xlsx file uses only deflate. Pillow needs `xml` only in `Image.getxmp()`. Only the CLI uses `argparse`, and the exe has no CLI. |
 | `EXCLUDES`: `PIL.ImageTk`, `PIL.ImageQt`, `PIL.ImageShow`, `PIL.ImageWin`, `PIL.ImageFilter`, and the save-only PDF and Palm plugins | about 0.2 MB | pixheet never calls these modules. `PIL.ImageCms` stays, because LAB images need it. |
 | `optimize=2` | about 0.5 MB | It removes the docstrings and the `assert` statements from the bytecode. No code of the app reads `__doc__`. The one `assert`, in `_xlsx.py`, is always true on Windows. |
-| `trim_tcltk.py` | about 1.1 MB | It removes the time zone data, most encodings, and the Tk demo images. It also removes the messages for other languages, and the Tk scripts for X11 and macOS. |
+| `trim_tcltk.py` | about 1.1 MB | It removes the time zone data, most encodings, and the Tk demo images. It also removes the messages for other languages, and the Tk scripts for X11 and macOS. It keeps all ttk themes, also `clam`, which the Sun Valley theme extends. |
 
 These changes are not in the spec:
 
@@ -92,7 +98,7 @@ The spec also stops the build in these conditions:
 - A module in `UNWANTED_MODULES` or a file in `UNWANTED_FILES` is in the bundle. A new
   hook or a new import can bring back an excluded module.
 - A module in `REQUIRED_MODULES` or a file in `REQUIRED_FILES` is not in the bundle,
-  for example `PIL._avif` or the tkdnd DLL.
+  for example `PIL._avif`, the tkdnd DLL, or the Tcl and PNG files of sv-ttk.
 - `trim_tcltk.py` cannot read a Tcl or Tk DLL, or the DLL is not a PE file. A code
   signature also stops the build.
 - `trim_tcltk.py` does not find a correct zip archive after the PE image of a DLL.

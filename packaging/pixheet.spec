@@ -17,7 +17,7 @@
 #   3. optimize=2 removes the docstrings and the assert statements from the bytecode.
 #   4. trim_tcltk.py removes files that the app does not use from the Tcl and Tk DLLs.
 # The spec does not use UPX or strip. See the comments at each change. Together, the
-# changes make the one-file exe about 13.7 MB, from 19.6 MB.
+# changes make the one-file exe about 13.8 MB, from 19.6 MB.
 #
 # If new code in pixheet or in the GUI imports a module in EXCLUDES, the tests pass, but
 # the exe stops with ModuleNotFoundError. After such a change, run packaging/build.ps1.
@@ -175,12 +175,14 @@ UNWANTED_MODULES = [
 UNWANTED_FILES = ["libcrypto-3-x64.dll", "libssl-3-x64.dll"]
 
 # The build stops if one of these modules is not in the bundle. The image formats need
-# the Pillow extension modules. LAB images need PIL._imagingcms.
+# the Pillow extension modules. LAB images need PIL._imagingcms. sv_ttk gives the window
+# the Sun Valley theme.
 REQUIRED_MODULES = [
     "pixheet.gui",
     "tkinter",
     "_tkinter",
     "tkinterdnd2",
+    "sv_ttk",
     "PIL._imaging",
     "PIL._imagingcms",
     "PIL.ImageCms",
@@ -188,10 +190,19 @@ REQUIRED_MODULES = [
     "PIL._avif",
 ]
 # The build stops if no file in the bundle agrees with one of these patterns.
+# The sv-ttk hook of pyinstaller-hooks-contrib collects the Tcl scripts and images of
+# the theme.
 REQUIRED_FILES = [
     "tcl90.dll",
     "tcl9tk90.dll",
     "tkinterdnd2/tkdnd/win-x64-*/libtkdnd*.dll",
+    "sv_ttk/sv.tcl",
+    "sv_ttk/theme/light.tcl",
+    "sv_ttk/theme/dark.tcl",
+    "sv_ttk/theme/sprites_light.tcl",
+    "sv_ttk/theme/sprites_dark.tcl",
+    "sv_ttk/theme/spritesheet_light.png",
+    "sv_ttk/theme/spritesheet_dark.png",
 ]
 
 a = Analysis(

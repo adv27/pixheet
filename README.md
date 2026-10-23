@@ -109,7 +109,7 @@ To build Pixheet.exe from a checkout, run this command in PowerShell:
 > powershell -ExecutionPolicy Bypass -File packaging\build.ps1
 ```
 
-The script builds `dist\Pixheet.exe`, about 13.7 MB, and tests it. Add `-OneDir` to
+The script builds `dist\Pixheet.exe`, about 13.8 MB, and tests it. Add `-OneDir` to
 build the folder `dist\Pixheet\`. The folder starts faster, because the exe does not
 extract itself each time. [packaging/README.md](packaging/README.md) gives more data
 about the build and the CI.
