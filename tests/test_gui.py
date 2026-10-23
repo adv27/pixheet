@@ -22,6 +22,7 @@ from pixheet._plan import (
     Job,
     JobQueue,
     Progress,
+    ReplaceQuestion,
     Started,
     Stopped,
     Tally,
@@ -2475,6 +2476,108 @@ def test_real_tkdnd_registers_the_drop_zone():
     result = run_python("-c", REGISTER_DROP)
     assert result.returncode == 0, result.stderr
     assert result.stdout.split() == ["True", "''", "grid", "True", "True"]
+
+
+# --- The replace dialog --------------------------------------------------------------
+
+
+def existing_outputs(tmp_path, count):
+    paths = []
+    for i in range(count):
+        path = tmp_path / ("Beach" if i % 2 else "Da Lat") / f"IMG_{i}.xlsx"
+        path.parent.mkdir(exist_ok=True)
+        path.write_bytes(b"old")
+        paths.append(path)
+    return paths
+
+
+def descendants(widget):
+    for child in widget.winfo_children():
+        yield child
+        yield from descendants(child)
+
+
+@pytest.mark.parametrize("button", ["replace", "skip", "cancel", "close"])
+def test_replace_dialog_answers(harness, tmp_path, button):
+    h = harness()
+    question = ReplaceQuestion(existing_outputs(tmp_path, 3), other_count=53)
+    dialog = gui.ReplaceDialog(
+        h.root, question, heading_font=h.app._big_font, strong_font=h.app._strong_font
+    )
+    texts = {key: b.cget("text") for key, b in dialog.buttons.items()}
+    assert texts == {"replace": "Replace all", "skip": "Skip these 3", "cancel": "Cancel"}
+    assert dialog.focus is dialog.buttons["skip"]  # Enter does not replace
+    assert dialog.buttons["skip"].cget("style") == "Accent.TButton"
+    rows = [dialog.tree.item(iid) for iid in dialog.tree.get_children()]
+    assert [row["values"][0] for row in rows][:3] == [
+        middle_ellipsis(str(tmp_path / "Da Lat"), 48),
+        "      IMG_0.xlsx",
+        "      IMG_2.xlsx",
+    ]
+    assert rows[0]["values"][1] == "2 files"
+    assert rows[0]["tags"] == ["folder"]
+    assert len(str(rows[1]["values"][1])) == len("2026-10-15 10:25")
+    labels = [w.cget("text") for w in descendants(dialog.top) if isinstance(w, ttk.Label)]
+    assert labels[:2] == [
+        "3 output files exist",
+        "They are in 2 folders. The app can replace them. "
+        "Or it can skip these images and convert the other 53.",
+    ]
+
+    def click():
+        if button == "close":
+            h.root.tk.call(dialog.top.protocol("WM_DELETE_WINDOW"))
+        else:
+            dialog.buttons[button].invoke()
+
+    h.root.after(50, click)
+    assert dialog.run() == ("cancel" if button == "close" else button)
+    assert destroyed(dialog.top)
+
+
+def test_replace_dialog_for_one_file_without_other_images(harness, tmp_path):
+    h = harness()
+    [path] = existing_outputs(tmp_path, 1)
+    question = ReplaceQuestion([path], other_count=0)
+    dialog = gui.ReplaceDialog(
+        h.root, question, heading_font=h.app._big_font, strong_font=h.app._strong_font
+    )
+    assert set(dialog.buttons) == {"replace", "cancel"}  # no Skip button
+    assert dialog.buttons["replace"].cget("text") == "Replace"
+    assert dialog.focus is dialog.buttons["cancel"]
+    assert dialog.tree is None
+    assert dialog.top.bind("<Escape>")
+    h.root.after(50, dialog.buttons["replace"].invoke)
+    assert dialog.run() == "replace"
+
+
+def test_the_app_asks_with_the_replace_dialog(tmp_path):
+    root = new_root()
+    try:
+        app = gui.App(root, dnd_type=None)
+        a = image(tmp_path / "a.png")
+        a.with_suffix(".xlsx").write_bytes(b"old")
+        b = image(tmp_path / "b.png")
+        seen = []
+
+        def answer():
+            top = next(w for w in root.winfo_children() if isinstance(w, tk.Toplevel))
+            buttons = {w.cget("text"): w for w in descendants(top) if isinstance(w, ttk.Button)}
+            seen.append(sorted(buttons))
+            buttons["Skip this file"].invoke()
+
+        root.after(100, answer)
+        app.add_paths([a, b])
+        deadline = time.monotonic() + 20
+        while app.busy:
+            assert time.monotonic() < deadline
+            root.update()
+        assert seen == [["Cancel", "Replace", "Skip this file"]]
+        assert [row.state for row in app.rows.values()] == ["skipped", "done"]
+        assert a.with_suffix(".xlsx").read_bytes() == b"old"
+        app.dispose()
+    finally:
+        root.destroy()
 
 
 def test_the_path_line_of_the_details_fits_the_window(harness, tmp_path):

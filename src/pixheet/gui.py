@@ -103,8 +103,6 @@ FOLLOW_ABOVE = 3
 STATUS_WIDTH = 220
 """The width of the Status column at 100 % scale, in pixels."""
 ARROW = " → "
-MAX_LISTED = 10
-"""Maximum number of file names in one dialog."""
 
 DROP_TEXT = "Drop images or folders here"
 NO_DND_TEXT = "Drag and drop is not available. Use Add files or Add folder."
@@ -215,6 +213,14 @@ def _same_file(a: Path, b: Path) -> bool:
         return a.samefile(b)
     except OSError:
         return False
+
+
+def changed_text(path: Path) -> str:
+    """Return the time of the last change of ``path``, for example "2026-10-15 10:25"."""
+    try:
+        return time.strftime("%Y-%m-%d %H:%M", time.localtime(path.stat().st_mtime))
+    except OSError, OverflowError, ValueError:
+        return ""
 
 
 # --- The worker ----------------------------------------------------------------------
@@ -726,6 +732,133 @@ def _configure_style(root: tk.Tk, style: str, option: str, value: object) -> Non
     styles = ttk.Style(root)
     if str(styles.configure(style, query_opt=option)) != str(value):
         styles.configure(style, **{option: value})
+
+
+class ReplaceDialog:
+    """Ask one time what to do with the output files of a drop that exist.
+
+    The answer is "replace", "skip" or "cancel". The Skip button has the focus, so Enter
+    does not replace files. When the drop has no other images, the dialog has no Skip
+    button, and Cancel has the focus. Esc and the close box give "cancel".
+
+    A message box cannot name its buttons, so the dialog is a Toplevel. The list shows
+    one bold row for each folder, and below it the files in that folder.
+    """
+
+    def __init__(
+        self,
+        root: tk.Tk,
+        question: ReplaceQuestion,
+        *,
+        heading_font: Any,
+        strong_font: Any,
+        dark: bool = False,
+    ) -> None:
+        self.root = root
+        self.answer = "cancel"
+        self.dark = dark
+        scale = root.winfo_fpixels("1i") / 96
+        top = self.top = tk.Toplevel(root)
+        top.withdraw()  # place it first, then show it
+        top.title(TITLE)
+        top.transient(root)
+        top.resizable(False, False)
+        body = ttk.Frame(top, padding=20)
+        body.pack(fill="both", expand=True)
+        ttk.Label(body, text=question.heading, font=heading_font).pack(anchor="w")
+        ttk.Label(body, text=question.text, wraplength=round(460 * scale), justify="left").pack(
+            anchor="w", pady=(6, 10)
+        )
+        self.tree: ttk.Treeview | None = None
+        if len(question.existing) == 1:
+            path = question.existing[0]
+            ttk.Label(body, text=f"{path.parent}{SEP}{changed_text(path)}").pack(anchor="w")
+        else:
+            self.tree = self._build_list(body, question, strong_font, scale)
+        buttons = ttk.Frame(body, padding=(0, 16, 0, 0))
+        buttons.pack(fill="x")
+        self.buttons: dict[str, ttk.Button] = {}
+        self.buttons["cancel"] = ttk.Button(
+            buttons, text="Cancel", command=lambda: self.close("cancel")
+        )
+        self.buttons["cancel"].pack(side="right")
+        if question.skip_label is not None:
+            self.buttons["skip"] = ttk.Button(
+                buttons,
+                text=question.skip_label,
+                style="Accent.TButton",
+                command=lambda: self.close("skip"),
+            )
+            self.buttons["skip"].pack(side="right", padx=(0, 8))
+        self.buttons["replace"] = ttk.Button(
+            buttons, text=question.replace_label, command=lambda: self.close("replace")
+        )
+        self.buttons["replace"].pack(side="right", padx=(0, 8))
+        self.focus = self.buttons.get("skip", self.buttons["cancel"])
+        for button in self.buttons.values():
+            button.bind("<Return>", lambda event: event.widget.invoke())
+        top.bind("<Escape>", lambda event: self.close("cancel"))
+        top.protocol("WM_DELETE_WINDOW", lambda: self.close("cancel"))
+        top.bind("<Map>", self._on_map, add="+")
+        top.update_idletasks()
+        x = root.winfo_rootx() + (root.winfo_width() - top.winfo_reqwidth()) // 2
+        y = root.winfo_rooty() + max(20, (root.winfo_height() - top.winfo_reqheight()) // 3)
+        top.geometry(f"+{max(0, x)}+{max(0, y)}")
+
+    @staticmethod
+    def _build_list(
+        body: ttk.Frame, question: ReplaceQuestion, strong_font: Any, scale: float
+    ) -> ttk.Treeview:
+        # A flat list with bold folder rows, not a tree. With Tk 9, sv-ttk shows the
+        # wrong arrows for the rows of a tree.
+        groups = question.folders
+        count = len(question.existing) + len(groups)
+        box = ttk.Frame(body)
+        box.pack(fill="both", expand=True)
+        tree = ttk.Treeview(
+            box,
+            columns=("file", "changed"),
+            show="headings",
+            height=min(9, count),
+            selectmode="none",
+            takefocus=0,
+        )
+        tree.heading("file", text="File", anchor="w")
+        tree.heading("changed", text="Changed", anchor="w")
+        tree.column("file", width=round(330 * scale), anchor="w")
+        tree.column("changed", width=round(140 * scale), stretch=False, anchor="w")
+        tree.tag_configure("folder", font=strong_font)
+        for folder, files in groups:
+            label = middle_ellipsis(str(folder), 48)
+            tree.insert("", "end", values=(label, _plural(len(files), "file")), tags=("folder",))
+            for path in files:
+                tree.insert("", "end", values=(f"      {path.name}", changed_text(path)))
+        tree.pack(side="left", fill="both", expand=True)
+        if count > 9:
+            bar = ttk.Scrollbar(box, orient="vertical", command=tree.yview)
+            tree.configure(yscrollcommand=bar.set)
+            bar.pack(side="right", fill="y")
+        return tree
+
+    def _on_map(self, event: tk.Event) -> None:
+        if event.widget is self.top:
+            set_title_bar(self.top, dark=self.dark)
+
+    def run(self) -> str:
+        """Show the dialog and wait until it closes. Return the answer."""
+        self.top.deiconify()
+        self.focus.focus_set()
+        with contextlib.suppress(tk.TclError):  # X11 refuses a grab of a hidden window
+            self.top.grab_set()
+        self.top.wait_window()
+        return self.answer
+
+    def close(self, answer: str) -> None:
+        """Close the dialog with ``answer``."""
+        self.answer = answer
+        with contextlib.suppress(tk.TclError):
+            self.top.grab_release()
+            self.top.destroy()
 
 
 class App:
@@ -1364,14 +1497,15 @@ class App:
             self.add_paths([Path(name)])
 
     def _ask_replace(self, question: ReplaceQuestion) -> str:
-        """Ask about the outputs that exist. Return "replace", "skip" or "cancel"."""
-        names = [str(path) for path in question.existing[:MAX_LISTED]]
-        if len(question.existing) > MAX_LISTED:
-            names.append(f"and {len(question.existing) - MAX_LISTED:,} more")
-        lines = [f"{question.heading}.", "", *names, "", question.text, ""]
-        lines.append("Yes replaces the files. No skips these images.")
-        answer = messagebox.askyesnocancel(TITLE, "\n".join(lines), parent=self.root)
-        return {True: "replace", False: "skip"}.get(answer, "cancel")
+        """Show the replace dialog. Return "replace", "skip" or "cancel"."""
+        dialog = ReplaceDialog(
+            self.root,
+            question,
+            heading_font=self._big_font,
+            strong_font=self._strong_font,
+            dark=self.mode() == "dark",
+        )
+        return dialog.run()
 
     @contextlib.contextmanager
     def _watch_cursor(self) -> Iterator[None]:
