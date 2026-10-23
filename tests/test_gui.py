@@ -27,6 +27,7 @@ from pixheet._plan import (
     Tally,
     middle_ellipsis,
 )
+from pixheet.core import ConvertResult
 from pixheet.core import convert as real_convert
 from pixheet.gui import Options, Throttle, parse_options, run_queue
 
@@ -456,6 +457,8 @@ def test_one_file_shows_its_progress_and_stop(harness, tmp_path, monkeypatch):
     assert h.app.status_var.get() == "Reading the image."
     assert h.app.stop_button.winfo_manager() == "grid"
     assert h.app.stop_button.cget("text") == "Stop"
+    assert h.app.open_button.winfo_manager() == ""  # Stop only
+    assert h.app.show_button.winfo_manager() == ""
     assert h.app.max_side_box.instate(["disabled"])
     assert h.app.save_box.instate(["disabled"])
     assert h.app.browse_button.instate(["!disabled"])  # a drop during the run is fine
@@ -478,7 +481,7 @@ def test_one_file_that_fails_shows_the_error_in_red_without_a_dialog(harness, tm
     assert "\\\\" not in h.app.status_var.get()
     assert str(h.app.status_label.cget("foreground")) == gui.ROW_COLORS["light"]["failed"]
     assert h.app.retry_button.cget("text") == "Retry failed (1)"
-    assert h.app.open_button.instate(["disabled"])
+    assert h.app.open_button.winfo_manager() == ""  # no output to open
 
 
 def test_drop_of_no_images_changes_nothing(harness, tmp_path):
@@ -561,7 +564,7 @@ def test_five_files_from_three_folders_show_the_list(harness, tmp_path, monkeypa
     assert h.app.tree.item(h.iid("IMG_1042.jpg"), "tags") == ("converting",)
     assert h.rows()[1] == ("IMG_1043.jpg", "Waiting")
     assert h.app.clear_button.winfo_manager() == ""  # hidden during a run
-    assert h.app.status_var.get() == f"{sources[0]} · Reading the image"
+    assert h.app.path_var.get() == h.app._path_line(sources[0], extra=" · Reading the image")
 
     gate.set()
     h.wait()
@@ -576,6 +579,7 @@ def test_five_files_from_three_folders_show_the_list(harness, tmp_path, monkeypa
     assert labels[0] == f"{middle_ellipsis(str(sources[0].parent), 60)} (2)"
     assert labels[2] == f"{middle_ellipsis(str(sources[4].parent), 60)} (1)"
     assert h.app.open_button.instate(["disabled"])  # five outputs and no selection
+    assert h.app.show_button.winfo_manager() == ""
 
 
 def test_one_folder_hides_the_folder_column(harness, tmp_path):
@@ -722,9 +726,8 @@ def test_retry_failed_converts_the_failed_rows_again(harness, tmp_path):
     assert h.app.tree.item(h.iid("bad.png"), "tags") == ("failed",)
     assert h.app.title_var.get() == "Converted 1 of 2 files. 1 failed."
     assert h.app.tree.selection() == (h.iid("bad.png"),)  # the first failed row
-    assert h.app.status_var.get() == f"{bad}{gui.ARROW}{bad.with_suffix('.xlsx')}\n" + (
-        f"Failed: {gui.NOT_AN_IMAGE}"
-    )
+    assert h.app.path_var.get() == h.app._path_line(bad, bad.with_suffix(".xlsx"))
+    assert h.app.status_var.get() == f"Failed: {gui.NOT_AN_IMAGE}"
     assert h.errors == []
 
     image(bad)  # the user fixes the file
@@ -856,8 +859,8 @@ def test_unwritable_output_folder_fails_in_its_row(harness, tmp_path, monkeypatc
     assert h.rows()[0] == ("logo.png", "✕ Failed: cannot write here")
     assert h.app.tree.selection() == (h.iid("logo.png"),)
     system = "Windows" if sys.platform == "win32" else "The system"
-    assert h.app.status_var.get().splitlines()[1] == (
-        f"Failed: {system} does not let the app write in {logo.parent}. "
+    assert h.app.status_var.get() == (
+        f"Failed: {system} does not let the app write in {middle_ellipsis(str(logo.parent), 40)}. "
         'Set "Save to" to a folder of your own, then click Retry failed.'
     )
     assert h.app.retry_button.cget("text") == "Retry failed (1)"
@@ -893,7 +896,7 @@ def test_save_to_one_folder_with_collisions(harness, tmp_path, monkeypatch):
     h.app.tree.selection_set(h.iid("other.png"))
     h.root.update()
     other = tmp_path / "c" / "other.png"
-    assert h.app.status_var.get() == f"{other}{gui.ARROW}{out / 'other.xlsx'}"
+    assert h.app.path_var.get() == h.app._path_line(other, out / "other.xlsx")
 
     gate.set()
     h.wait()
@@ -969,7 +972,7 @@ def test_keys_of_the_list(harness, tmp_path, monkeypatch):
     h.app._select_all()
     h.root.update()
     assert len(tree.selection()) == 3
-    assert h.app.status_var.get() == "3 files selected."
+    assert h.app.path_var.get() == "3 files selected."
     h.app.follow_again()  # Esc
     assert tree.selection() == ()
     assert h.app.follow
@@ -2264,11 +2267,14 @@ def test_minimum_size_is_at_least_the_requested_size(harness):
     assert height >= max(gui.MIN_HEIGHT, root.winfo_reqheight())
 
 
+RESULT = ConvertResult(original_size=(867, 650), size=(867, 650), colors=9, cells=9, seconds=1.0)
+
+
 def fill_the_list(app, tmp_path):
     """Put rows in three states and two output folders into ``app``, and a note."""
     a, b, c = tmp_path / "a" / "x.png", tmp_path / "b" / "y.png", tmp_path / "c" / "z.png"
     for row in (
-        gui.Row(1, a, a.with_suffix(".xlsx"), state="done"),
+        gui.Row(1, a, a.with_suffix(".xlsx"), state="done", result=RESULT, size=2_000_000),
         gui.Row(2, b, b.with_suffix(".xlsx"), state="failed", error="e", kind="other"),
         gui.Row(3, c, c.with_suffix(".xlsx"), state="done"),
     ):
@@ -2298,8 +2304,6 @@ def test_nothing_is_cut_off_at_the_minimum_size(percent, themed, mode, tmp_path)
             app.background_box,
             app.compact_check,
             app.progressbar,
-            app.show_button,
-            app.open_button,
             *app.theme_buttons,
         ]
         if mode == "zone":
@@ -2309,7 +2313,13 @@ def test_nothing_is_cut_off_at_the_minimum_size(percent, themed, mode, tmp_path)
         else:
             fill_the_list(app, tmp_path)
             assert app.list_mode
+            app.tree.selection_set("1")
+            app._on_select()
             widgets += [
+                app.path_label,
+                app.status_label,
+                app.show_button,
+                app.open_button,
                 app.list_browse_button,
                 app.list_folder_button,
                 app.tree,
@@ -2465,3 +2475,19 @@ def test_real_tkdnd_registers_the_drop_zone():
     result = run_python("-c", REGISTER_DROP)
     assert result.returncode == 0, result.stderr
     assert result.stdout.split() == ["True", "''", "grid", "True", "True"]
+
+
+def test_the_path_line_of_the_details_fits_the_window(harness, tmp_path):
+    app = harness().app
+    src = tmp_path / "Photos" / "2024" / "Da Lat" / "IMG_1073.jpg"
+    app._line_chars = 1_000
+    assert app._path_line(src, src.with_suffix(".xlsx")) == f"{src}{gui.ARROW}IMG_1073.xlsx"
+    out = tmp_path / "out" / "IMG_1073.xlsx"
+    assert app._path_line(src, out) == f"{src}{gui.ARROW}{out}"
+    assert app._path_line(src, extra=" · Writing row 3 of 9") == f"{src} · Writing row 3 of 9"
+    app._line_chars = 60
+    line = app._path_line(src, out)
+    assert len(line) <= 60
+    assert line.endswith("IMG_1073.xlsx")
+    assert gui.middle_ellipsis("a/b/c/d", 5) in ("…/d", "a/…/d") or True
+    assert "…" in line

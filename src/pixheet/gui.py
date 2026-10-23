@@ -924,13 +924,19 @@ class App:
         self.failed_only_button.grid(row=0, column=1, sticky="e")
         self.failed_only_button.grid_remove()
 
-        # Row 6: the status of one image, or the details of the selected row.
+        # Rows 6 and 7: the details of the selected row in the list, on two lines: the
+        # files, then the result. With one image, row 7 is the status of the image.
+        self.path_var = tk.StringVar(root, value="")
+        self.path_label = ttk.Label(body, textvariable=self.path_var)
+        self.path_label.grid(row=6, column=0, sticky="ew", pady=(4, 0))
+        self._line_chars = 100
+        """The number of characters that fit on one line of the details."""
         self.status_var = tk.StringVar(root, value="")
         self.status_label = ttk.Label(body, textvariable=self.status_var, justify="left")
-        self.status_label.grid(row=6, column=0, sticky="ew")
+        self.status_label.grid(row=7, column=0, sticky="ew")
         body.bind("<Configure>", self._wrap_status, add="+")
 
-        # Row 7: the buttons.
+        # Row 8: the buttons.
         self._build_buttons(body)
         root.bind("<Control-o>", lambda event: self.browse())
         root.bind("<<ThemeChanged>>", self._on_theme_changed, add="+")
@@ -983,14 +989,16 @@ class App:
             columns=("name", "folder", "status"),
             show="headings",
             selectmode="extended",
-            height=4,
+            height=5,
         )
         tree.heading("name", text="Name", anchor="w")
         tree.heading("folder", text="Folder", anchor="w")
         tree.heading("status", text="Status", anchor="w")
         width = round(STATUS_WIDTH * self._scale)
-        tree.column("name", width=width, minwidth=round(80 * self._scale), stretch=True)
-        tree.column("folder", width=width, minwidth=round(80 * self._scale), stretch=True)
+        # Name and Folder share the free width. These widths only set the minimum size.
+        narrow = round(150 * self._scale)
+        tree.column("name", width=narrow, minwidth=round(80 * self._scale), stretch=True)
+        tree.column("folder", width=narrow, minwidth=round(80 * self._scale), stretch=True)
         tree.column("status", width=width, minwidth=width, stretch=False)
         bar = ttk.Scrollbar(frame, orient="vertical", command=tree.yview)
         tree.configure(yscrollcommand=bar.set)
@@ -1051,7 +1059,7 @@ class App:
 
     def _build_buttons(self, body: ttk.Frame) -> None:
         bar = ttk.Frame(body, padding=(0, 12, 0, 0))
-        bar.grid(row=7, column=0, sticky="ew")
+        bar.grid(row=8, column=0, sticky="ew")
         bar.columnconfigure(3, weight=1)
         self.buttons = bar
         self.stop_button = ttk.Button(bar, text="Stop", command=self._left_action)
@@ -1177,7 +1185,8 @@ class App:
         resolution. A smaller window cuts off a part of the options row. The size includes
         the list and the note bar, so the list keeps some rows at the minimum size.
         """
-        hidden = [widget for widget in (self.list_frame, self.note) if not widget.winfo_manager()]
+        widgets = (self.list_frame, self.note, self.note_button, self.path_label, self.status_label)
+        hidden = [widget for widget in widgets if not widget.winfo_manager()]
         for widget in hidden:
             widget.grid()
         self.root.update_idletasks()
@@ -1187,7 +1196,19 @@ class App:
         self.root.minsize(max(MIN_WIDTH, width), max(MIN_HEIGHT, height))
 
     def _wrap_status(self, event: tk.Event) -> None:
-        self.status_label.configure(wraplength=max(event.width - 32, 100))
+        width = max(event.width - 32, 100)
+        self.status_label.configure(wraplength=width)
+        name = ttk.Style(self.root).lookup("TLabel", "font") or "TkDefaultFont"
+        try:
+            font = tkfont.nametofont(name, root=self.root)
+        except tk.TclError:
+            font = tkfont.nametofont("TkDefaultFont", root=self.root)
+        sample = "abcdefghijklmnopqrstuvwxyz ABCDEFGHIJKLMNOPQRSTUVWXYZ 0123456789\\"
+        chars = int(width / (font.measure(sample) / len(sample)))
+        if chars != self._line_chars:
+            self._line_chars = chars
+            if self.list_mode:
+                self._refresh_details()
 
     def _wrap_note(self, event: tk.Event) -> None:
         extra = self.note_button.winfo_reqwidth() if self.note_button.winfo_manager() else 0
@@ -2005,18 +2026,46 @@ class App:
         self.open_button.state(state)
         accent = target is not None and not running
         self.open_button.configure(style="Accent.TButton" if accent else "TButton")
+        # With one image, the zone shows Stop only during the run, and the two buttons
+        # after a done run. The list always shows Open, and Show in folder for a target.
+        if self.list_mode:
+            show, open_ = target is not None, True
+        else:
+            show = open_ = not running and tally.done > 0
+        for button, visible in ((self.show_button, show), (self.open_button, open_)):
+            if visible:
+                button.grid()
+            else:
+                button.grid_remove()
 
-    def _row_details(self, row: Row) -> tuple[str, bool]:
-        lines = [f"{row.src}{ARROW}{row.dst}"]
-        failed = False
+    def _path_line(self, src: Path, dst: Path | None = None, extra: str = "") -> str:
+        """Return line 1 of the details: the image and its output, on one line.
+
+        The output shows as a name when it is in the folder of the image. A long path
+        gets "…" in the middle, so that the line fits the window.
+        """
+        budget = max(24, self._line_chars - len(extra))
+        source = str(src)
+        if dst is None:
+            return middle_ellipsis(source, budget) + extra
+        target = dst.name if path_key(dst.parent) == path_key(src.parent) else str(dst)
+        if len(source) + len(ARROW) + len(target) > budget:
+            target = middle_ellipsis(target, max(12, budget // 2 - len(ARROW)))
+            source = middle_ellipsis(source, max(12, budget - len(ARROW) - len(target)))
+        return f"{source}{ARROW}{target}{extra}"
+
+    def _row_details(self, row: Row) -> tuple[str, str, bool]:
+        """Return the two lines of the details of ``row``, and True for a failed row."""
+        path = self._path_line(row.src, row.dst)
         if row.state == DONE and row.result is not None:
-            lines.append(result_text(row.result))
-        elif row.state == FAILED:
-            lines.append(f"Failed: {failure_detail(row.kind, row.error, row.dst)}")
-            failed = True
-        elif row.state == CONVERTING and self._current_text:
-            lines.append(self._current_text)
-        return "\n".join(lines), failed
+            return path, result_text(row.result), False
+        if row.state == FAILED:
+            # The folder is in line 1 already. A short folder keeps the reason short.
+            short = Path(middle_ellipsis(str(row.dst.parent), 40)) / row.dst.name
+            return path, f"Failed: {failure_detail(row.kind, row.error, short)}", True
+        if row.state == CONVERTING:
+            return path, self._current_text, False
+        return path, "", False
 
     def _zone_details(self, row: Row | None) -> tuple[str, bool]:
         if row is None:
@@ -2036,8 +2085,12 @@ class App:
         return "", False
 
     def _refresh_details(self) -> None:
-        """Show the status line of one image, or the details line of the list."""
+        """Show the status line of one image, or the two details lines of the list.
+
+        Line 1 names the files. Line 2 tells the result, in red for an error.
+        """
         failed = False
+        path = text = ""
         if self._stopping_text:
             text = self._stopping_text
         elif not self.list_mode:
@@ -2046,14 +2099,18 @@ class App:
             rows = self._selected_rows()
             current = self.rows.get(self.current) if self.current is not None else None
             if len(rows) == 1:
-                text, failed = self._row_details(rows[0])
+                path, text, failed = self._row_details(rows[0])
             elif rows:
-                text = f"{len(rows):,} files selected."
+                path = f"{len(rows):,} files selected."
             elif current is not None:
-                text = f"{current.src}{SEP}{self._current_text.rstrip('.')}"
-            else:
-                text = ""
+                path = self._path_line(current.src, extra=f"{SEP}{self._current_text.rstrip('.')}")
+        self.path_var.set(path)
         self.status_var.set(text)
+        for label, value in ((self.path_label, path), (self.status_label, text)):
+            if value:
+                label.grid()
+            else:
+                label.grid_remove()
         if failed != self._status_failed:
             self._status_failed = failed
             colors = ROW_COLORS[self.mode()]
