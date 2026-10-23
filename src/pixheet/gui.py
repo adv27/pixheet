@@ -392,6 +392,11 @@ sv-ttk draws this text white on light gray, with a contrast of 1.7:1. This color
 DWMWA_USE_IMMERSIVE_DARK_MODE = 20
 SWP_REDRAW_FRAME = 0x0001 | 0x0002 | 0x0004 | 0x0010 | 0x0020
 """SetWindowPos flags: no size, no move, no z-order, no activate, frame changed."""
+SHOW_DELAY_MS = 30
+"""Time from the first map of the window until the window becomes visible, in milliseconds.
+
+In this time, Windows draws the title bar in the theme mode, and Tk draws the widgets.
+"""
 
 
 def system_theme(platform: str | None = None) -> str:
@@ -526,6 +531,10 @@ class ThemeFollower:
     ``interval`` milliseconds and changes the theme when the value changes. The title bar
     on Windows gets the same mode. When sv-ttk does not load, ``theme`` is None, and the
     window keeps its ttk theme.
+
+    On Windows, the window is transparent until it shows for the first time. Windows draws
+    the first frame before Tk can set the title bar, and Tk fills the window with white
+    before it draws the theme. Without this, a dark window starts with a white flash.
     """
 
     def __init__(
@@ -542,16 +551,29 @@ class ThemeFollower:
         self.mode = source()
         self.theme = apply_theme(root, self.mode)
         self._after_id: str | None = None
+        self._hidden = False
         if self.theme is None:
             return
+        if sys.platform == "win32" and not root.winfo_ismapped():
+            root.attributes("-alpha", 0.0)
+            self._hidden = True
         root.bind("<Map>", self._on_map, add="+")
         root.bind("<Destroy>", self._on_destroy, add="+")
         if follow:
             self._after_id = root.after(interval, self.poll)
 
     def _on_map(self, event: tk.Event) -> None:
-        if event.widget is self.root:
-            set_title_bar(self.root, dark=self.mode == "dark")
+        if event.widget is not self.root:
+            return
+        set_title_bar(self.root, dark=self.mode == "dark")
+        if self._hidden:
+            self._hidden = False
+            self.root.update_idletasks()
+            self.root.after(SHOW_DELAY_MS, self._show)
+
+    def _show(self) -> None:
+        with contextlib.suppress(tk.TclError):  # the window can be gone
+            self.root.attributes("-alpha", 1.0)
 
     def _on_destroy(self, event: tk.Event) -> None:
         if event.widget is self.root:

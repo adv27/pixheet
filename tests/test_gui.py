@@ -1062,6 +1062,41 @@ def test_follower_sets_the_title_bar_when_the_window_shows(monkeypatch):
         root.destroy()
 
 
+@pytest.mark.skipif(sys.platform != "win32", reason="only the app on Windows hides its start")
+def test_follower_hides_the_window_until_it_shows_in_the_theme(monkeypatch):
+    pytest.importorskip("sv_ttk")
+    bars = []
+    monkeypatch.setattr(gui, "set_title_bar", lambda root, dark: bars.append(dark))
+    root = new_root()
+    try:
+        gui.ThemeFollower(root, ThemeSource("dark"), follow=False)
+        assert float(root.attributes("-alpha")) == 0.0
+        root.deiconify()
+        root.update()
+        assert bars == [True]  # the title bar is dark before the window becomes visible
+        deadline = time.monotonic() + 10
+        while float(root.attributes("-alpha")) < 1.0:
+            assert time.monotonic() < deadline, "the window stays transparent"
+            time.sleep(0.01)
+            root.update()
+        root.withdraw()
+        root.deiconify()
+        root.update()
+        assert float(root.attributes("-alpha")) == 1.0  # only the first time
+    finally:
+        root.destroy()
+
+
+def test_window_without_sv_ttk_is_not_hidden(monkeypatch):
+    monkeypatch.setattr(gui, "_load_sv_ttk", no_sv_ttk)
+    root = new_root()
+    try:
+        assert gui.ThemeFollower(root, ThemeSource("dark")).theme is None
+        assert float(root.attributes("-alpha")) == 1.0  # no <Map> handler shows it later
+    finally:
+        root.destroy()
+
+
 def test_follower_stops_when_the_window_closes():
     pytest.importorskip("sv_ttk")
     root = new_root()
