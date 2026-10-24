@@ -104,7 +104,13 @@ SUMMARY_SAMPLE = "Stopped. Converted 9,999 of 99,999 files. 9,999 failed. 9,999 
 POLL_MS = 50
 """Time between two reads of the message queue, in milliseconds."""
 BUSY_POLL_MS = 250
-"""Time until the next read of the message queue after a read that found messages."""
+"""Time until the next read of the message queue after a read that read all messages."""
+POLL_TIME = 0.04
+"""The maximum time of one read of the message queue, in seconds.
+
+After this time, the read stops, also when more messages wait. Then Tk can draw the window
+and handle the clicks.
+"""
 PROGRESS_INTERVAL = 0.25
 """Minimum time between two progress messages from the worker, in seconds.
 
@@ -1129,6 +1135,10 @@ class App:
         """The id of the row that converts now."""
         self._current_text = ""
         self._stopping_text = ""
+        self._new_current = False
+        """True when a row started after the last refresh of the run. The list follows it."""
+        self._new_states = False
+        """True when a row changed its state after the last refresh of the run."""
         self._run_started = 0.0
         self._run_seconds = 0.0
         self._run_processed = 0
@@ -2406,18 +2416,23 @@ class App:
     # Messages from the worker
 
     def _poll(self) -> None:
-        """Read the messages of the worker.
+        """Read the messages of the worker, for POLL_TIME at most.
 
         An error in a handler goes to the error dialog. The next poll comes anyway, so
         the app reads Finished, and the window can close. The message that failed is
         already out of the queue, thus the same error does not come again.
 
-        After a poll that read messages, the next poll comes after BUSY_POLL_MS. Thus Tk
-        draws the list at most about 4 times each second, also for many small files.
+        The views change one time at the end of a poll, not for each message. A small file
+        sends 4 messages in a few milliseconds. Without the time limit, one poll can read
+        the messages of a full run, and the window does not respond during that time.
+        When messages wait after the poll, the next poll comes after POLL_MS. After a poll
+        that read all messages, the next poll comes after BUSY_POLL_MS. Thus Tk draws the
+        list at most about 4 times each second, also for many small files.
         """
         self._poll_id = None
         messages = self.queue
-        read = False
+        read = more = False
+        end = time.perf_counter() + POLL_TIME
         try:
             while True:
                 try:
@@ -2427,13 +2442,22 @@ class App:
                 read = True
                 self._handle(message)
                 if self.worker is None or self.queue is not messages:
-                    break  # the run ended, a new worker started, or the window is gone
+                    return  # the run ended, a new worker started, or the window is gone
+                if time.perf_counter() >= end:
+                    more = not messages.empty()
+                    break
+            if read:
+                self._refresh_run()
         finally:
             if self.worker is not None and self._poll_id is None:
-                delay = BUSY_POLL_MS if read else POLL_MS
+                delay = BUSY_POLL_MS if read and not more else POLL_MS
                 self._poll_id = self.root.after(delay, self._poll)
 
     def _handle(self, message: Message) -> None:
+        """Put one message of the worker into its row, the tallies and the current row.
+
+        The views change after the messages of a poll. See :meth:`_refresh_run`.
+        """
         if isinstance(message, Finished):
             self._finish(message.stopped)
             return
@@ -2446,6 +2470,7 @@ class App:
             case Started():
                 self.current = row.id
                 self._current_text = "Reading the image."
+                self._new_current = True
             case Progress(_, done, total):
                 self._current_text = f"Writing row {done:,} of {total:,}."
             case Converted() | Failed() | Stopped():
@@ -2455,14 +2480,24 @@ class App:
                 self._run_processed += 1
                 self._run_seconds = time.monotonic() - self._run_started
         self._update_row(new)
-        if isinstance(message, Started):
-            self._follow_row(row.id)
-        self._refresh_progress()
         if new.state != old_state:
+            self._new_states = True
+
+    def _refresh_run(self) -> None:
+        """Show the messages of a poll in the progress, the buttons and the details.
+
+        When a row started, the list follows the current row. The buttons change only when
+        a row changed its state.
+        """
+        if self._new_current:
+            self._new_current = False
+            if self.current is not None:
+                self._follow_row(self.current)
+        self._refresh_progress()
+        if self._new_states:
+            self._new_states = False
             self._refresh_buttons()
-        selection = self.tree.selection() if self.list_mode else ()
-        if not selection or str(row.id) in selection:
-            self._refresh_details()
+        self._refresh_details()
 
     def _finish(self, stopped: bool) -> None:
         if self.worker is not None:
@@ -2813,9 +2848,9 @@ class App:
                 path = f"{len(rows):,} files selected."
             elif current is not None:
                 path = self._path_line(current.src, extra=f"{SEP}{self._current_text.rstrip('.')}")
-        self.path_var.set(path)
+        _set_if_changed(self.path_var, path)
         self._set_status_wrap()
-        self.status_var.set(text)
+        _set_if_changed(self.status_var, text)
         for label, value in ((self.path_label, path), (self.status_label, text)):
             if value:
                 label.grid()

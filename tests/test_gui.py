@@ -1204,11 +1204,15 @@ def test_the_bar_moves_only_by_one_percent_or_more(harness, monkeypatch, tmp_pat
     bar = []
     app.progress_var.trace_add("write", lambda *args: bar.append(app.progress_var.get()))
 
-    app._handle(gui.Progress(row.id, 1, 100))  # 0.5 % of the run of 2 files
+    def progress(done):
+        app._handle(gui.Progress(row.id, done, 100))
+        app._refresh_run()  # the end of a poll
+
+    progress(1)  # 0.5 % of the run of 2 files
     assert bar == []
-    app._handle(gui.Progress(row.id, 2, 100))
+    progress(2)
     assert bar == [0.01]
-    app._handle(gui.Progress(row.id, 3, 100))
+    progress(3)
     assert bar == [0.01]
 
     gate.set()
@@ -1243,6 +1247,114 @@ def test_the_poll_waits_longer_after_it_reads_messages(harness, monkeypatch, tmp
     gate.set()
     h.wait()
     assert h.states() == [gui.DONE, gui.DONE]
+
+
+def gated_poll(harness, monkeypatch, tmp_path):
+    """Return a harness whose worker waits in a row, and the delays of the next polls."""
+    h = harness()
+    gate = gate_convert(monkeypatch)
+    assert h.drop(image(tmp_path / "a.png", 8, 6), image(tmp_path / "b.png", 8, 6)) == "copy"
+    h.pump(converting(h))  # the worker now waits at the gate, and sends nothing
+    h.root.after_cancel(h.app._poll_id)
+    h.app._poll_id = None
+    delays = []
+    after = h.root.after
+
+    def record_after(ms, func=None, *args):
+        delays.append(ms)
+        return after(ms, func, *args)
+
+    monkeypatch.setattr(h.root, "after", record_after)
+    return h, gate, delays
+
+
+def test_one_poll_reads_messages_for_poll_time_at_most(harness, monkeypatch, tmp_path):
+    """Many small files send many messages. The window must draw and respond between them."""
+    h, gate, delays = gated_poll(harness, monkeypatch, tmp_path)
+    app = h.app
+    row = next(row for row in app.rows.values() if row.state == gui.CONVERTING)
+    handle = app._handle
+    handled = []
+
+    def slow_handle(message):
+        time.sleep(0.015)
+        handled.append(message)
+        handle(message)
+
+    monkeypatch.setattr(app, "_handle", slow_handle)
+    for done in range(1, 11):
+        app.queue.put(gui.Progress(row.id, done, 100))
+    app._poll()
+    # Each message takes 15 ms or more, so 3 messages use POLL_TIME (40 ms) or more.
+    assert 1 <= len(handled) <= 3
+    assert app.queue.qsize() == 10 - len(handled)
+    assert delays == [gui.POLL_MS]  # messages wait, so the next poll comes soon
+    done = handled[-1].done
+    assert app.tree.set(str(row.id), "status") == f"Converting {done}%"
+    assert app.path_var.get().endswith(f"Writing row {done:,} of 100")  # the details
+
+    while app.queue.qsize():
+        delays.clear()
+        app.root.after_cancel(app._poll_id)
+        app._poll_id = None
+        app._poll()
+    assert delays == [gui.BUSY_POLL_MS]
+    assert len(handled) == 10
+
+    gate.set()
+    h.wait()
+    assert h.states() == [gui.DONE, gui.DONE]
+
+
+def test_the_views_change_one_time_for_each_poll(harness, monkeypatch, tmp_path):
+    monkeypatch.setattr(gui, "POLL_TIME", 60.0)  # a slow computer must not stop the poll
+    h = harness()
+    app = h.app
+    first, second = (
+        gui.Row(app._next_id(), path, path.with_suffix(".xlsx"))
+        for path in (tmp_path / "a.png", tmp_path / "b.png")
+    )
+    for row in (first, second):
+        app._insert_row(row)
+    app._refresh_list()
+    app.worker = threading.current_thread()  # a run without a worker
+    app.run_ids = {first.id, second.id}
+    app.run_tally = Tally(waiting=2)
+    calls = []
+    for name in ("_refresh_progress", "_refresh_buttons", "_refresh_details", "_follow_row"):
+        method = getattr(app, name)
+        monkeypatch.setattr(app, name, lambda *a, _m=method, _n=name: calls.append(_n) or _m(*a))
+
+    def poll(*messages):
+        calls.clear()
+        if app._poll_id is not None:
+            h.root.after_cancel(app._poll_id)
+            app._poll_id = None
+        for message in messages:
+            app.queue.put(message)
+        app._poll()
+        return sorted(calls)
+
+    # Two rows start, and one stops: the list follows one time, to the current row.
+    messages = (Started(first.id), Progress(first.id, 50, 100), Stopped(first.id))
+    messages += (Started(second.id), Progress(second.id, 10, 100))
+    assert poll(*messages) == [
+        "_follow_row",
+        "_refresh_buttons",
+        "_refresh_details",
+        "_refresh_progress",
+    ]
+    assert app.current == second.id
+    # No state changes: the buttons stay, and the list does not move.
+    assert poll(Progress(second.id, 20, 100), Progress(second.id, 30, 100)) == [
+        "_refresh_details",
+        "_refresh_progress",
+    ]
+    assert app.tree.set(str(second.id), "status") == "Converting 30%"
+    assert poll() == []  # no messages
+    h.root.after_cancel(app._poll_id)
+    app._poll_id = None
+    app.worker = None
 
 
 @pytest.mark.parametrize("answer", ["replace", "skip", "cancel"])
@@ -1912,11 +2024,13 @@ def test_a_tick_of_500_rows_does_not_count_the_rows(harness, tmp_path, monkeypat
     app.run_ids = {row.id for row in rows}
     app.run_tally = Tally(waiting=500)
     app._handle(Started(rows[250].id))
+    app._refresh_run()
     monkeypatch.setattr(app, "_refresh_list", lambda: pytest.fail("counts the rows"))
     worst = 0.0
     for done in range(1, 101):
         t0 = time.perf_counter()
         app._handle(Progress(rows[250].id, done, 100))
+        app._refresh_run()  # one message in each poll: the worst case
         worst = max(worst, time.perf_counter() - t0)
     app.worker = None
     assert app.tree.set(str(rows[250].id), "status") == "Converting 100%"
