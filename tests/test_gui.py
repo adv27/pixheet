@@ -1305,6 +1305,8 @@ def one_done_one_failed(h, tmp_path):
 def test_select_failed_files_and_remove_converted_files(harness, tmp_path):
     h = harness()
     one_done_one_failed(h, tmp_path)
+    # The end of the run selects the failed row. Select the done row to see a change.
+    h.app.tree.selection_set(h.iid("a.png"))
     h.app.select_failed()
     assert h.app.tree.selection() == (h.iid("bad.png"),)
 
@@ -1315,6 +1317,7 @@ def test_select_failed_files_and_remove_converted_files(harness, tmp_path):
 
     h.app.clear_list()
     h.run(image(tmp_path / "c.png"))
+    h.app.tree.selection_set(h.iid("c.png"))
     h.app.select_failed()  # no failed rows: the selection is empty
     assert h.app.tree.selection() == ()
 
@@ -1407,6 +1410,8 @@ def test_right_click_and_the_menu_key_open_the_context_menu(harness, tmp_path, m
         return h.app._on_right_click(types.SimpleNamespace(y=y, x_root=500, y_root=600 + y))
 
     # A row outside the selection: the click selects it, and the menu fits that row.
+    # The end of the run selects the failed row. Select the done row to see a change.
+    h.app.tree.selection_set(h.iid("a.png"))
     assert click(30) == "break"
     assert h.app.tree.selection() == (h.iid("bad.png"),)
     # A row in the selection: the selection stays.
