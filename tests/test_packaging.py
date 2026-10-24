@@ -1279,7 +1279,7 @@ RELEASE_FILES = (
 RELEASE_NOTICES = ("THIRD-PARTY-NOTICES-windows-x64.txt", "THIRD-PARTY-NOTICES-linux-x86_64.txt")
 
 
-def test_release_waits_for_both_builds_and_publishes_four_files():
+def test_release_waits_for_both_builds_and_publishes_all_files():
     text = (WORKFLOWS / "release.yml").read_text(encoding="utf-8")
     assert "pull_request_target" not in text.replace("Do not use pull_request_target", "")
     assert "\n  build-windows:\n" in text
