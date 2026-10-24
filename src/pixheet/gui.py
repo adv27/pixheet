@@ -2006,6 +2006,13 @@ class App:
         self._refresh_list()
         if self.running:
             self._refresh_progress()
+        elif self.failed_only or self.failed_only_button.winfo_manager():
+            # The count on the toggle follows the failed rows. Without failed rows, the
+            # filter ends, and the list shows all rows again.
+            if self.tally.failed:
+                self._show_failed_toggle()
+            else:
+                self._set_failed_only(False)
         self._refresh_buttons()
         self._refresh_details()
 

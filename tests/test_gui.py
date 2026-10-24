@@ -860,6 +860,45 @@ def test_failed_only_shows_only_the_failed_rows(harness, tmp_path):
     assert h.app.tree.get_children() == tuple(h.iid(n) for n in ("a.png", "b.png", "c.png"))
 
 
+def test_failed_only_ends_when_the_user_removes_the_failed_rows(harness, tmp_path):
+    h = harness()
+    bad = [tmp_path / "b.png", tmp_path / "d.png"]
+    for path in bad:
+        path.write_text("not an image")
+    h.run(image(tmp_path / "a.png"), bad[0], image(tmp_path / "c.png"), bad[1])
+    app = h.app
+    button = app.failed_only_button
+    button.invoke()
+    assert button.cget("text") == "Failed only (2)"
+
+    app.remove_rows([app.rows[int(h.iid("b.png"))]])
+    assert app.failed_only
+    assert button.cget("text") == "Failed only (1)"
+    assert app.tree.get_children() == (h.iid("d.png"),)
+
+    app.remove_rows([app.rows[int(h.iid("d.png"))]])
+    assert not app.failed_only
+    assert not app.failed_only_var.get()
+    assert button.winfo_manager() == ""
+    assert app.eta_label.winfo_manager() == "grid"
+    assert app.tree.get_children() == (h.iid("a.png"), h.iid("c.png"))
+
+
+def test_the_failed_only_count_follows_a_removal_when_the_filter_is_off(harness, tmp_path):
+    h = harness()
+    bad = [tmp_path / "b.png", tmp_path / "d.png"]
+    for path in bad:
+        path.write_text("not an image")
+    h.run(image(tmp_path / "a.png"), bad[0], image(tmp_path / "c.png"), bad[1])
+    app = h.app
+    button = app.failed_only_button
+    app.remove_rows([app.rows[int(h.iid("b.png"))]])
+    assert button.cget("text") == "Failed only (1)"
+    app.remove_rows([app.rows[int(h.iid("d.png"))]])
+    assert button.winfo_manager() == ""
+    assert app.eta_label.winfo_manager() == "grid"
+
+
 def record_tree_writes(monkeypatch, tree):
     """Record each write of a cell or a tag of ``tree``. Reads are not in the list."""
     writes = []
