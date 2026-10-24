@@ -8,8 +8,10 @@ The desktop app uses these functions to:
 - find the path of the settings file,
 - find out if the drag and drop extension tkdnd can load into the process.
 
-Each function has a ``platform`` argument, the same values as ``sys.platform``. The tests
-use it to test the code of each system on one system. The functions do not use Tk.
+The functions with code for more than one system have a ``platform`` argument, the same
+values as ``sys.platform``. The tests use it to test the code of each system on one
+system. Some functions take ``environ``, ``load`` or ``output``, so that the tests can
+replace the system. The functions do not use Tk.
 """
 
 import contextlib

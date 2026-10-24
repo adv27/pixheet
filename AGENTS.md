@@ -16,7 +16,7 @@ Read [README.md](README.md) for usage, the Python API, and the Excel limits.
 | `src/pixheet/core.py` | `convert()`, `prepare()`, `ConvertResult`. |
 | `src/pixheet/cli.py` | The `pixheet` command. |
 | `src/pixheet/gui.py` | The `pixheet-gui` desktop app (Tkinter, with tkinterdnd2 for the file drop and sv-ttk for the theme). |
-| `src/pixheet/_desktop.py` | Private. The services of the desktop system, without Tk: open a file or a folder, show a file in its folder, the light or dark setting, the settings path, and the check that tkdnd can load. Each function has a `platform` argument for the tests. |
+| `src/pixheet/_desktop.py` | Private. The services of the desktop system, without Tk: open a file or a folder, show a file in its folder, the light or dark setting, the settings path, and the check that tkdnd can load. The functions with code for more than one system have a `platform` argument for the tests. Some functions take `environ`, `load` or `output`, so that the tests can replace the system. |
 | `src/pixheet/_plan.py` | Private. The plan of a batch for the desktop app, without Tk: the images of a drop, the output names, the row states and counts, and the texts of the list. |
 | `src/pixheet/_image.py` | Private. Opens, normalizes, and fits the image. |
 | `src/pixheet/_xlsx.py` | Private. Writes the `.xlsx` XML by hand. |
