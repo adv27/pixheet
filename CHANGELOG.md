@@ -33,7 +33,8 @@ This is the first release of Pixheet.
 - The `gui` extra adds the desktop app `pixheet-gui`. Drop images or folders on the
   window, or click **Add files...** or **Add folder...**.
 - The desktop app shows a list of the images, with the progress, the time left and the
-  status of each image. **Stop**, **Retry failed** and **Failed only** control the run.
+  status of each image. **Stop** and **Retry failed** control the run. **Failed only**
+  shows only the failed images.
 - The desktop app asks before it replaces an output file. When two images have the same
   output name, each output gets a tag, for example `photo (png).xlsx`.
 - The desktop app has the Sun Valley theme, with the settings **System**, **Light**
