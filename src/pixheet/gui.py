@@ -903,6 +903,8 @@ class App:
         self.closing = False
         self._dialogs = 0
         """The number of open modal dialogs. A modal dialog runs a nested event loop."""
+        self._error_open = False
+        """True while the dialog of an unexpected error is open."""
         self._poll_id: str | None = None
         self._note_id: str | None = None
         self.note_action: Callable[[], None] | None = None
@@ -2049,18 +2051,26 @@ class App:
     # Messages from the worker
 
     def _poll(self) -> None:
+        """Read the messages of the worker.
+
+        An error in a handler goes to the error dialog. The next poll comes anyway, so
+        the app reads Finished, and the window can close. The message that failed is
+        already out of the queue, thus the same error does not come again.
+        """
         self._poll_id = None
         messages = self.queue
-        while True:
-            try:
-                message = messages.get_nowait()
-            except queue.Empty:
-                break
-            self._handle(message)
-            if self.worker is None or self.queue is not messages:
-                break  # the run ended, a new worker started, or the window is gone
-        if self.worker is not None and self._poll_id is None:
-            self._poll_id = self.root.after(POLL_MS, self._poll)
+        try:
+            while True:
+                try:
+                    message = messages.get_nowait()
+                except queue.Empty:
+                    break
+                self._handle(message)
+                if self.worker is None or self.queue is not messages:
+                    break  # the run ended, a new worker started, or the window is gone
+        finally:
+            if self.worker is not None and self._poll_id is None:
+                self._poll_id = self.root.after(POLL_MS, self._poll)
 
     def _handle(self, message: Message) -> None:
         if isinstance(message, Finished):
@@ -2592,14 +2602,28 @@ class App:
             )
 
     def _report_exception(self, exc: type[BaseException], value: BaseException, tb) -> None:
-        """Show an error in a Tk callback in a dialog. A windowed app has no console."""
+        """Show an error in a Tk callback in a dialog. A windowed app has no console.
+
+        Only one error dialog opens at a time. The dialog runs a nested event loop, and
+        the same error can come again in it, for example in each poll. While the dialog
+        is open, the app only writes the next errors to stderr.
+        """
         if sys.stderr is not None:
             import traceback
 
             traceback.print_exception(exc, value, tb)
-        self._modal(
-            self.show_error, TITLE, f"An unexpected error occurred:\n\n{value!r}", parent=self.root
-        )
+        if self._error_open:
+            return
+        self._error_open = True
+        try:
+            self._modal(
+                self.show_error,
+                TITLE,
+                f"An unexpected error occurred:\n\n{value!r}",
+                parent=self.root,
+            )
+        finally:
+            self._error_open = False
         self._close_if_asked()
 
 

@@ -1790,6 +1790,86 @@ def test_callback_error_is_shown_in_a_dialog(harness, capsys):
     assert "LookupError" in capsys.readouterr().err
 
 
+def test_an_error_in_a_message_handler_does_not_stop_the_poll(harness, monkeypatch, tmp_path):
+    h = harness()
+    app = h.app
+    gate = gate_convert(monkeypatch)
+    handle = app._handle
+    bad = []
+
+    def handle_once_bad(message):
+        if isinstance(message, gui.Progress) and not bad:
+            bad.append(message)
+            raise RuntimeError("boom in handler")
+        handle(message)
+
+    monkeypatch.setattr(app, "_handle", handle_once_bad)
+    assert h.drop(image(tmp_path / "a.png", 8, 6), image(tmp_path / "b.png", 8, 6)) == "copy"
+    h.pump(converting(h))
+    gate.set()
+    h.pump(lambda: h.errors)
+
+    assert h.errors == ["An unexpected error occurred:\n\nRuntimeError('boom in handler')"]
+    h.wait()  # the poll continues, and reads Finished
+    assert h.states() == [gui.DONE, gui.DONE]
+    app.close()
+    assert destroyed(h.root)
+
+
+def test_the_window_closes_after_an_error_in_a_message_handler(harness, monkeypatch, tmp_path):
+    h = harness()
+    app = h.app
+    gate = gate_convert(monkeypatch)
+    handle = app._handle
+
+    def handle_once_bad(message):
+        if isinstance(message, gui.Progress) and not h.errors:
+            raise RuntimeError("boom in handler")
+        handle(message)
+
+    monkeypatch.setattr(app, "_handle", handle_once_bad)
+    assert h.drop(image(tmp_path / "a.png", 8, 6), image(tmp_path / "b.png", 8, 6)) == "copy"
+    h.pump(converting(h))
+    gate.set()
+    h.pump(lambda: h.errors)
+    app.close()
+    deadline = time.monotonic() + 20
+    while not destroyed(h.root):
+        assert time.monotonic() < deadline, "the window does not close"
+        h.root.update()
+        time.sleep(0.005)
+    assert len(h.errors) == 1
+
+
+def test_only_one_error_dialog_opens_at_a_time(harness, monkeypatch, tmp_path, capsys):
+    h = harness()
+    app = h.app
+    handle = app._handle
+
+    def handle_bad(message):
+        if isinstance(message, gui.Progress):
+            raise RuntimeError("boom in handler")
+        handle(message)
+
+    def show_error(title, message, **kwargs):
+        # A dialog runs a nested event loop. The poll continues in it, and the next
+        # messages also fail.
+        h.errors.append(message)
+        deadline = time.monotonic() + 20
+        while app.worker is not None:
+            assert time.monotonic() < deadline, "timeout"
+            h.root.update()
+            time.sleep(0.005)
+
+    monkeypatch.setattr(app, "_handle", handle_bad)
+    app.show_error = show_error
+    h.run(image(tmp_path / "a.png", 8, 6), image(tmp_path / "b.png", 8, 6))
+
+    assert h.errors == ["An unexpected error occurred:\n\nRuntimeError('boom in handler')"]
+    assert capsys.readouterr().err.count("RuntimeError: boom in handler") >= 2
+    assert h.states() == [gui.DONE, gui.DONE]
+
+
 def test_main_smoke(monkeypatch, capsys):
     new_root().destroy()  # skip when there is no display
     assert gui.main(["--smoke"]) == 0
