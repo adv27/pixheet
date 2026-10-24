@@ -2277,9 +2277,18 @@ class App:
             return
         self._enqueue(self._apply(rows, decision), options)
 
-    def skip_current(self) -> None:
-        """Stop the file that converts now. The queue continues with the next file."""
-        job = self.jobs_by_id.get(self.current) if self.current is not None else None
+    def skip_current(self, row_id: int | None = None) -> None:
+        """Stop the file that converts now. The queue continues with the next file.
+
+        With ``row_id``, stop that row only if it still converts. The context menu gives
+        the row that converted when the menu opened. On X11 the menu can stay open while
+        the worker starts the next file, and the command must not stop that next file.
+        """
+        if row_id is None:
+            row_id = self.current
+        if row_id is None or row_id != self.current:
+            return
+        job = self.jobs_by_id.get(row_id)
         if job is not None:
             job.skip.set()
 
@@ -2984,7 +2993,12 @@ class App:
         menu.add_separator()
         add("Retry", self.retry_selected, bool(states & {FAILED, STOPPED}))
         add("Convert again", self.convert_again, SKIPPED in states)
-        add("Skip this file", self.skip_current, CONVERTING in states)
+        converting = next((row.id for row in rows if row.state == CONVERTING), None)
+        add(
+            "Skip this file",
+            lambda: self.skip_current(converting),
+            converting is not None,
+        )
         add("Remove from list", self.remove_selected, bool(states - {CONVERTING}), "Delete")
         menu.add_separator()
         add("Select failed files", self.select_failed, self.tally.failed > 0)

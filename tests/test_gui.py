@@ -884,6 +884,33 @@ def test_skip_this_file_stops_one_file_and_the_run_continues(harness, tmp_path, 
     assert h.app.title_var.get() == "Converted 1 of 2 files. 1 stopped."
 
 
+def test_skip_this_file_does_not_stop_the_next_file(harness, tmp_path, monkeypatch):
+    # On X11 the menu can stay open while the worker finishes the selected file and
+    # starts the next one. The command must not stop that next file.
+    gates = {"a.png": threading.Event(), "b.png": threading.Event()}
+
+    def convert(src, *args, progress, **kwargs):
+        def wait_then_report(done, total):
+            gates[Path(src).name].wait(10)
+            progress(done, total)
+
+        return real_convert(src, *args, progress=wait_then_report, **kwargs)
+
+    monkeypatch.setattr(gui, "convert", convert)
+    h = harness()
+    h.drop(image(tmp_path / "a.png"), image(tmp_path / "b.png"))
+    h.root.update()
+    h.pump(converting(h))
+    h.app.tree.selection_set(h.iid("a.png"))
+    menu = h.app.context_menu()
+    gates["a.png"].set()
+    h.pump(lambda: h.states() == ["done", "converting"])
+    menu.invoke("Skip this file")
+    gates["b.png"].set()
+    h.wait()
+    assert h.states() == ["done", "done"]
+
+
 def test_retry_failed_converts_the_failed_rows_again(harness, tmp_path):
     h = harness()
     bad = tmp_path / "bad.png"
