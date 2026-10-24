@@ -3288,6 +3288,41 @@ def show_at_the_minimum_size(themed):
     return root, app
 
 
+@pytest.mark.parametrize("percent", [100, 150])
+@pytest.mark.parametrize("themed", [True, False])
+def test_the_list_shows_five_rows_with_a_note_at_the_minimum_size(themed, percent, tmp_path):
+    if themed:
+        pytest.importorskip("sv_ttk")
+    root = new_root()
+    try:
+        root.tk.call("tk", "scaling", 96 * percent / 100 / 72)
+        if themed:
+            gui.apply_theme(root, "light")
+        app = gui.App(root, dnd_type=None)
+        fill_the_list(app, tmp_path)  # three rows and a note
+        for i in range(4, 21):
+            src = tmp_path / "e" / f"IMG_{i}.png"
+            app._insert_row(gui.Row(i, src, src.with_suffix(".xlsx")))
+        app._refresh_all()
+        app.tree.selection_set("1")  # a done row: the details use two lines
+        app._on_select()
+        width, height = root.minsize()
+        root.geometry(f"{width}x{height}")
+        root.deiconify()
+        root.update()
+        assert app.note.winfo_ismapped()
+        assert app.path_label.winfo_ismapped()
+        assert app.status_label.winfo_ismapped()
+        app.tree.yview_moveto(0)
+        root.update()
+        fifth = app.tree.get_children()[4]
+        _x, y, _width, h = app.tree.bbox(fifth)
+        assert y + h <= app.tree.winfo_height(), (y, h, app.tree.winfo_height())
+        app.dispose()
+    finally:
+        root.destroy()
+
+
 @pytest.mark.parametrize("themed", [True, False])
 def test_the_count_line_and_the_folder_heading_fit_at_the_minimum_size(themed, tmp_path):
     root, app = show_at_the_minimum_size(themed)

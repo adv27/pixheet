@@ -1290,7 +1290,8 @@ class App:
             columns=("name", "folder", "status"),
             show="headings",
             selectmode="extended",
-            height=4,
+            # The minimum size of the window keeps 5 rows, also with a note and the details.
+            height=5,
         )
         tree.heading("name", text="Name", anchor="w")
         tree.heading("folder", text="Folder", anchor="w")
