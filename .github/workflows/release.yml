@@ -353,8 +353,10 @@ jobs:
       # file, for example after a change of the uv version, which selects the Python build.
       # Thus the job uploads only the files that the release does not have. When the
       # release has a file but not its checksum file, or the opposite, the job stops. To
-      # replace a file, delete it in the release by hand, then run again. A download drops
-      # the executable bit of the Linux file. The README tells the users to run chmod +x.
+      # replace a file, delete it in the release by hand, then run again. Nobody can change
+      # a published immutable release. To correct one, release a new patch version. Read
+      # "Releases" in packaging/README.md. A download drops the executable bit of the Linux
+      # file. The README tells the users to run chmod +x.
       # gh release create makes a draft, uploads the files, and then publishes the draft.
       # A job that stops during the upload, for example after a cancel or at the time
       # limit, leaves the draft. Users cannot see a draft. Thus for a draft, the job

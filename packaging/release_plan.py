@@ -110,11 +110,17 @@ def upload_plan(
     for name in missing:
         other = partner(name)
         if other in wanted and other in have:
+            immutable = (
+                " Nobody can change a published immutable release. To correct one, release "
+                "a new patch version."
+                if release == "published"
+                else ""
+            )
             raise PlanError(
                 f"The release has {other}, but not a complete {name}. A new build can be "
                 f"different, and then the checksum is not correct. Delete {other} in the "
                 f"release by hand. Also delete {name} if the release has a file with that "
-                "name that did not upload completely. Then run the job again."
+                f"name that did not upload completely. Then run the job again.{immutable}"
             )
     if release == "draft":
         return "publish", missing

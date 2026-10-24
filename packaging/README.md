@@ -408,7 +408,8 @@ exe, for example after a change of the uv version in the workflows. When the job
 again for a tag, for example after a re-run, it uploads only the files that the release
 does not have. It stops when the release has a file but not its `.sha256` file,
 or the opposite, because the new checksum can be different. To replace a file, delete it
-in the release on GitHub, and then run the job again.
+in the release on GitHub, and then run the job again. This repair does not work for an
+immutable release. Read the list below.
 
 `gh release create` makes a draft, uploads the files, and then publishes the draft. When
 the job stops during the upload, for example after a cancel, the draft stays. Users
@@ -421,11 +422,18 @@ job counts only the files with the state `uploaded`. For a draft, the job replac
 other files with `gh release upload --clobber`. For a published release, `gh release
 upload` stops at such a file. Delete the file, and then run the job again.
 
-You can also protect the releases in the settings of the repository:
+You can also protect the releases in the settings of the repository. Each protection
+also stops some repairs of this section:
 
-- Turn on immutable releases.
+- Turn on immutable releases. Then nobody can add, replace or delete a file of a
+  published release. Also, nobody can move or delete the tag of a published release.
+  The job still works, because it uploads all files to a draft before it publishes the
+  draft. But the job cannot repair a published release that does not have all files. To
+  correct a published release, release a new patch version. Do not delete an immutable
+  release, because GitHub does not let you use its tag name again.
 - Add a tag ruleset for `v*` that stops the update and the deletion of these tags. Do
-  not stop the creation of the tags, because the release job makes them.
+  not stop the creation of the tags, because the release job makes them. The ruleset
+  blocks the repair that deletes a tag without a published release.
 
 ### Pinned actions
 

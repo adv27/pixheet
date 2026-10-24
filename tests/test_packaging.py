@@ -1508,6 +1508,16 @@ def test_upload_plan_stops_for_half_a_pair(present, release):
         release_plan.upload_plan(release, [present], RELEASE_FILES)
 
 
+@pytest.mark.parametrize(("release", "immutable"), [("published", True), ("draft", False)])
+def test_half_a_pair_names_the_repair_of_an_immutable_release(release, immutable):
+    """Nobody can delete a file of a published immutable release. A new version can repair."""
+    with pytest.raises(release_plan.PlanError) as error:
+        release_plan.upload_plan(release, ["Pixheet.exe"], RELEASE_FILES)
+    text = str(error.value)
+    assert "Delete Pixheet.exe in the release by hand." in text
+    assert ("release a new patch version" in text) == immutable
+
+
 def test_release_plan_tag_command(capsys):
     assert release_plan.main(["tag", "v0.1.0", SHA, "", "none"]) == 0
     assert release_plan.main(["tag", "v0.1.0", SHA, SHA, "draft"]) == 0
