@@ -905,6 +905,17 @@ def test_unwritable_output_folder_fails_in_its_row(harness, tmp_path, monkeypatc
     )
     assert h.app.retry_button.cget("text") == "Retry failed (1)"
 
+    # The user follows the advice. The text still names the folder that failed.
+    status = h.app.status_var.get()
+    h.app.set_out_dir(tmp_path / "Mine")
+    assert h.app.tree.selection() == (h.iid("logo.png"),)
+    assert h.app.status_var.get() == status
+    copied = []
+    h.app._copy = lambda lines: copied.extend(lines)  # not the clipboard of the user
+    h.app.copy_errors()
+    [line] = copied
+    assert f"write in {logo.parent}." in line
+
 
 def test_a_long_output_path_fails_at_once(harness, tmp_path):
     h = harness()

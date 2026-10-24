@@ -1706,7 +1706,7 @@ class App:
                 skip = {row.id for row in existing}
 
         def decide(row: Row) -> Row:
-            fresh = replace(row, percent=0, size=0, error="", kind="", result=None)
+            fresh = replace(row, percent=0, size=0, error="", kind="", result=None, failed_dst=None)
             if row.id in problems:
                 return replace(fresh, state=FAILED, error=problems[row.id], kind="long")
             if row.id in skip:
@@ -2298,7 +2298,8 @@ class App:
             return path, result_text(row.result), False
         if row.state == FAILED:
             # The folder is in line 1 already. A short folder keeps the reason short.
-            short = Path(middle_ellipsis(str(row.dst.parent), 40)) / row.dst.name
+            failed = row.failed_output
+            short = Path(middle_ellipsis(str(failed.parent), 40)) / failed.name
             return path, f"Failed: {failure_detail(row.kind, row.error, short)}", True
         if row.state == CONVERTING:
             return path, self._current_text, False
@@ -2313,7 +2314,7 @@ class App:
             case "done":
                 return (summary(row.dst, row.result) if row.result else str(row.dst)), False
             case "failed":
-                detail = failure_detail(row.kind, row.error, row.dst)
+                detail = failure_detail(row.kind, row.error, row.failed_output)
                 return f"The app did not convert {row.src.name}.\n{detail}", True
             case "stopped":
                 return "The app did not write the current file.", False
@@ -2504,7 +2505,7 @@ class App:
     def copy_errors(self) -> None:
         """Copy the errors of the selected failed rows to the clipboard."""
         self._copy(
-            f"{row.src}: {failure_detail(row.kind, row.error, row.dst)}"
+            f"{row.src}: {failure_detail(row.kind, row.error, row.failed_output)}"
             for row in self._selected_rows()
             if row.state == FAILED
         )
@@ -2699,7 +2700,7 @@ def smoke_test(app: App) -> list[str]:
             app.root.after(POLL_MS, close_when_idle)
             return
         problems.extend(
-            f"{row.src.name}: {failure_detail(row.kind, row.error, row.dst)}"
+            f"{row.src.name}: {failure_detail(row.kind, row.error, row.failed_output)}"
             for row in app.rows.values()
             if row.state == FAILED
         )

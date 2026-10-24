@@ -637,6 +637,13 @@ class Row:
     kind: str = ""
     result: ConvertResult | None = None
     """What convert() did, for the details line of a done row."""
+    failed_dst: Path | None = None
+    """The output at the time of the failure. A change of "Save to" does not change it."""
+
+    @property
+    def failed_output(self) -> Path:
+        """Return the output that failed. The reason of a "write" failure names its folder."""
+        return self.failed_dst or self.dst
 
 
 def format_size(n: int) -> str:
@@ -680,14 +687,16 @@ def apply_message(row: Row, message: Message) -> Row:
     """
     match message:
         case Started(job_id) if job_id == row.id:
-            return replace(row, state=CONVERTING, percent=0, error="", kind="", result=None)
+            return replace(
+                row, state=CONVERTING, percent=0, error="", kind="", result=None, failed_dst=None
+            )
         case Progress(job_id, done, total) if job_id == row.id and row.state == CONVERTING:
             percent = min(100, done * 100 // total) if total > 0 else 0
             return replace(row, state=CONVERTING, percent=percent)
         case Converted(job_id, result, size) if job_id == row.id:
             return replace(row, state=DONE, percent=100, size=size, result=result)
         case Failed(job_id, error, kind) if job_id == row.id:
-            return replace(row, state=FAILED, error=error, kind=kind)
+            return replace(row, state=FAILED, error=error, kind=kind, failed_dst=row.dst)
         case Stopped(job_id) if job_id == row.id:
             return replace(row, state=STOPPED, percent=0)
     return row

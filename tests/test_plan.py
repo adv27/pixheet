@@ -5,6 +5,7 @@ import posixpath
 import sys
 import threading
 import time
+from dataclasses import replace
 from pathlib import Path
 
 import pytest
@@ -828,8 +829,13 @@ def test_apply_message_failed_and_stopped():
     converting = apply_message(row(), Started(7))
     failed = apply_message(converting, Failed(7, "denied", "write"))
     assert (failed.state, failed.error, failed.kind) == (FAILED, "denied", "write")
-    again = apply_message(failed, Started(7))
+    assert failed.failed_output == failed.dst
+    # A change of "Save to" gives a new output. The reason still names the old one.
+    moved = replace(failed, dst=Path("elsewhere", "a.xlsx"))
+    assert moved.failed_output == failed.dst
+    again = apply_message(moved, Started(7))
     assert (again.state, again.error, again.kind) == (CONVERTING, "", "")
+    assert again.failed_output == again.dst
     stopped = apply_message(apply_message(again, Progress(7, 1, 2)), Stopped(7))
     assert (stopped.state, stopped.percent) == (STOPPED, 0)
 
