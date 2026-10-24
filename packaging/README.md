@@ -350,13 +350,24 @@ The job writes the notes before it makes the tag. Thus a missing section stops t
 before the tag.
 
 When the tag exists, `release_plan.py` compares the commit of the tag with the commit of
-the push:
+the push. It also reads the state of the release of the tag:
 
 - The tag is at the commit of the push. An earlier run of the job made the tag, and then
   it stopped, for example for a network problem. The job creates the release if it does
   not exist. Then it uploads the files that the release does not have.
-- The tag is at a different commit. That version has a release already. The job does
-  nothing. The artifact of the build stays on the Actions page.
+- The tag is at a different commit, and its release is published. The job does nothing.
+  The artifact of the build stays on the Actions page.
+- The tag is at a different commit, but the version has no release or only a draft. An
+  earlier run made the tag, and then it stopped. The job stops with an error, because it
+  must not publish the files of a different commit for that tag.
+
+To repair a tag without a published release, do one of these steps:
+
+- Re-run all jobs of the Release run of the commit of the tag. A re-run uses the
+  workflow file of that commit. GitHub can re-run a workflow run for 30 days.
+- Delete the draft release, if it exists, and the tag on GitHub. Then start the Release
+  workflow on `master`. The job makes the tag again at the new commit. If a tag ruleset
+  for `v*` is on, it blocks this repair, because it stops the deletion of the tag.
 
 These rules apply to the release job:
 
@@ -365,7 +376,7 @@ These rules apply to the release job:
 - It never runs for a pull request, or for a manual start on a branch that is not
   `master`.
 - Only one release job runs at a time. Two quick merges can have the same version. Then
-  the second job finds the tag of the first job at a different commit, and it does
+  the second job finds the tag and the published release of the first job, and it does
   nothing.
 - A tag that the job makes with `GITHUB_TOKEN` does not start a new workflow run. This
   is correct, because the job publishes the release itself.

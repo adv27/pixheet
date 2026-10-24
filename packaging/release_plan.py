@@ -4,16 +4,22 @@ The workflow release.yml asks GitHub for the state of the tag and of the release
 script decides the next step from that state. It does not call GitHub. The script has two
 commands:
 
-    python packaging/release_plan.py tag SHA [TAG_COMMIT]
+    python packaging/release_plan.py tag TAG SHA TAG_COMMIT RELEASE
     python packaging/release_plan.py upload RELEASE FILE... < ASSETS
 
-``tag`` prints "create", "publish" or "skip":
+``tag`` prints "create", "publish" or "skip" for the tag TAG of the version. TAG_COMMIT
+is the commit of the tag, or "" when the tag does not exist. RELEASE is "none", "draft"
+or "published": the state of the release of the tag.
 
 - "create": the tag does not exist. The job makes the tag at SHA, then publishes.
 - "publish": the tag is at SHA. An earlier run made it, but the run can have stopped
   before the release was complete. The job publishes the files that are missing.
-- "skip": the tag is at a different commit. That version has a release from a different
-  commit. The job does nothing.
+- "skip": the tag is at a different commit, and its release is published. The job does
+  nothing.
+
+When the tag is at a different commit and its release is not published, the exit code
+is 1. An earlier run made the tag, and then it stopped. The job must not publish the
+files of SHA for the tag of a different commit. A person must repair the release.
 
 ``upload`` reads the names of the files of the release from stdin, one name on each line.
 RELEASE is "none", "draft" or "published": the state of the release. FILE is a file that
@@ -45,17 +51,32 @@ class PlanError(Exception):
     """The release is in a state that the job cannot repair. A person must repair it."""
 
 
-def tag_action(tag_commit: str | None, sha: str) -> str:
-    """Return "create", "publish" or "skip" for the tag at ``tag_commit``.
+def tag_action(tag: str, tag_commit: str | None, sha: str, release: str) -> str:
+    """Return "create", "publish" or "skip" for the tag ``tag`` at ``tag_commit``.
 
     ``tag_commit`` is the commit of the tag, or None (or "") when the tag does not exist.
-    ``sha`` is the commit of the push.
+    ``sha`` is the commit of the push. ``release`` is a value of :data:`RELEASE_STATES`:
+    the state of the release of the tag. It has an effect only for a tag at a different
+    commit. Then the action is "skip" for a published release. For no release or a
+    draft, raise ``PlanError``. Raise ``ValueError`` for an unknown ``release``.
     """
+    if release not in RELEASE_STATES:
+        raise ValueError(f"unknown state of the release: {release!r}")
     if not tag_commit:
         return "create"
     if tag_commit == sha:
         return "publish"
-    return "skip"
+    if release == "published":
+        return "skip"
+    found = "has no release" if release == "none" else "has only a draft release"
+    delete = f"the tag {tag}" if release == "none" else f"the draft release and the tag {tag}"
+    raise PlanError(
+        f"The tag {tag} is at the commit {tag_commit}, but the version {found}. An earlier "
+        "run made the tag, and then it stopped. This job does not publish the files of a "
+        f"different commit. To repair the release, re-run all jobs of the Release run of "
+        f"the commit {tag_commit}. Or delete {delete} on GitHub, and then start the "
+        "Release workflow on master again."
+    )
 
 
 def partner(name: str) -> str:
@@ -102,18 +123,20 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     commands = parser.add_subparsers(dest="command", required=True)
     tag = commands.add_parser("tag", help="decide what to do with the tag")
+    tag.add_argument("name", help="the tag of the version, for example v0.1.0")
     tag.add_argument("sha", help="the commit of the push")
-    tag.add_argument("tag_commit", nargs="?", default="", help="the commit of the tag")
+    tag.add_argument("tag_commit", help='the commit of the tag, or "" for no tag')
+    tag.add_argument("release", choices=RELEASE_STATES, help="the state of the release")
     upload = commands.add_parser("upload", help="decide which files to publish")
     upload.add_argument("release", choices=RELEASE_STATES, help="the state of the release")
     upload.add_argument("files", nargs="+", help="the files that the release must have")
     args = parser.parse_args(argv)
 
-    if args.command == "tag":
-        print(tag_action(args.tag_commit, args.sha))
-        return 0
-    existing = [line.strip() for line in sys.stdin if line.strip()]
     try:
+        if args.command == "tag":
+            print(tag_action(args.name, args.tag_commit, args.sha, args.release))
+            return 0
+        existing = [line.strip() for line in sys.stdin if line.strip()]
         action, files = upload_plan(args.release, existing, args.files)
     except PlanError as e:
         print(f"::error::{e}")

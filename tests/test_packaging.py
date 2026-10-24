@@ -1383,14 +1383,42 @@ def test_release_scripts_run_on_python_3_12(name):
 
 
 SHA = "a" * 40
+OTHER = "b" * 40
+
+
+@pytest.mark.parametrize("release", release_plan.RELEASE_STATES)
+@pytest.mark.parametrize(
+    ("tag_commit", "action"), [(None, "create"), ("", "create"), (SHA, "publish")]
+)
+def test_tag_action(tag_commit, action, release):
+    assert release_plan.tag_action("v0.1.0", tag_commit, SHA, release) == action
+
+
+def test_tag_action_skips_a_published_release_of_a_different_commit():
+    assert release_plan.tag_action("v0.1.0", OTHER, SHA, "published") == "skip"
 
 
 @pytest.mark.parametrize(
-    ("tag_commit", "action"),
-    [(None, "create"), ("", "create"), (SHA, "publish"), ("b" * 40, "skip")],
+    ("release", "found", "delete"),
+    [
+        ("none", "has no release", "delete the tag v0.1.0 on GitHub"),
+        ("draft", "has only a draft release", "delete the draft release and the tag v0.1.0"),
+    ],
 )
-def test_tag_action(tag_commit, action):
-    assert release_plan.tag_action(tag_commit, SHA) == action
+def test_tag_action_stops_for_a_tag_of_a_different_commit_without_a_release(release, found, delete):
+    """An earlier run made the tag and stopped. A later push must not hide that."""
+    with pytest.raises(release_plan.PlanError) as error:
+        release_plan.tag_action("v0.1.0", OTHER, SHA, release)
+    text = str(error.value)
+    assert f"The tag v0.1.0 is at the commit {OTHER}, but the version {found}." in text
+    assert f"re-run all jobs of the Release run of the commit {OTHER}" in text
+    assert f"Or {delete}" in text
+    assert SHA not in text
+
+
+def test_tag_action_refuses_an_unknown_state():
+    with pytest.raises(ValueError, match="unknown state"):
+        release_plan.tag_action("v0.1.0", OTHER, SHA, "true")
 
 
 def test_upload_plan_creates_a_missing_release_with_all_files():
@@ -1444,11 +1472,12 @@ def test_upload_plan_stops_for_half_a_pair(present, release):
 
 
 def test_release_plan_tag_command(capsys):
-    assert release_plan.main(["tag", SHA, ""]) == 0
-    assert release_plan.main(["tag", SHA]) == 0
-    assert release_plan.main(["tag", SHA, SHA]) == 0
-    assert release_plan.main(["tag", SHA, "b" * 40]) == 0
-    assert capsys.readouterr().out.split() == ["create", "create", "publish", "skip"]
+    assert release_plan.main(["tag", "v0.1.0", SHA, "", "none"]) == 0
+    assert release_plan.main(["tag", "v0.1.0", SHA, SHA, "draft"]) == 0
+    assert release_plan.main(["tag", "v0.1.0", SHA, OTHER, "published"]) == 0
+    assert capsys.readouterr().out.split() == ["create", "publish", "skip"]
+    assert release_plan.main(["tag", "v0.1.0", SHA, OTHER, "draft"]) == 1
+    assert capsys.readouterr().out.startswith(f"::error::The tag v0.1.0 is at the commit {OTHER}")
 
 
 @pytest.mark.parametrize(
@@ -1475,7 +1504,14 @@ def test_release_plan_upload_command(monkeypatch, capsys, release, assets, code,
 def test_release_job_uses_the_release_plan():
     text = (WORKFLOWS / "release.yml").read_text(encoding="utf-8")
     job = text[text.index("\n  release:\n") :]
-    assert 'python3 packaging/release_plan.py tag "$SHA" "$commit"' in job
+    assert 'python3 packaging/release_plan.py tag "$tag" "$SHA" "$commit" "$release"' in job
+    # The state of the release: the same gh call and the same text as the upload step.
+    assert 'gh release view "$1" --repo "$REPO" --json isDraft --jq .isDraft' in job
+    assert job.count('*"release not found"*') == 2
+    # GitHub's bash stops at a failed command substitution. Print the error first.
+    plan = job[job.index("plan_tag() {") :]
+    plan = plan[: plan.index("\n          }\n")]
+    assert "printf '%s\\n' \"$action\"\n              exit 1\n" in plan
     assert "persist-credentials: false" in job
     # The decision comes before the downloads, so that "skip" downloads nothing.
     assert job.index("release_plan.py tag") < job.index("Download the Windows app")

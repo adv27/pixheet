@@ -26,7 +26,8 @@
 #   - When the tag does not exist, the job makes it at the commit of the push.
 #   - When the tag exists at the commit of the push, an earlier run made it. The job adds
 #     the files that the release does not have.
-#   - When the tag exists at a different commit, the job does nothing.
+#   - When the tag exists at a different commit, the job does nothing if the release of
+#     the tag is published. Without a published release, the job stops with an error.
 # - For a push of a tag "v<version>". The tag must agree with the version.
 # Only the release job can write to the repository. It never runs for a pull request.
 name: Release
@@ -214,8 +215,8 @@ jobs:
     # One release job at a time, for all refs, for example a push to master and a push of a
     # tag. The group never cancels a job that has started. When two merges come quickly, the
     # second job waits. When the two merges have the same version, the second job finds the
-    # tag of the first job at a different commit, and does nothing. Only one job can wait:
-    # read the comment at the concurrency of the workflow.
+    # tag and the published release of the first job, and does nothing. Only one job can
+    # wait: read the comment at the concurrency of the workflow.
     concurrency:
       group: ${{ github.workflow }}-release
       cancel-in-progress: false
@@ -239,8 +240,11 @@ jobs:
       # - No tag: the job makes the tag at the commit of the push, then publishes.
       # - The tag is at the commit of the push: an earlier run of this job made the tag,
       #   but it can have stopped before the release was complete. The job publishes.
-      # - The tag is at a different commit: that version has a release already. The job
-      #   does nothing. The artifacts of the build stay on the Actions page.
+      # - The tag is at a different commit, and its release is published. The job does
+      #   nothing. The artifacts of the build stay on the Actions page.
+      # - The tag is at a different commit, but its release is a draft or does not exist.
+      #   An earlier run made the tag, and then it stopped. The job stops with an error
+      #   that tells the repair. It must not publish the files of this commit for that tag.
       # A tag that GITHUB_TOKEN makes does not start a new workflow run. This is correct,
       # because this job publishes the release itself. Do not use a different token to
       # start a run for the tag. Then the release job runs two times for one version.
@@ -281,10 +285,33 @@ jobs:
             printf '%s\n' "$lines" | sort -k2 | tail -n 1 | cut -f1
           }
 
-          commit=$(tag_commit "$tag")
-          action=$(python3 packaging/release_plan.py tag "$SHA" "$commit")
+          # Print the state of the release of the tag $1: none, draft or published.
+          release_state() {
+            local draft
+            if draft=$(gh release view "$1" --repo "$REPO" --json isDraft --jq .isDraft 2>&1); then
+              if [[ "$draft" == true ]]; then echo draft; else echo published; fi
+            elif [[ "$draft" == *"release not found"* ]]; then
+              echo none
+            else
+              echo "::error::gh cannot read the release $1: $draft" >&2
+              return 1
+            fi
+          }
+
+          # Set commit, release and action for the tag. When release_plan.py gives an
+          # error, print it and stop the job.
+          plan_tag() {
+            commit=$(tag_commit "$tag")
+            release=$(release_state "$tag")
+            if ! action=$(python3 packaging/release_plan.py tag "$tag" "$SHA" "$commit" "$release"); then
+              printf '%s\n' "$action"
+              exit 1
+            fi
+          }
+
+          plan_tag
           if [[ "$action" == skip ]]; then
-            echo "The tag $tag exists already, at a different commit $commit. That version has a release. The job does not publish."
+            echo "The tag $tag exists already, at a different commit $commit. The release $tag is published. The job does not publish."
             echo "publish=false" >> "$GITHUB_OUTPUT"
             exit 0
           fi
@@ -294,8 +321,7 @@ jobs:
             echo "The job made the tag $tag at $SHA."
           else
             # A different job can make the same tag at the same time.
-            commit=$(tag_commit "$tag")
-            action=$(python3 packaging/release_plan.py tag "$SHA" "$commit")
+            plan_tag
             if [[ "$action" == publish ]]; then
               echo "The tag $tag exists already, at $SHA. The job continues."
             elif [[ "$action" == skip ]]; then
