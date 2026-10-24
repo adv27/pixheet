@@ -95,8 +95,8 @@ image:
 - An error in one file does not stop the run. The row of the file is red and tells the
   reason. Select the row to see the reason and the advice below the list. The reason
   names the folder that failed, also after a change of **Save to**.
-- When another app has the output open, for example Excel, the row shows "Failed: file
-  is in use". Close the file in that app, then click **Retry failed**.
+- On Windows, when another app has the output open, for example Excel, the row shows
+  "Failed: file is in use". Close the file in that app, then click **Retry failed**.
 - **Retry failed (N)** converts the failed files and the stopped files again. A row
   keeps its output name when **Save to** did not change.
 - **Failed only (N)** shows only the failed files. When you remove the last failed row,
