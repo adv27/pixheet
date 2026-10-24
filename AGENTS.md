@@ -24,7 +24,7 @@ Read [README.md](README.md) for usage, the Python API, and the Excel limits.
 | `tests/` | Pytest suite. `tests/images.py` generates all test images. No real photos. |
 | `bench/bench.py` | Benchmark on local sample photos. |
 | `scripts/` | `excel_check.ps1` (Excel COM check, Windows) and `sample_pixels.py`. |
-| `packaging/` | The build of `Pixheet.exe` and of the Linux app: the PyInstaller spec `pixheet.spec` (Windows and Linux), the Tcl and Tk trim `trim_tcltk.py`, the Linux checks `linux_guards.py`, the entry script, the icons `pixheet.ico` and `pixheet.png` and `make_icon.py`, `build.ps1` (Windows), `build.sh` (Linux), `check_exe.py`, `release_version.py` for the release job, and the hook `runner_job_started.ps1` for a later self-hosted runner. Read `packaging/README.md`. |
+| `packaging/` | The build of `Pixheet.exe` and of the Linux app, and the scripts of the release job. The table of files in `packaging/README.md` describes each file. |
 | `.gitattributes` | Keeps LF line ends in `*.sh` files. |
 | `.github/workflows/` | `ci.yml`: tests and lint on GitHub-hosted Windows and Ubuntu, and the check of the version tag and of `CHANGELOG.md`. `release.yml`: the build of `Pixheet.exe` on GitHub-hosted Windows, the build of `Pixheet-linux-x86_64` in a Debian 11 container, and the release. |
 | `CHANGELOG.md` | The changes of each version. The release job uses the section of the version as the release notes. |
@@ -36,7 +36,7 @@ package, except in tests and in `bench/bench.py`, which times each stage.
 
 ```console
 uv sync                                       # install; Python 3.15 per .python-version
-uv run pytest                                 # about 90 s on Windows
+uv run pytest                                 # about 100 s on Windows
 uv run pytest --cov --cov-report=term         # with the coverage, as in CI
 uv run ruff check && uv run ruff format --check
 uv run pixheet --help
@@ -63,6 +63,24 @@ bash packaging/build.sh                                        # add --onedir fo
 The GUI tests in `tests/test_gui.py` need a display. Without a display, they skip. On
 Linux without a desktop, run the tests with `xvfb-run -a uv run pytest`.
 
+The test session does not disturb the user of the computer:
+
+- `tests/conftest.py` moves each Tk and Toplevel window off the screen.
+- On Windows, the session holds the foreground lock (`LockSetForegroundWindow`). Thus no
+  test window takes the focus from the user. A click or the Alt key of the user removes
+  the lock, and each test takes it again. Windows removes the lock when pytest stops.
+- `run_python` in `tests/test_gui.py` starts Python in a new process with
+  `PIXHEET_HIDDEN_WINDOW=1`. Then the window of the app in that process opens off the
+  screen, for example in the smoke test `python -m pixheet.gui --smoke`.
+- An autouse fixture in `tests/conftest.py` makes a test fail when it writes the system
+  clipboard.
+- pytest keeps its temporary folders in `%TEMP%\pytest-of-<user>`, for the last 3 runs.
+  The suite writes nothing else in `%TEMP%`.
+
+Set `PIXHEET_TEST_SHOW_WINDOWS=1` to see the test windows, for example to debug a test.
+Then the windows show on the screen, also the window of a new process, and the session
+takes no foreground lock.
+
 Run the tests, the lint, and the format check before you report a change as complete.
 
 ## Rules for code
@@ -81,7 +99,7 @@ Run the tests, the lint, and the format check before you report a change as comp
   `.gitignore` file excludes them.
 - In `gui.py`, only the main thread can call Tk. The worker thread takes jobs from a
   `JobQueue` and sends messages through a queue. A Tk object that Python collects on the
-  worker thread causes an error, so the GUI tests collect garbage on the main thread
+  worker thread causes an error. Thus the GUI tests collect garbage on the main thread
   after each test.
 - The list of the app can have many rows. A message of the worker must change only its
   row and the counts in the `Tally` objects. Do not read all rows for each message.
@@ -92,8 +110,13 @@ Run the tests, the lint, and the format check before you report a change as comp
 - The GUI tests replace the dialogs of the app: `show_error`, `ask_files`, `ask_folder`
   and `ask_replace`. A real modal dialog stops the test.
 - Tests and checks must not show windows on the screen. `tests/conftest.py` moves the
-  test windows off the screen. The build checks use `PIXHEET_HIDDEN_WINDOW=1`. Take
-  screenshots only of windows off the screen, with `PrintWindow`.
+  test windows off the screen. A test that starts the app in a new process must give it
+  `PIXHEET_HIDDEN_WINDOW=1`. Use `run_python` for this. The build checks also use the
+  hidden mode. Take screenshots only of windows off the screen, with `PrintWindow`.
+- Do not change the `-alpha` attribute of a window in `tests/conftest.py`, because the
+  app uses it.
+- Tests must not write the system clipboard. A test that copies a text must record the
+  calls of `clipboard_clear` and `clipboard_append` on its root, or replace `App._copy`.
 - `App` does not load the Sun Valley theme. Only `main()` loads it, so most window tests
   use the default ttk theme. A test that needs the theme calls `apply_theme()`.
 - The primary development OS is Windows. Keep paths and shell examples portable.

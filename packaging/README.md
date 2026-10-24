@@ -84,9 +84,9 @@ Sun Valley theme of sv-ttk. The app also prints the name of its ttk theme.
 name of a standard Tk theme.
 
 `check_exe.py` starts the app with `PIXHEET_HIDDEN_WINDOW=1` for each run. This
-variable is for the build checks only. The window opens off the screen and does not take
-the focus. On Windows, the window also gets no taskbar button. Thus the checks show no
-window on your desktop. The app does the same steps as without the variable.
+variable is for the build checks and the tests. The window opens off the screen and does
+not take the focus. On Windows, the window also gets no taskbar button. Thus the checks
+show no window on your desktop. The app does the same steps as without the variable.
 
 The exe shows the version of `pyproject.toml` in its properties. To change the icon,
 edit `make_icon.py`, then run `uv run python packaging/make_icon.py`. Commit the script,
