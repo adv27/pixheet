@@ -286,14 +286,16 @@ jobs:
           }
 
           # Print the state of the release of the tag $1: none, draft or published.
+          # gh writes its errors and notices to stderr. Keep them out of the value, so that
+          # an extra line cannot change the state.
           release_state() {
-            local draft
-            if draft=$(gh release view "$1" --repo "$REPO" --json isDraft --jq .isDraft 2>&1); then
+            local draft err="$RUNNER_TEMP/gh-release-state.err"
+            if draft=$(gh release view "$1" --repo "$REPO" --json isDraft --jq .isDraft 2>"$err"); then
               if [[ "$draft" == true ]]; then echo draft; else echo published; fi
-            elif [[ "$draft" == *"release not found"* ]]; then
+            elif [[ "$(<"$err")" == *"release not found"* ]]; then
               echo none
             else
-              echo "::error::gh cannot read the release $1: $draft" >&2
+              echo "::error::gh cannot read the release $1: $(<"$err")" >&2
               return 1
             fi
           }
@@ -378,16 +380,17 @@ jobs:
           release=none
           assets=""
           # The first line is "true" for a draft. Each next line is the name of a file that
-          # uploaded completely.
-          if view=$(gh release view "$TAG" --repo "$REPO" --json isDraft,assets --jq '.isDraft, (.assets[] | select(.state == "uploaded") | .name)' 2>&1); then
+          # uploaded completely. The errors of gh go to a file, not into these lines.
+          err="$RUNNER_TEMP/gh-release-view.err"
+          if view=$(gh release view "$TAG" --repo "$REPO" --json isDraft,assets --jq '.isDraft, (.assets[] | select(.state == "uploaded") | .name)' 2>"$err"); then
             mapfile -t found <<< "$view"
             release=published
             if [[ "${found[0]}" == true ]]; then
               release=draft
             fi
             assets=$(printf '%s\n' "${found[@]:1}")
-          elif [[ "$view" != *"release not found"* ]]; then
-            echo "::error::gh cannot read the release $TAG: $view"
+          elif [[ "$(<"$err")" != *"release not found"* ]]; then
+            echo "::error::gh cannot read the release $TAG: $(<"$err")"
             exit 1
           fi
           if ! plan=$(printf '%s\n' "$assets" | python3 packaging/release_plan.py upload "$release" "${files[@]}"); then

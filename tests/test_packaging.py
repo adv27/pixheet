@@ -1614,6 +1614,9 @@ def test_release_job_uses_the_release_plan():
     # The state of the release: the same gh call and the same text as the upload step.
     assert 'gh release view "$1" --repo "$REPO" --json isDraft --jq .isDraft' in job
     assert job.count('*"release not found"*') == 2
+    # A notice of gh on stderr must not change the value that the job reads.
+    assert "2>&1" not in job
+    assert job.count('2>"$err"') == 2
     # GitHub's bash stops at a failed command substitution. Print the error first.
     plan = job[job.index("plan_tag() {") :]
     plan = plan[: plan.index("\n          }\n")]
