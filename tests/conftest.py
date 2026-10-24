@@ -82,6 +82,23 @@ def renew_foreground_lock(foreground_lock):
         _lock_foreground(LSFW_LOCK)
 
 
+@pytest.fixture(autouse=True)
+def no_system_clipboard(monkeypatch):
+    """Make a test fail when it writes the system clipboard.
+
+    The clipboard belongs to the user. A test that copies a text must replace App._copy
+    or the clipboard methods of its root.
+    """
+    if tkinter is None:
+        return
+
+    def fail(*args, **kwargs):
+        pytest.fail("the test writes the system clipboard of the user")
+
+    monkeypatch.setattr(tkinter.Misc, "clipboard_clear", fail)
+    monkeypatch.setattr(tkinter.Misc, "clipboard_append", fail)
+
+
 @pytest.fixture
 def rgb_gradient() -> Image.Image:
     return SAMPLES["gradient"]()

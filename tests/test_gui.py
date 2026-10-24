@@ -1282,10 +1282,14 @@ def test_context_menu_items_follow_the_selection(harness, tmp_path):
         "normal",
         "normal",
     )
+    # Record the calls. The system clipboard belongs to the user.
+    clipboard = []
+    h.root.clipboard_clear = clipboard.clear
+    h.root.clipboard_append = clipboard.append
     h.app.copy_errors()
-    assert h.root.clipboard_get() == f"{bad}: {gui.NOT_AN_IMAGE}"
+    assert clipboard == [f"{bad}: {gui.NOT_AN_IMAGE}"]
     h.app.copy_paths()
-    assert h.root.clipboard_get() == str(bad)
+    assert clipboard == [str(bad)]
 
 
 def test_the_list_follows_the_converting_row(harness, tmp_path, monkeypatch):
