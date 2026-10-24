@@ -898,6 +898,60 @@ def fit_text(
     return line(_last_fit(1, len(text) - 1, lambda limit: font.measure(line(limit)) <= width, 1))
 
 
+class _ListTree(ttk.Treeview):
+    """The Treeview of the list. It keeps its selection in a cache.
+
+    The views read the selection after each poll during a run. selection() asks Tk for
+    all selected items, so a large selection makes each poll slow. The cache stays
+    correct until a method below changes the selection, or the user changes it, which
+    sends <<TreeviewSelect>> to App._on_select. detach and move change selection()
+    without that event, so they also reset the cache.
+    """
+
+    # Not _selection: ttk.Treeview uses that name for a method.
+    def __init__(self, *args: Any, **kwargs: Any) -> None:
+        super().__init__(*args, **kwargs)
+        self._cached_items: tuple[str, ...] | None = None
+
+    def cached_selection(self) -> tuple[str, ...]:
+        """Return the selected items, from the cache when it is correct."""
+        if self._cached_items is None:
+            self._cached_items = tuple(self.selection())
+        return self._cached_items
+
+    def forget_selection(self) -> None:
+        """Read the selection from Tk again at the next cached_selection call."""
+        self._cached_items = None
+
+    def selection_set(self, *items: Any) -> None:
+        self._cached_items = None
+        super().selection_set(*items)
+
+    def selection_add(self, *items: Any) -> None:
+        self._cached_items = None
+        super().selection_add(*items)
+
+    def selection_remove(self, *items: Any) -> None:
+        self._cached_items = None
+        super().selection_remove(*items)
+
+    def selection_toggle(self, *items: Any) -> None:
+        self._cached_items = None
+        super().selection_toggle(*items)
+
+    def delete(self, *items: Any) -> None:
+        self._cached_items = None
+        super().delete(*items)
+
+    def detach(self, *items: Any) -> None:
+        self._cached_items = None
+        super().detach(*items)
+
+    def move(self, item: Any, parent: Any, index: Any) -> None:
+        self._cached_items = None
+        super().move(item, parent, index)
+
+
 @dataclass(slots=True)
 class _StatusFit:
     """The font and the width in pixels for the text of a Status cell, and the cells.
@@ -1341,7 +1395,7 @@ class App:
         self.list_browse_button.grid(row=0, column=1, padx=(0, 6))
         self.list_folder_button = ttk.Button(head, text="Add folder...", command=self.browse_folder)
         self.list_folder_button.grid(row=0, column=2)
-        tree = ttk.Treeview(
+        tree = _ListTree(
             frame,
             columns=("name", "folder", "status"),
             # Name the shown columns. _fit_columns() cannot sum the widths of "#all".
@@ -2663,12 +2717,24 @@ class App:
         if self.root.title() != title:
             self.root.title(title)
 
+    def _selection_summary(self) -> tuple[int, Row | None]:
+        """Return the number of selected rows, and the row when exactly one is selected.
+
+        The views call this after each poll of a run. Thus it reads the selection from the
+        cache of the list, and it reads at most one row, also for a large selection.
+        """
+        selection = self.tree.cached_selection()
+        if len(selection) != 1:
+            return len(selection), None
+        row = self.rows.get(int(selection[0]))
+        return (0, None) if row is None else (1, row)
+
     def _open_target(self) -> Row | None:
         """Return the done row that Open and Show in folder use, or None."""
         if self.list_mode:
-            rows = self._selected_rows()
-            if rows:
-                return rows[0] if len(rows) == 1 and rows[0].state == DONE else None
+            count, row = self._selection_summary()
+            if count:
+                return row if row is not None and row.state == DONE else None
         if len(self.done_ids) == 1:
             return self.rows[next(iter(self.done_ids))]
         return None
@@ -2711,7 +2777,7 @@ class App:
         # During a run, the only done row is a target only for a moment. Thus the list
         # then shows Show in folder only for a selected row, and the buttons do not move.
         if self.list_mode:
-            show = target is not None and (not running or bool(self._selected_rows()))
+            show = target is not None and (not running or self._selection_summary()[0] > 0)
             open_ = True
         else:
             show = open_ = not running and tally.done > 0
@@ -2827,12 +2893,12 @@ class App:
         elif not self.list_mode:
             text, failed = self._zone_details(next(iter(self.rows.values()), None))
         else:
-            rows = self._selected_rows()
+            count, row = self._selection_summary()
             current = self.rows.get(self.current) if self.current is not None else None
-            if len(rows) == 1:
-                path, text, failed = self._row_details(rows[0])
-            elif rows:
-                path = f"{len(rows):,} files selected."
+            if row is not None:
+                path, text, failed = self._row_details(row)
+            elif count:
+                path = f"{count:,} files selected."
             elif current is not None:
                 path = self._path_line(current.src, extra=f"{SEP}{self._current_text.rstrip('.')}")
         _set_if_changed(self.path_var, path)
@@ -2911,7 +2977,8 @@ class App:
         self.tree.yview_moveto(max(0, index - above) / max(len(self.rows), 1))
 
     def _on_select(self, event: Any = None) -> None:
-        if self.tree.selection():
+        self.tree.forget_selection()
+        if self.tree.cached_selection():
             self.follow = False
         self._refresh_buttons()
         self._refresh_details()

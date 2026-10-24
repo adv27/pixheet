@@ -966,6 +966,42 @@ def test_retry_failed_converts_the_failed_rows_again(harness, tmp_path):
     assert h.app.title_var.get() == "Converted 1 file."
 
 
+def test_the_progress_views_do_not_read_the_selection_again(harness, tmp_path, monkeypatch):
+    # With a large selection, tree.selection() and a read of each selected row on each
+    # poll make the run slow. The views read the cache of the list.
+    gate = gate_convert(monkeypatch)
+    h = harness()
+    h.drop(*(image(tmp_path / f"{i}.png") for i in range(6)))
+    h.root.update()
+    h.pump(converting(h))
+    h.app._select_all()
+    h.root.update()  # <<TreeviewSelect>>
+    assert h.app.path_var.get() == "6 files selected."
+    calls = []
+    selection = ttk.Treeview.selection
+    monkeypatch.setattr(ttk.Treeview, "selection", lambda self: calls.append(1) or selection(self))
+    gate.set()
+    h.wait()
+    assert h.states() == ["done"] * 6
+    assert calls == []
+    assert h.app.path_var.get() == "6 files selected."
+
+
+def test_the_selection_cache_follows_the_failed_only_filter(harness, tmp_path):
+    # detach and move change the selection without <<TreeviewSelect>>.
+    h = harness()
+    bad = tmp_path / "b.png"
+    bad.write_text("not an image")
+    h.run(image(tmp_path / "a.png"), bad, image(tmp_path / "c.png"))
+    h.app.tree.selection_set(h.iid("a.png"))
+    h.root.update()
+    assert h.app._selection_summary() == (1, h.app.rows[int(h.iid("a.png"))])
+    h.app.failed_only_button.invoke()  # detaches a.png
+    assert h.app._selection_summary() == (0, None)
+    h.app.failed_only_button.invoke()  # a.png comes back, still selected
+    assert h.app._selection_summary()[0] == 1
+
+
 def test_failed_only_shows_only_the_failed_rows(harness, tmp_path):
     h = harness()
     bad = tmp_path / "b.png"
