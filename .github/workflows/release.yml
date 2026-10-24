@@ -359,6 +359,10 @@ jobs:
       # A job that stops during the upload, for example after a cancel or at the time
       # limit, leaves the draft. Users cannot see a draft. Thus for a draft, the job
       # uploads the missing files and then publishes the draft.
+      # An upload that fails can leave an empty file in the release, with the state
+      # "starter" or "open". The job counts only the files with the state "uploaded". For a
+      # draft, --clobber replaces the files that did not upload completely. For a published
+      # release, gh stops at such a file. Delete it by hand, then run again.
       - name: Create the release, or add the missing files to it
         if: steps.tag.outputs.publish == 'true'
         env:
@@ -371,8 +375,9 @@ jobs:
             THIRD-PARTY-NOTICES-windows-x64.txt THIRD-PARTY-NOTICES-linux-x86_64.txt)
           release=none
           assets=""
-          # The first line is "true" for a draft. Each next line is the name of a file.
-          if view=$(gh release view "$TAG" --repo "$REPO" --json isDraft,assets --jq '.isDraft, .assets[].name' 2>&1); then
+          # The first line is "true" for a draft. Each next line is the name of a file that
+          # uploaded completely.
+          if view=$(gh release view "$TAG" --repo "$REPO" --json isDraft,assets --jq '.isDraft, (.assets[] | select(.state == "uploaded") | .name)' 2>&1); then
             mapfile -t found <<< "$view"
             release=published
             if [[ "${found[0]}" == true ]]; then
@@ -404,7 +409,8 @@ jobs:
             publish)
               if (( ${#missing[@]} > 0 )); then
                 echo "The release $TAG is a draft. The job uploads: ${missing[*]}"
-                gh release upload "$TAG" "${missing[@]}" --repo "$REPO"
+                # Only the files that did not upload completely can have these names.
+                gh release upload "$TAG" "${missing[@]}" --repo "$REPO" --clobber
               fi
               echo "The job publishes the draft release $TAG."
               gh release edit "$TAG" --repo "$REPO" --draft=false

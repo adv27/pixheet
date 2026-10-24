@@ -4,6 +4,7 @@ Tk trim, the exe check, the release version, the release plan, and the runner ho
 import ast
 import importlib.util
 import io
+import json
 import os
 import re
 import shutil
@@ -1288,13 +1289,49 @@ def test_release_waits_for_both_builds_and_publishes_all_files():
     assert "VERSION: ${{ needs.build-windows.outputs.version }}" in text
     assert f"files=({' '.join(RELEASE_FILES)}\n" in text
     assert 'release_plan.py upload "$release" "${files[@]}"' in text
-    assert "--json isDraft,assets --jq '.isDraft, .assets[].name'" in text
     assert 'gh release upload "$TAG" "${missing[@]}"' in text
     assert 'gh release edit "$TAG" --repo "$REPO" --draft=false' in text
     assert 'gh release create "$TAG" "${missing[@]}"' in text
     assert "sha256sum -c Pixheet.exe.sha256 Pixheet-linux-x86_64.sha256" in text
     for name in ("Pixheet-windows-x64", "Pixheet-linux-x86_64"):
         assert f"          name: {name}\n" in text  # upload and download
+
+
+def test_release_counts_only_the_files_that_uploaded_completely():
+    """A failed upload can leave an empty file with the state "starter" in the release."""
+    text = (WORKFLOWS / "release.yml").read_text(encoding="utf-8")
+    jq = """--jq '.isDraft, (.assets[] | select(.state == "uploaded") | .name)'"""
+    assert f"--json isDraft,assets {jq}" in text
+    assert ".assets[].name" not in text
+    # gh refuses a name that the release has. For a draft, --clobber replaces an empty file.
+    # A published release keeps its files, because users can have downloaded them.
+    cases = text[text.index('case "$action" in') : text.index("esac")]
+    upload = cases[cases.index("upload)") : cases.index(";;", cases.index("upload)"))]
+    publish = cases[cases.index("publish)") : cases.index(";;", cases.index("publish)"))]
+    assert 'gh release upload "$TAG" "${missing[@]}" --repo "$REPO"\n' in upload
+    assert 'gh release upload "$TAG" "${missing[@]}" --repo "$REPO" --clobber\n' in publish
+    assert text.count("--clobber") == 2  # the comment and the draft upload
+
+
+@pytest.mark.skipif(shutil.which("jq") is None, reason="needs jq")
+def test_the_jq_filter_of_the_release_drops_an_empty_file():
+    text = (WORKFLOWS / "release.yml").read_text(encoding="utf-8")
+    [jq] = re.findall(r"--json isDraft,assets --jq '([^']*)'", text)
+    view = {
+        "isDraft": True,
+        "assets": [
+            {"name": "Pixheet.exe", "state": "starter"},  # the upload failed
+            {"name": "Pixheet.exe.sha256", "state": "uploaded"},
+            {"name": "Pixheet-linux-x86_64", "state": "open"},
+        ],
+    }
+    out = subprocess.run(
+        ["jq", "-r", jq], input=json.dumps(view), capture_output=True, text=True, check=True
+    ).stdout
+    assert out.splitlines() == ["true", "Pixheet.exe.sha256"]
+    # Without the filter, the plan published the draft with the empty Pixheet.exe.
+    with pytest.raises(release_plan.PlanError, match=r"but not a complete Pixheet\.exe\."):
+        release_plan.upload_plan("draft", out.splitlines()[1:], RELEASE_FILES)
 
 
 def test_linux_build_runs_in_debian_11():

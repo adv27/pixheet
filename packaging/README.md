@@ -415,6 +415,12 @@ the job stops during the upload, for example after a cancel, the draft stays. Us
 cannot see a draft. When the job runs again, it uploads the missing files to the draft,
 and then publishes the draft.
 
+An upload that fails, for example with the HTTP error 502, can leave an empty file in
+the release. GitHub gives that file the state `starter` or `open`, not `uploaded`. The
+job counts only the files with the state `uploaded`. For a draft, the job replaces the
+other files with `gh release upload --clobber`. For a published release, `gh release
+upload` stops at such a file. Delete the file, and then run the job again.
+
 You can also protect the releases in the settings of the repository:
 
 - Turn on immutable releases.

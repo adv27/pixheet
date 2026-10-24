@@ -22,7 +22,9 @@ is 1. An earlier run made the tag, and then it stopped. The job must not publish
 files of SHA for the tag of a different commit. A person must repair the release.
 
 ``upload`` reads the names of the files of the release from stdin, one name on each line.
-RELEASE is "none", "draft" or "published": the state of the release. FILE is a file that
+The list must have only the files that uploaded completely. An upload that fails can
+leave an empty file in the release, and that file must count as missing. RELEASE is
+"none", "draft" or "published": the state of the release. FILE is a file that
 the release must have. The first line of the output is "create", "upload", "publish" or
 "done". Each next line is a file to upload. "publish" is for a draft: the job uploads the
 files, then publishes the draft. The job never replaces a file of a release, because
@@ -94,9 +96,10 @@ def upload_plan(
     ``release`` is a value of :data:`RELEASE_STATES`. The action is "create" when the
     release does not exist, and "publish" when it is a draft. For a published release, the
     action is "upload" when the release does not have all files of ``wanted``, and "done"
-    when it has them all. ``existing`` is the list of the files of the release. A file
-    that is not in ``wanted`` has no effect. Raise ``PlanError`` when the release has only
-    one file of a pair in ``wanted``. Raise ``ValueError`` for an unknown ``release``.
+    when it has them all. ``existing`` is the list of the files of the release that
+    uploaded completely. A file that is not in ``wanted`` has no effect. Raise
+    ``PlanError`` when the release has only one file of a pair in ``wanted``. Raise
+    ``ValueError`` for an unknown ``release``.
     """
     if release not in RELEASE_STATES:
         raise ValueError(f"unknown state of the release: {release!r}")
@@ -108,9 +111,10 @@ def upload_plan(
         other = partner(name)
         if other in wanted and other in have:
             raise PlanError(
-                f"The release has {other}, but not {name}. A new build can be different, "
-                f"and then the checksum is not correct. Delete {other} in the release by "
-                "hand, then run the job again."
+                f"The release has {other}, but not a complete {name}. A new build can be "
+                f"different, and then the checksum is not correct. Delete {other} in the "
+                f"release by hand. Also delete {name} if the release has a file with that "
+                "name that did not upload completely. Then run the job again."
             )
     if release == "draft":
         return "publish", missing
