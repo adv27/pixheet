@@ -1,0 +1,375 @@
+# Build the desktop app for Windows and Linux on GitHub-hosted runners, and publish the
+# release.
+#
+# - build-windows makes Pixheet.exe on a Windows runner.
+# - build-linux makes Pixheet-linux-x86_64 in a Debian 11 container on an Ubuntu runner.
+#   Debian 11 has glibc 2.31 and libX11 1.7.2. The app then needs only glibc 2.27 (the
+#   floor of Pillow), and tkdnd can load. A build on the Ubuntu runner itself would need
+#   glibc 2.39. Read packaging/README.md.
+#
+# Each job runs on a new virtual machine, and GitHub deletes the machine after the job.
+# Thus no file from an earlier job can go into the app.
+#
+# Security: the repository is public. A pull request from a fork can run this workflow,
+# because the trigger is pull_request. For pull_request, GitHub gives no secrets and a
+# token that can only read. Do not use pull_request_target. It gives the secrets and a
+# token that can write.
+#
+# Before you move a build job to a self-hosted runner, you MUST remove the pull_request
+# trigger. Read "Later: self-hosted runner" in packaging/README.md.
+#
+# The release job publishes the six files of both builds in a GitHub release: each app,
+# its .sha256 file, and its file of third-party notices. The release is
+# "Pixheet v<version>". The notes of a new release come from CHANGELOG.md. The job runs
+# only when both builds pass:
+# - For a push to master. The version in pyproject.toml gives the tag v<version>.
+#   - When the tag does not exist, the job makes it at the commit of the push.
+#   - When the tag exists at the commit of the push, an earlier run made it. The job adds
+#     the files that the release does not have.
+#   - When the tag exists at a different commit, the job does nothing.
+# - For a push of a tag "v<version>". The tag must agree with the version.
+# Only the release job can write to the repository. It never runs for a pull request.
+name: Release
+
+on:
+  push:
+    branches: [master]
+    tags: ["v*"]
+  pull_request:
+  workflow_dispatch:
+
+permissions: {}
+
+# One run at a time for each ref. A new run of a pull request cancels the old run. A push
+# to master never cancels a run that has started. But GitHub keeps only one waiting run in
+# a group: a third quick push cancels the waiting run of the second push. The run of the
+# third push then releases the version at its own, later commit. Thus the tag of a version
+# can be at a later commit than the change of the version. A version that a newer version
+# replaces before its run starts gets no release. To tag a version at a different commit,
+# push the tag v<version> at that commit.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  build-windows:
+    name: Build Pixheet.exe
+    runs-on: windows-2025
+    timeout-minutes: 45
+    permissions:
+      contents: read # check out the code
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+    defaults:
+      run:
+        # Windows PowerShell 5.1 is on each Windows machine. pwsh is not always there.
+        shell: powershell
+    steps:
+      - name: Check out the repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      # The version input gives one exact uv version, the same in all jobs and in ci.yml.
+      # uv reads the Python version from .python-version. pyproject.toml sets
+      # python-preference = "only-managed". Thus uv installs python-build-standalone and
+      # does not use the Python of the runner image.
+      # This workflow publishes releases. Thus it does not use the GitHub Actions cache,
+      # because a file from the cache can go into the app.
+      - name: Install uv
+        uses: astral-sh/setup-uv@18d369b23da25a81e9458561248e1aafff6a70fa # v10.3.1
+        with:
+          version: "0.13.1"
+          enable-cache: false
+
+      # The build group includes pefile. Thus the test that compares the PE checksum with
+      # pefile runs here. It does not skip.
+      - name: Install the dependencies
+        run: uv sync --locked --extra gui --group build
+
+      # The script reads pyproject.toml with tomllib. The release job uses the version.
+      - name: Read the package version
+        id: version
+        run: |
+          $version = uv run --locked --extra gui --group build python packaging/release_version.py version
+          if ($LASTEXITCODE -ne 0) { exit 1 }
+          "version=$version" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
+
+      - name: Check that the tag agrees with the package version
+        if: startsWith(github.ref, 'refs/tags/v')
+        env:
+          TAG: ${{ github.ref_name }}
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          if ($env:TAG -ne "v$env:VERSION") {
+            Write-Host "::error::The tag $env:TAG does not agree with the version $env:VERSION in pyproject.toml."
+            exit 1
+          }
+
+      - name: Run the tests
+        run: uv run --locked --extra gui --group build pytest
+
+      - name: Build and test the exe
+        run: powershell -NoProfile -ExecutionPolicy Bypass -File packaging\build.ps1
+
+      - name: Upload the exe
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: Pixheet-windows-x64
+          path: |
+            dist/Pixheet.exe
+            dist/Pixheet.exe.sha256
+            dist/THIRD-PARTY-NOTICES-windows-x64.txt
+          if-no-files-found: error
+          retention-days: 30
+
+  build-linux:
+    name: Build Pixheet for Linux
+    runs-on: ubuntu-latest
+    # The digest pins the image, the same as the commit SHA of each action. This is the
+    # multi-platform index of debian:11 on 2026-10-24. Debian 11 gets no more updates, so
+    # the digest changes rarely. To get the current digest, run
+    # "docker buildx imagetools inspect debian:11".
+    container: debian:11@sha256:6f519a81440354a85eb592c5f32109ab80605f6b892455983a6f618bf87fabe9
+    timeout-minutes: 45
+    permissions:
+      contents: read # check out the code
+    env:
+      DEBIAN_FRONTEND: noninteractive
+    steps:
+      # The container runs as root, so apt needs no sudo. Debian 11 is old, so its
+      # packages are on archive.debian.org. git lets actions/checkout make a real clone:
+      # build.sh reads the time of the commit. binutils gives objdump to linux_guards.py.
+      # xvfb, xauth and xfonts-base give an X server to the tests and to check_exe.py.
+      - name: Install the system packages
+        run: |
+          printf '%s\n' \
+            'deb http://archive.debian.org/debian bullseye main' \
+            'deb http://archive.debian.org/debian-security bullseye-security main' \
+            > /etc/apt/sources.list
+          rm -f /etc/apt/sources.list.d/*
+          apt-get -o Acquire::Check-Valid-Until=false update
+          apt-get install -y git ca-certificates binutils libx11-6 libxcursor1 \
+            xvfb xauth xfonts-base
+          dpkg-query -W libc6 libx11-6
+
+      - name: Check out the repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      # The container runs as root, but the runner user owns the checkout. Thus git
+      # refuses the folder as "dubious ownership" (exit code 128). build.sh and the tests
+      # call git, so mark the folder as safe for git.
+      - name: Let git use the checkout
+        run: git config --global --add safe.directory "$GITHUB_WORKSPACE"
+
+      # uv installs the Python of .python-version from python-build-standalone, the same
+      # Python build as on Windows (python-preference = "only-managed" in pyproject.toml).
+      # The job does not use the GitHub Actions cache, for the same reason as the Windows
+      # job.
+      - name: Install uv
+        uses: astral-sh/setup-uv@18d369b23da25a81e9458561248e1aafff6a70fa # v10.3.1
+        with:
+          version: "0.13.1"
+          enable-cache: false
+
+      - name: Install the dependencies
+        run: uv sync --locked --extra gui --group build
+
+      - name: Run the tests
+        run: xvfb-run -a uv run --locked --extra gui --group build pytest
+
+      # The spec writes the glibc floor of the bundle to the log, in the line
+      # "linux_guards: the app needs glibc 2.27 or later (...)". The build stops when the
+      # floor is above 2.27, or when the libX11 of the container is older than 1.7.
+      - name: Build and test the app
+        run: bash packaging/build.sh
+
+      - name: Upload the app
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: Pixheet-linux-x86_64
+          path: |
+            dist/Pixheet-linux-x86_64
+            dist/Pixheet-linux-x86_64.sha256
+            dist/THIRD-PARTY-NOTICES-linux-x86_64.txt
+          if-no-files-found: error
+          retention-days: 30
+
+  release:
+    name: Publish the release
+    needs: [build-windows, build-linux]
+    # A push to master, a push of a v* tag, or a manual start on master. Never a pull
+    # request, and never a manual start on a different branch.
+    if: >-
+      (github.event_name == 'push'
+        && (github.ref == 'refs/heads/master' || startsWith(github.ref, 'refs/tags/v')))
+      || (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/master')
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write # make the tag, create the release and upload the files
+    # One release job at a time, for all refs, for example a push to master and a push of a
+    # tag. The group never cancels a job that has started. When two merges come quickly, the
+    # second job waits. When the two merges have the same version, the second job finds the
+    # tag of the first job at a different commit, and does nothing. Only one job can wait:
+    # read the comment at the concurrency of the workflow.
+    concurrency:
+      group: ${{ github.workflow }}-release
+      cancel-in-progress: false
+    steps:
+      # The job needs packaging/release_plan.py. The checkout keeps no token on the disk.
+      - name: Check out the repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      # The release notes are the section of the version in CHANGELOG.md, then the download
+      # steps. gh adds the list of the pull requests (--generate-notes). This step comes
+      # before the tag. Thus a missing section stops the job before it makes the tag.
+      - name: Write the release notes
+        env:
+          VERSION: ${{ needs.build-windows.outputs.version }}
+        run: python3 packaging/release_notes.py "$VERSION" > "$RUNNER_TEMP/notes.md"
+
+      # For a push to master, release_plan.py compares the tag v<version> with the commit
+      # of the push:
+      # - No tag: the job makes the tag at the commit of the push, then publishes.
+      # - The tag is at the commit of the push: an earlier run of this job made the tag,
+      #   but it can have stopped before the release was complete. The job publishes.
+      # - The tag is at a different commit: that version has a release already. The job
+      #   does nothing. The artifacts of the build stay on the Actions page.
+      # A tag that GITHUB_TOKEN makes does not start a new workflow run. This is correct,
+      # because this job publishes the release itself. Do not use a different token to
+      # start a run for the tag. Then the release job runs two times for one version.
+      - name: Make the tag of the version
+        id: tag
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          REF: ${{ github.ref }}
+          REF_NAME: ${{ github.ref_name }}
+          SHA: ${{ github.sha }}
+          VERSION: ${{ needs.build-windows.outputs.version }}
+        run: |
+          if [[ "$REF" == refs/tags/v* ]]; then
+            # The Windows build job made sure that the tag agrees with the version.
+            echo "tag=$REF_NAME" >> "$GITHUB_OUTPUT"
+            echo "publish=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          if [[ -z "$VERSION" ]]; then
+            echo "::error::The build job did not give the version."
+            exit 1
+          fi
+          tag="v$VERSION"
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+          url="https://github.com/$REPO.git"
+
+          # Print the commit of the tag $1 on GitHub. Print nothing when the tag does not
+          # exist. For an annotated tag, the line that ends with ^{} gives the commit.
+          tag_commit() {
+            local lines status=0
+            lines=$(git ls-remote --exit-code "$url" "refs/tags/$1" "refs/tags/$1^{}") || status=$?
+            if [[ $status -eq 2 ]]; then return 0; fi
+            if [[ $status -ne 0 ]]; then
+              echo "::error::git ls-remote stopped with exit code $status." >&2
+              return 1
+            fi
+            printf '%s\n' "$lines" | sort -k2 | tail -n 1 | cut -f1
+          }
+
+          commit=$(tag_commit "$tag")
+          action=$(python3 packaging/release_plan.py tag "$SHA" "$commit")
+          if [[ "$action" == skip ]]; then
+            echo "The tag $tag exists already, at a different commit $commit. That version has a release. The job does not publish."
+            echo "publish=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          if [[ "$action" == publish ]]; then
+            echo "The tag $tag exists already, at $SHA. The job publishes the files that are missing."
+          elif gh api "repos/$REPO/git/refs" -f "ref=refs/tags/$tag" -f "sha=$SHA" > /dev/null; then
+            echo "The job made the tag $tag at $SHA."
+          else
+            # A different job can make the same tag at the same time.
+            commit=$(tag_commit "$tag")
+            action=$(python3 packaging/release_plan.py tag "$SHA" "$commit")
+            if [[ "$action" == publish ]]; then
+              echo "The tag $tag exists already, at $SHA. The job continues."
+            elif [[ "$action" == skip ]]; then
+              echo "::error::The tag $tag exists already, at a different commit $commit, not $SHA."
+              exit 1
+            else
+              echo "::error::The job cannot make the tag $tag."
+              exit 1
+            fi
+          fi
+          echo "publish=true" >> "$GITHUB_OUTPUT"
+
+      - name: Download the Windows app
+        if: steps.tag.outputs.publish == 'true'
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: Pixheet-windows-x64
+          path: dist
+
+      - name: Download the Linux app
+        if: steps.tag.outputs.publish == 'true'
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: Pixheet-linux-x86_64
+          path: dist
+
+      # The job never replaces a file of a published release, because users can have
+      # downloaded it already. A new build of the same commit can also give a different
+      # file, for example with a newer patch release of Python. Thus the job uploads only
+      # the files that the release does not have. When the release has a file but not its
+      # checksum file, or the opposite, the job stops. To replace a file, delete it in the
+      # release by hand, then run again. A download drops the executable bit of the Linux
+      # file. The README tells the users to run chmod +x.
+      - name: Create the release, or add the missing files to it
+        if: steps.tag.outputs.publish == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          TAG: ${{ steps.tag.outputs.tag }}
+        run: |
+          (cd dist && sha256sum -c Pixheet.exe.sha256 Pixheet-linux-x86_64.sha256)
+          files=(Pixheet.exe Pixheet.exe.sha256 Pixheet-linux-x86_64 Pixheet-linux-x86_64.sha256
+            THIRD-PARTY-NOTICES-windows-x64.txt THIRD-PARTY-NOTICES-linux-x86_64.txt)
+          release=false
+          assets=""
+          if view=$(gh release view "$TAG" --repo "$REPO" --json assets --jq '.assets[].name' 2>&1); then
+            release=true
+            assets=$view
+          elif [[ "$view" != *"release not found"* ]]; then
+            echo "::error::gh cannot read the release $TAG: $view"
+            exit 1
+          fi
+          if ! plan=$(printf '%s\n' "$assets" | python3 packaging/release_plan.py upload "$release" "${files[@]}"); then
+            printf '%s\n' "$plan"
+            exit 1
+          fi
+          mapfile -t lines <<< "$plan"
+          action=${lines[0]}
+          missing=("${lines[@]:1}")
+          cd dist
+          case "$action" in
+            create)
+              gh release create "$TAG" "${missing[@]}" --repo "$REPO" \
+                --verify-tag --title "Pixheet $TAG" \
+                --notes-file "$RUNNER_TEMP/notes.md" --generate-notes
+              ;;
+            upload)
+              echo "The release $TAG exists. The job uploads: ${missing[*]}"
+              gh release upload "$TAG" "${missing[@]}" --repo "$REPO"
+              ;;
+            done)
+              echo "The release $TAG has all files. The job has nothing to do."
+              ;;
+            *)
+              echo "::error::release_plan.py gave the unknown action $action."
+              exit 1
+              ;;
+          esac

@@ -1,0 +1,129 @@
+# Tests and lint on GitHub-hosted Windows and Ubuntu runners.
+# Each job runs on a new virtual machine, and its token can only read the repository. A
+# pull request from a fork gets no secrets. Read packaging/README.md.
+# Both test jobs send the coverage and the test results to Codecov, with a flag for the
+# system: Windows or Linux. Only this workflow uses the secret CODECOV_TOKEN.
+name: CI
+
+on:
+  push:
+    branches: [master]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read # check out the code
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  test:
+    name: Tests and lint (${{ matrix.os }})
+    strategy:
+      # A failure on one system does not cancel the job on the other system.
+      fail-fast: false
+      matrix:
+        os: [windows-latest, ubuntu-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
+    steps:
+      - name: Check out the repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      # The GUI tests need an X server on Linux. Without it, they skip, and the job passes
+      # without a test of the window.
+      - name: Install Xvfb
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y xvfb xauth
+
+      # The version input gives one exact uv version, so each run uses the same uv. Use the
+      # same version in release.yml. uv reads the Python version from .python-version. uv
+      # installs python-build-standalone, not the Python of the runner image, because
+      # pyproject.toml sets python-preference = "only-managed".
+      - name: Install uv
+        uses: astral-sh/setup-uv@18d369b23da25a81e9458561248e1aafff6a70fa # v10.3.1
+        with:
+          version: "0.13.1"
+
+      - name: Install the dependencies
+        run: uv sync --locked --extra gui
+
+      # Only CI measures the coverage. A plain "uv run pytest" stays fast. On Linux,
+      # xvfb-run starts an X server for the run. bash runs the step on both systems.
+      - name: Run the tests
+        shell: bash
+        run: |
+          run=()
+          if [[ "$RUNNER_OS" == "Linux" ]]; then run=(xvfb-run -a); fi
+          "${run[@]}" uv run --locked --extra gui pytest --cov --cov-branch \
+            --cov-report=xml --junitxml=junit.xml -o junit_family=legacy
+
+      # A pull request from a fork gets no secrets. Then the token is empty, and Codecov
+      # accepts the upload without a token, because the repository is public. An upload
+      # without a token can fail, so it does not stop the job.
+      - name: Upload the coverage to Codecov
+        uses: codecov/codecov-action@303a32d7a59b442fa8d48b6a1cc6825c09c847a5 # v7.1.1
+        with:
+          token: ${{ secrets.CODECOV_TOKEN }}
+          files: coverage.xml
+          flags: ${{ runner.os }}
+          disable_search: true
+          fail_ci_if_error: ${{ secrets.CODECOV_TOKEN != '' }}
+
+      # Upload the test results also when a test fails. Codecov then shows the failed tests.
+      - name: Upload the test results to Codecov
+        if: ${{ !cancelled() }}
+        uses: codecov/codecov-action@303a32d7a59b442fa8d48b6a1cc6825c09c847a5 # v7.1.1
+        with:
+          token: ${{ secrets.CODECOV_TOKEN }}
+          report_type: test_results
+          files: junit.xml
+          flags: ${{ runner.os }}
+          disable_search: true
+          fail_ci_if_error: ${{ secrets.CODECOV_TOKEN != '' }}
+
+      # The lint and the format check give the same result on each system.
+      - name: Lint
+        if: runner.os == 'Windows'
+        run: uv run --locked --extra gui ruff check
+
+      - name: Check the format
+        if: runner.os == 'Windows'
+        run: uv run --locked --extra gui ruff format --check
+
+  version:
+    name: Check the version tag
+    # A merge that changes the version publishes a release, but only when the tag
+    # v<version> does not exist yet. Thus a pull request that changes the version to a
+    # version with a tag fails here. Then the merge cannot skip the release silently.
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Check out the repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      # The repository is public. Thus git can read the base commit and the tags without
+      # a token, also for a pull request from a fork.
+      - name: Check that a new version has no tag yet
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        run: |
+          git fetch --quiet --depth=1 --no-tags origin "$BASE_SHA"
+          git show "$BASE_SHA:pyproject.toml" > "$RUNNER_TEMP/base-pyproject.toml"
+          python3 packaging/release_version.py check-pr "$RUNNER_TEMP/base-pyproject.toml"
+
+      # The release job uses the section of the version in CHANGELOG.md as the release
+      # notes. Thus each version must have a section before the merge.
+      - name: Check that CHANGELOG.md has a section for the version
+        run: |
+          version=$(python3 packaging/release_version.py version)
+          python3 packaging/release_notes.py "$version" > /dev/null

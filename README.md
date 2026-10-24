@@ -1,5 +1,8 @@
 # Pixheet
 
+[![CI](https://github.com/adv27/pixheet/actions/workflows/ci.yml/badge.svg?branch=master)](https://github.com/adv27/pixheet/actions/workflows/ci.yml)
+[![codecov](https://codecov.io/gh/adv27/pixheet/graph/badge.svg?token=6ZUOTE5GOF)](https://codecov.io/gh/adv27/pixheet)
+
 Pixheet turns any image into an `.xlsx` spreadsheet where every cell is one pixel,
 filled with that pixel's color. Open the file in a spreadsheet app, zoom out, and you
 see the picture.
@@ -15,7 +18,8 @@ Excel 16 on Windows) and readable by any .xlsx reader.
 ## Install
 
 Pixheet needs Python 3.15 or newer and depends only on [Pillow](https://python-pillow.org/).
-It is not on PyPI yet; install it from a checkout with [uv](https://docs.astral.sh/uv/):
+It is not on PyPI yet; install it from a checkout with [uv](https://docs.astral.sh/uv/)
+0.13.1 or later:
 
 ```console
 $ uv tool install .        # puts `pixheet` on your PATH
@@ -43,6 +47,225 @@ time. If an input fails, Pixheet reports it, carries on with the rest, and exits
 status 1. Wildcards such as `photos\*.jpg` are expanded even in shells that don't do it
 themselves (cmd, PowerShell). `python -m pixheet` works too.
 
+## Desktop app
+
+Pixheet also has a desktop app. Drop images or folders on its window, and the app
+converts each image to an `.xlsx` file. Install the app with the `gui` extra:
+
+```console
+$ uv tool install ".[gui]"     # or: pip install ".[gui]"
+$ pixheet-gui                  # or: uv run --extra gui pixheet-gui from the checkout
+```
+
+To add images:
+
+- Drop images or folders on the window, or click **Add files...** or **Add folder...**.
+  Ctrl+O also adds files.
+- A folder adds only the images directly in it. When the folder has subfolders, a note
+  shows the button **Include subfolders**.
+- The app ignores files that are not images, and a note names them.
+- Set the maximum side, the background, compact mode, and **Save to** before you add
+  images. During a run, the app locks these settings and shows them in gray.
+- **Save to** sets the folder of the outputs: **Next to each image** (the default), or a
+  folder that you choose. When two images have the same output name, each output gets a
+  tag. For example, `photo.png` and `photo.jpg` give `photo (png).xlsx` and
+  `photo (jpg).xlsx`.
+- Two output names that differ only in the case of the letters also get a tag, on all
+  systems. For example, `Photo.png` and `photo.jpg` give `Photo (png).xlsx` and
+  `photo (jpg).xlsx`. Some file systems ignore the case, for example APFS, exFAT, and
+  network shares.
+
+One image shows in the drop zone, with a progress bar and the result. **Show in folder**
+shows the output in its folder, and **Open** opens it.
+
+Two or more images show in a list, with the name, the folder, and the status of each
+image:
+
+- The conversion starts at once. A drop during a run adds the images to the end of the
+  list. A new drop of an image with a finished row converts that row again, into the
+  current **Save to** folder.
+- The progress line shows the number of the current file, the counts, and the time
+  left. The window title also shows the progress. The progress changes about 4 times
+  each second.
+- The list keeps the current file in view. A click or a scroll in the list stops this.
+  Esc starts it again.
+- **Stop** stops the run. The app does not write the current file. **Convert N**
+  converts the files that wait. A drop after **Stop**, before the current file stops,
+  adds rows that wait. **Convert N** starts them too.
+- An error in one file does not stop the run. The row of the file is red and tells the
+  reason. Select the row to see the reason and the advice below the list. The reason
+  names the folder that failed, also after a change of **Save to**.
+- When another app has the output open, for example Excel, the row shows "Failed: file
+  is in use". Close the file in that app, then click **Retry failed**.
+- **Retry failed (N)** converts the failed files and the stopped files again. A row
+  keeps its output name when **Save to** did not change.
+- **Failed only (N)** shows only the failed files. When you remove the last failed row,
+  the list shows all rows again.
+- **Show folders (N)** opens one of the output folders. **Clear list** removes all rows.
+- Right-click a row, or press Shift+F10, for more actions. Enter opens the selected
+  file. Delete removes the selected rows.
+
+When output files exist, the app asks one time for each drop:
+
+- For two or more files, click **Replace all**, **Skip these N**, or **Cancel**.
+- For one file, click **Replace**, **Skip this file**, or **Cancel**.
+- The Skip button has the focus, so Enter does not replace files.
+- When the drop has no other images, the dialog has no Skip button, and Cancel has the
+  focus.
+
+**Convert N**, **Retry failed**, and a drop after **Stop** also check the files that
+wait. The app asks again before it replaces an output, also when you clicked **Replace**
+before the Stop. When you cancel **Convert N** or **Retry failed**, the note says "The
+app did not start the run." An output path that is too long fails at once.
+
+Screen readers cannot read the rows of the list, because Tk does not give the list to UI
+Automation. The details line below the list shows the paths and the result of the
+selected row. Long paths get "…" there. **Copy full path** and **Copy error** in the
+context menu copy the full text.
+
+The app uses Tkinter from the Python standard library. The `gui` extra adds
+[tkinterdnd2](https://pypi.org/project/tkinterdnd2/) for the drop of files. Without
+tkinterdnd2, the app opens without the drop function, and **Add files...** and **Add
+folder...** still work. You can also give paths of images and folders as arguments:
+`pixheet-gui photo.jpg`. The app makes a relative path a full path, so the tag of an
+output names the real folder.
+
+The `gui` extra also adds [sv-ttk](https://pypi.org/project/sv-ttk/). It gives the
+window the look of Windows 11:
+
+- The toggle at the top right sets the theme: **System**, **Light**, or **Dark**. The
+  title bar on Windows gets the same theme. You can use Tab and the arrow keys.
+- With **System** (the default), the window is light or dark, the same as the Windows
+  setting for apps. When you change the setting, the window changes in about 2 seconds.
+  On Linux, the app reads the dark style setting of the desktop: the color scheme of
+  the desktop portal, or else the GNOME setting. On macOS, **System** is light.
+- The app saves your choice in `%APPDATA%\Pixheet\settings.ini`. On other systems, the
+  file is `pixheet/settings.ini` in `$XDG_CONFIG_HOME`, or else in `~/.config`. A
+  damaged file gives **System**.
+- The environment variable `PIXHEET_THEME` sets the theme at the start: `system`,
+  `light`, or `dark`. It wins over the saved choice.
+- Without sv-ttk, the app opens with the standard Tk look and has no toggle.
+
+On Linux, drag and drop needs libX11 1.7 or later and libxcb 1.14 or later, for example
+Ubuntu 22.04 or Debian 11. With an older library, tkdnd stops the app when it loads. Thus
+the app does not load tkdnd, and you use **Add files...** and **Add folder...**. Set the
+environment variable `PIXHEET_DND` to `0` to turn off drag and drop on all systems.
+
+To build the Windows app yourself, see [Windows app](#windows-app). For Linux, see
+[Linux app](#linux-app).
+
+## Windows app
+
+Pixheet.exe is the desktop app in one file. It does not need Python.
+
+Download `Pixheet.exe` and `Pixheet.exe.sha256` from the
+[Releases](https://github.com/adv27/pixheet/releases) page. Each merge that changes the
+version publishes a release. The release also has `THIRD-PARTY-NOTICES-windows-x64.txt`,
+with the licenses of the third-party parts in the app. Read [License](#license).
+
+Download the app only from the Releases page. The Actions page of the repository also
+has builds of the app, for each pull request and for each push to `master`. These
+artifacts are for tests only. A pull request from a fork can change the build, and its
+artifact gets the same name. The `.sha256` file in an artifact comes from the same run.
+Thus it does not show where the app comes from.
+
+To compare the hash with the text in `Pixheet.exe.sha256`, run this command in
+PowerShell:
+
+```console
+> (Get-FileHash Pixheet.exe -Algorithm SHA256).Hash.ToLower()
+```
+
+The exe does not have a code signature yet. Thus Windows SmartScreen can show the
+message "Windows protected your PC". To start the app, click **More info**, then
+**Run anyway**. If you do not want to run an exe without a signature, build it yourself.
+
+To build Pixheet.exe from a checkout, run this command in PowerShell:
+
+```console
+> powershell -ExecutionPolicy Bypass -File packaging\build.ps1
+```
+
+The script builds `dist\Pixheet.exe`, about 13.9 MB, and tests it. Add `-OneDir` to
+build the folder `dist\Pixheet\`. The folder starts faster, because the exe does not
+extract itself each time. [packaging/README.md](packaging/README.md) gives more data
+about the build and the CI.
+
+To publish a release, do these steps in a pull request:
+
+1. Add a section `## <version>` at the top of [CHANGELOG.md](CHANGELOG.md).
+2. Change `version` in `pyproject.toml`, and run `uv lock`.
+3. Merge the pull request.
+
+The release notes come from the section of the version in `CHANGELOG.md`. Read
+"Releases" in [packaging/README.md](packaging/README.md#releases).
+
+The exe has all the features of the app, but it does not have these parts:
+
+- The Python modules for network, crypto, mail, XML, processes, and the command line,
+  and the OpenSSL DLLs. The app does not use them.
+- The Pillow modules that pixheet never calls, for example `ImageTk` and `ImageShow`.
+- The docstrings and the `assert` statements in the bytecode.
+- The Tcl and Tk files that the app does not use on Windows. Examples are the time zone
+  data, most encodings, and the messages for other languages.
+
+These changes make the exe about 6 MB smaller. The exe does not use UPX, because
+antivirus programs flag UPX-packed exes.
+
+## Linux app
+
+`Pixheet-linux-x86_64` is the desktop app for Linux in one file. It does not need
+Python. It runs on x86_64 Linux with glibc 2.27 or later, for example Ubuntu 18.04,
+Debian 10, RHEL 8, and later versions.
+
+Download `Pixheet-linux-x86_64` and `Pixheet-linux-x86_64.sha256` from the
+[Releases](https://github.com/adv27/pixheet/releases) page. The release also has
+`THIRD-PARTY-NOTICES-linux-x86_64.txt`. Do not use the artifacts on the Actions page.
+They are for tests only, as [Windows app](#windows-app) tells.
+
+Then run these commands in the download folder. A download does not keep the
+permission to run the file, so `chmod +x` adds it:
+
+```console
+$ sha256sum -c Pixheet-linux-x86_64.sha256
+$ chmod +x Pixheet-linux-x86_64
+$ ./Pixheet-linux-x86_64
+```
+
+The app needs an X server. On a Wayland desktop, it runs through Xwayland. It also
+needs `libxcb.so.1`, which each X11 desktop has.
+
+Known limits:
+
+- The text uses the core X fonts of Tk, without antialiasing, so it looks plain. The Tk
+  in the app has no Xft. Some letters, for example Vietnamese letters in a file name,
+  can show as boxes.
+- Drag and drop needs libxcb 1.14 or later. The app has its own libX11 1.7.2, but it
+  uses the `libxcb.so.1` of the system. Ubuntu 18.04, Debian 10 and RHEL 8 have libxcb
+  1.13. On these systems, the app starts without drag and drop, and the drop zone shows
+  "Drag and drop is not available. Use Add files or Add folder."
+- At each start, the app extracts itself to a folder `/tmp/_MEI...`. If `/tmp` does not
+  let programs run (`noexec`), set `TMPDIR` to a different folder.
+- To open a folder, the app uses `xdg-open`.
+- The file has no menu entry and no desktop icon.
+
+A GitHub-hosted runner builds the file in a Debian 11 container on `ubuntu-latest`. The
+build passes the smoke test and the conversion test under Xvfb. Nobody has tested the
+file on a real Linux desktop yet. Please report a problem in an issue.
+
+To build the file yourself, use Debian 11 or a `debian:11` container. Install the
+packages that [Build the Linux app](packaging/README.md#build-the-linux-app) lists, then
+run this command:
+
+```console
+$ bash packaging/build.sh
+```
+
+The script builds `dist/Pixheet-linux-x86_64`, about 19.4 MB, and tests it. The build
+stops on a system with a libX11 older than 1.7, because then tkdnd stops the app. It
+also stops when the app would need a glibc newer than 2.27.
+[packaging/README.md](packaging/README.md) tells why.
+
 ## Python API
 
 ```python
@@ -60,6 +283,7 @@ convert(
     max_side=1000,          # 0 = no cap; only the sheet limits apply
     background="white",     # "white", "black", "#RRGGBB", (r, g, b), or "none"
     compact=False,
+    progress=None,          # function that gets (rows_done, rows_total)
 ) -> ConvertResult
 ```
 
@@ -67,6 +291,25 @@ convert(
 `seconds`. When `src` is a `PIL.Image.Image`, it is left open and unchanged. When `dst`
 is a path, the file is written next to it and renamed into place, so a failed conversion
 never leaves a half-written file and keeps any previous file.
+
+Use `progress` to show the progress of a conversion, for example in a progress bar:
+
+- `convert` calls `progress(rows_done, rows_total)` on the thread that called `convert`.
+- The first call is `(0, rows_total)`. Then one call comes after each row of the sheet.
+- The last call is `(rows_total, rows_total)`.
+- An exception from `progress` stops the conversion, and `convert` raises it again.
+  When `dst` is a path, an existing file at `dst` does not change.
+  When `dst` is a stream, the stream then holds an incomplete file. Discard it.
+- `convert` does not limit the number of calls. A slow `progress` function makes the
+  conversion slow.
+
+```python
+def show(done, total):
+    print(f"\r{done * 100 // total}%", end="")
+
+
+convert("photo.jpg", "photo.xlsx", progress=show)
+```
 
 `prepare(src, max_side=..., background=...)` returns the RGB image that `convert` would
 write, one pixel per cell, without writing anything.
@@ -157,4 +400,11 @@ $ powershell -ExecutionPolicy Bypass -File scripts\excel_check.ps1 -Folder sampl
 
 ## License
 
-MIT
+Pixheet uses the MIT license. Read [LICENSE](LICENSE).
+
+`Pixheet.exe` and `Pixheet-linux-x86_64` also include third-party parts, and each part
+has its own license. Examples are Python, Tcl and Tk, Pillow and its libraries, sv-ttk,
+tkinterdnd2, tkdnd, and the bootloader of PyInstaller. The Linux app also includes
+OpenSSL and other libraries in libpython, and libraries of Debian 11. Each app has the
+license texts in the file `THIRD-PARTY-NOTICES.txt`. The release has the same text in
+`THIRD-PARTY-NOTICES-windows-x64.txt` and `THIRD-PARTY-NOTICES-linux-x86_64.txt`.
