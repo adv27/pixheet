@@ -1218,14 +1218,38 @@ def git(*args: str, cwd: Path) -> None:
 needs_git = pytest.mark.skipif(shutil.which("git") is None, reason="needs git")
 
 
+@pytest.fixture
+def isolated_git(monkeypatch):
+    """Run git without the global config and the system config of the user.
+
+    A global hook, or commit.gpgsign = true, can stop the git calls of a test. A signing
+    agent can also show a dialog. Do not make this fixture autouse. The test of the line
+    ends reads the real checkout, and the debian:11 container of the release job puts
+    safe.directory in the global config. Git before 2.32 ignores GIT_CONFIG_GLOBAL.
+    """
+    monkeypatch.setenv("GIT_CONFIG_GLOBAL", os.devnull)
+    monkeypatch.setenv("GIT_CONFIG_NOSYSTEM", "1")
+
+
+def make_remote(folder: Path) -> Path:
+    """Make a repository with the tags v0.1.0 and v0.2.0 (annotated) in ``folder``."""
+    folder.mkdir()
+    git("init", "-q", cwd=folder)
+    git("commit", "-q", "--allow-empty", "-m", "first", cwd=folder)
+    git("tag", "v0.1.0", cwd=folder)
+    git("tag", "-a", "v0.2.0", "-m", "annotated", cwd=folder)
+    return folder
+
+
+def git_version() -> tuple[int, int]:
+    out = subprocess.run(["git", "--version"], capture_output=True, text=True, check=True).stdout
+    major, minor = re.match(r"git version (\d+)\.(\d+)", out).groups()
+    return int(major), int(minor)
+
+
 @needs_git
-def test_remote_tag_exists_asks_the_remote(tmp_path):
-    remote = tmp_path / "remote"
-    remote.mkdir()
-    git("init", "-q", cwd=remote)
-    git("commit", "-q", "--allow-empty", "-m", "first", cwd=remote)
-    git("tag", "v0.1.0", cwd=remote)
-    git("tag", "-a", "v0.2.0", "-m", "annotated", cwd=remote)
+def test_remote_tag_exists_asks_the_remote(tmp_path, isolated_git):
+    remote = make_remote(tmp_path / "remote")
     assert release_version.remote_tag_exists("v0.1.0", str(remote))
     assert release_version.remote_tag_exists("v0.2.0", str(remote))
     # The pattern must not find a tag that only ends with the same text.
@@ -1235,9 +1259,44 @@ def test_remote_tag_exists_asks_the_remote(tmp_path):
 
 
 @needs_git
-def test_remote_tag_exists_stops_for_an_error(tmp_path):
+def test_remote_tag_exists_stops_for_an_error(tmp_path, isolated_git):
     with pytest.raises(RuntimeError, match="git ls-remote stopped with exit code"):
         release_version.remote_tag_exists("v0.1.0", str(tmp_path / "no remote"))
+
+
+@needs_git
+def test_the_git_tests_do_not_use_the_git_config_of_the_user(tmp_path, monkeypatch, isolated_git):
+    if git_version() < (2, 32):
+        pytest.skip("GIT_CONFIG_GLOBAL needs git 2.32 or later")
+    # The global config of a contributor: a hook that refuses each commit, and signing
+    # with a program that does not exist.
+    home = tmp_path / "home"
+    hooks = home / "hooks"
+    hooks.mkdir(parents=True)
+    hook = hooks / "commit-msg"
+    hook.write_text("#!/bin/sh\nexit 1\n", encoding="utf-8", newline="\n")
+    hook.chmod(0o755)
+    (home / ".gitconfig").write_text(
+        f"[core]\n\thooksPath = {hooks.as_posix()}\n"
+        "[commit]\n\tgpgsign = true\n"
+        "[tag]\n\tgpgSign = true\n"
+        f"[gpg]\n\tprogram = {(home / 'no-gpg').as_posix()}\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("HOME", str(home))
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(home / ".config"))
+    user = {k: v for k, v in os.environ.items() if not k.startswith("GIT_CONFIG_")}
+    probe = tmp_path / "probe"
+    probe.mkdir()
+    subprocess.run(["git", "init", "-q"], cwd=probe, env=user, check=True)
+    commit = ["git", "-c", "user.name=T", "-c", "user.email=t@example.com", "commit"]
+    refused = subprocess.run(
+        [*commit, "-q", "--allow-empty", "-m", "x"], cwd=probe, env=user, capture_output=True
+    )
+    assert refused.returncode != 0  # the config of the user is active without the fixture
+
+    remote = make_remote(tmp_path / "remote")
+    assert release_version.remote_tag_exists("v0.2.0", str(remote))
 
 
 def test_release_version_command_prints_the_version(tmp_path, capsys):
