@@ -135,7 +135,8 @@ Pixheet.exe is the desktop app in one file. It does not need Python.
 
 Download `Pixheet.exe` and `Pixheet.exe.sha256` from the
 [Releases](https://github.com/adv27/pixheet/releases) page. Each merge that changes the
-version publishes a release.
+version publishes a release. The release also has `THIRD-PARTY-NOTICES-windows-x64.txt`,
+with the licenses of the third-party parts in the app. Read [License](#license).
 
 Download the app only from the Releases page. The Actions page of the repository also
 has builds of the app, for each pull request and for each push to `master`. These
@@ -187,8 +188,8 @@ Python. It runs on x86_64 Linux with glibc 2.27 or later, for example Ubuntu 18.
 Debian 10, RHEL 8, and later versions.
 
 Download `Pixheet-linux-x86_64` and `Pixheet-linux-x86_64.sha256` from the
-[Releases](https://github.com/adv27/pixheet/releases) page. Do not use the artifacts on
-the Actions page. They are for tests only, as [Windows app](#windows-app) tells.
+[Releases](https://github.com/adv27/pixheet/releases) page. The release also has
+`THIRD-PARTY-NOTICES-linux-x86_64.txt`. Do not use the artifacts on the Actions page. They are for tests only, as [Windows app](#windows-app) tells.
 
 Then run these commands in the download folder. A download does not keep the
 permission to run the file, so `chmod +x` adds it:
@@ -367,4 +368,11 @@ $ powershell -ExecutionPolicy Bypass -File scripts\excel_check.ps1 -Folder sampl
 
 ## License
 
-MIT
+Pixheet uses the MIT license. Read [LICENSE](LICENSE).
+
+`Pixheet.exe` and `Pixheet-linux-x86_64` also include third-party parts, and each part
+has its own license. Examples are Python, Tcl and Tk, Pillow and its libraries, sv-ttk,
+tkinterdnd2, tkdnd, and the bootloader of PyInstaller. The Linux app also includes
+OpenSSL and other libraries in libpython, and libraries of Debian 11. Each app has the
+license texts in the file `THIRD-PARTY-NOTICES.txt`. The release has the same text in
+`THIRD-PARTY-NOTICES-windows-x64.txt` and `THIRD-PARTY-NOTICES-linux-x86_64.txt`.

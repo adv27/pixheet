@@ -11,6 +11,8 @@ This folder holds the build of the desktop app in one file: `Pixheet.exe` for Wi
 | `pixheet.spec` | The PyInstaller spec, for Windows and Linux. It makes one file by default. It leaves unused modules out of the app. |
 | `trim_tcltk.py` | Removes unused files from the Tcl and Tk library: in `tcl90.dll` and `tcl9tk90.dll` on Windows, from the data files on Linux. The spec runs it. |
 | `linux_guards.py` | On Linux, reads each library of the bundle with `objdump -T`. It stops the build for a glibc newer than 2.27 or a libX11 older than 1.7. The spec runs it. |
+| `third_party_notices.py` | Writes `THIRD-PARTY-NOTICES.txt`, the license texts of the third-party parts of the app. The spec runs it. Read [Third-party notices](#third-party-notices). |
+| `notices/` | The fixed license texts of the parts that come without a license file. |
 | `version_info.py` | Reads the version resource of the exe from `pyproject.toml` and `LICENSE`. |
 | `pixheet.ico` | The icon of the exe and of the window on Windows, in 7 sizes from 16 to 256 pixels. |
 | `pixheet.png` | The icon of the window on Linux, 128 pixels. |
@@ -33,7 +35,8 @@ Run this command from the repository root:
 The script does these steps:
 
 1. It installs the locked dependencies with the `gui` extra and the `build` group.
-2. It builds `dist\Pixheet.exe` from `pixheet.spec`.
+2. It builds `dist\Pixheet.exe` from `pixheet.spec`. The spec also writes
+   `dist\THIRD-PARTY-NOTICES-windows-x64.txt`, and it puts the same text in the exe.
 3. It runs `check_exe.py`. The exe must pass the smoke test with the light and the dark
    Sun Valley theme, and it must convert a test image correctly. Then the exe converts
    images of 11 formats and modes, for example AVIF, WebP, a CMYK JPEG with an ICC
@@ -115,7 +118,8 @@ $ bash packaging/build.sh
 
 The script does the same steps as `build.ps1`, with these differences:
 
-- It builds `dist/Pixheet` from the same `pixheet.spec`.
+- It builds `dist/Pixheet` from the same `pixheet.spec`. The notices file is
+  `dist/THIRD-PARTY-NOTICES-linux-x86_64.txt`.
 - It runs `check_exe.py` under `xvfb-run` when `DISPLAY` is not set.
 - It renames the file to `dist/Pixheet-linux-x86_64` and writes
   `dist/Pixheet-linux-x86_64.sha256`. With `--onedir`, it builds the folder
@@ -169,6 +173,36 @@ The Tk of python-build-standalone has no Xft and no fontconfig. Thus the app use
 core X bitmap fonts, without antialiasing, and some letters show as boxes. Only a
 different Python build or a Tk with Xft can fix this. The app also has no `.desktop`
 file. The README of the repository lists the other limits.
+
+## Third-party notices
+
+The app includes third-party parts, and each part has its own license. The spec calls
+`third_party_notices.py` with the files of the bundle. The script writes the license
+texts to `THIRD-PARTY-NOTICES.txt`, and the spec puts this file in the app. The spec also
+copies it to `dist`, as `THIRD-PARTY-NOTICES-windows-x64.txt` or
+`THIRD-PARTY-NOTICES-linux-x86_64.txt`. The build artifact and the release include this
+copy.
+
+The build stops when a file of the bundle has no owner in `OWNERS`, or when a license text
+is missing. The texts come from these sources:
+
+- Pixheet: the file `LICENSE` of the repository.
+- Python: the file `LICENSE.txt` of the Python of the build.
+- Pillow, sv-ttk, tkinterdnd2 and PyInstaller: the license files of the installed
+  distributions.
+- `packaging/notices/`: the fixed texts. The texts of the libraries in Python come from
+  `python/licenses/` in the full archives of python-build-standalone 20261021. The texts
+  of Tcl and Tk are their `license.terms`. libtommath and tkdnd have the license files of
+  their repositories.
+- On Linux: the file `/usr/share/doc/<package>/copyright` of the Debian package of each
+  system library in the bundle. Thus the build needs `dpkg`. Debian 11 has these files.
+
+After an update of python-build-standalone, do these steps:
+
+1. Get the full archive of the new release for Windows and for Linux.
+2. Compare `python/licenses/` of the archive with the files in `packaging/notices/`.
+3. Compare `PYTHON.json` of the archive with `MODULE_LIBRARIES` in
+   `third_party_notices.py`.
 
 ## The size of the exe
 
@@ -266,10 +300,14 @@ pull request.
 
 After the build job passes on `master`, the release job reads the version that the build
 job gives. If the tag `v<version>` does not exist yet, the job makes the tag at the
-commit of the push. Then it publishes `Pixheet.exe`, `Pixheet.exe.sha256`,
-`Pixheet-linux-x86_64` and `Pixheet-linux-x86_64.sha256` in the GitHub release
-"Pixheet v<version>", with generated release notes. The job waits for both build jobs.
-When one build fails, the job does not run.
+commit of the push. Then it publishes six files in the GitHub release "Pixheet
+v<version>", with generated release notes:
+
+- `Pixheet.exe`, `Pixheet.exe.sha256` and `THIRD-PARTY-NOTICES-windows-x64.txt`.
+- `Pixheet-linux-x86_64`, `Pixheet-linux-x86_64.sha256` and
+  `THIRD-PARTY-NOTICES-linux-x86_64.txt`.
+
+The job waits for both build jobs. When one build fails, the job does not run.
 
 When the tag exists, `release_plan.py` compares the commit of the tag with the commit of
 the push:
