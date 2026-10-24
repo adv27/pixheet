@@ -2353,6 +2353,54 @@ def test_nothing_is_cut_off_at_the_minimum_size(percent, themed, mode, tmp_path)
         root.destroy()
 
 
+@pytest.mark.parametrize("font_size", [None, 14])
+@pytest.mark.parametrize("themed", [True, False])
+def test_all_buttons_fit_at_the_minimum_size(themed, font_size, tmp_path):
+    """The button row can show all its buttons. They must fit, also with a wide font.
+
+    The Linux build in Debian 11 has wider fonts. There, "Open" went past the right edge.
+    A larger default font gives the same problem on each system.
+    """
+    if themed:
+        pytest.importorskip("sv_ttk")
+    root = new_root()
+    try:
+        if font_size is not None:
+            for name in ("TkDefaultFont", "TkTextFont", "TkHeadingFont", "TkMenuFont"):
+                gui.tkfont.nametofont(name, root=root).configure(size=font_size)
+        follower = None
+        if themed:
+            follower = gui.ThemeFollower(root, ThemeSource("light"), choice="light")
+        app = gui.App(root, dnd_type=None, follower=follower)
+        fill_the_list(app, tmp_path)
+        d = tmp_path / "d" / "w.png"
+        app._insert_row(gui.Row(4, d, d.with_suffix(".xlsx")))  # a waiting row
+        app._refresh_all()
+        app.tree.selection_set("1")
+        app._on_select()
+        buttons = [
+            app.stop_button,
+            app.retry_button,
+            app.clear_button,
+            app.folders_button,
+            app.show_button,
+            app.open_button,
+        ]
+        width, height = root.minsize()
+        root.geometry(f"{width}x{height}")
+        root.deiconify()
+        root.update()
+        bar = app.buttons
+        for button in buttons:
+            assert button.winfo_ismapped(), button
+            assert button.winfo_width() >= button.winfo_reqwidth(), button
+            assert button.winfo_x() + button.winfo_width() <= bar.winfo_width(), button
+        assert bar.winfo_x() + bar.winfo_width() <= bar.master.winfo_width()
+        app.dispose()
+    finally:
+        root.destroy()
+
+
 # --- The window icon -----------------------------------------------------------------
 
 REPO_ICON = Path(__file__).resolve().parents[1] / "packaging" / gui.ICON_NAME

@@ -1319,6 +1319,11 @@ class App:
         resolution. A smaller window cuts off a part of the options row. The size includes
         the list, the note bar and the buttons after a stopped run, so the list keeps some
         rows at the minimum size.
+
+        The button row can show all its buttons at the same time, for example when the
+        list has waiting rows, failed rows, two output folders and a selected row. Thus
+        the size includes each button. The app shows "Show folder" only when it does not
+        show the wider "Show folders (N)". Thus the size does not include "Show folder".
         """
         samples = {
             self.stop_button: "Convert 999",
@@ -1336,6 +1341,7 @@ class App:
             self.status_label,
             *samples,
             self.clear_button,
+            self.show_button,
             self.open_button,
         )
         hidden = [widget for widget in widgets if not widget.winfo_manager()]
