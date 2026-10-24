@@ -1943,14 +1943,11 @@ class App:
         # A path from the command line can be relative. The rows keep the full path.
         paths = [absolute(path) for path in paths]
         with self._watch_cursor():
-            if include:
-                known = {path_key(row.src) for row in self.rows.values()}
-            else:
-                known = {
-                    path_key(row.src)
-                    for row in self.rows.values()
-                    if row.state not in FINISHED_STATES
-                }
+            known = {
+                path_key(row.src)
+                for row in self.rows.values()
+                if include or row.state not in FINISHED_STATES
+            }
             result = expand_drop(paths, known=known, recursive=recursive)
             if include:
                 # The note of the first drop named the files in the folders already.
