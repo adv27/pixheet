@@ -25,7 +25,7 @@ Read [README.md](README.md) for usage, the Python API, and the Excel limits.
 | `bench/bench.py` | Benchmark on local sample photos. |
 | `scripts/` | `excel_check.ps1` (Excel COM check, Windows) and `sample_pixels.py`. |
 | `packaging/` | The build of `Pixheet.exe` and of the Linux app, and the scripts of the release job. The table of files in `packaging/README.md` describes each file. |
-| `.gitattributes` | Keeps LF line ends in `*.sh` files. |
+| `.gitattributes` | Keeps LF line ends in `*.sh` files and in the license texts in `packaging/notices/`. The apps include these texts byte for byte. |
 | `.github/workflows/` | `ci.yml`: tests and lint on GitHub-hosted Windows and Ubuntu, and the check of the version tag and of `CHANGELOG.md`. `release.yml`: the build of `Pixheet.exe` on GitHub-hosted Windows, the build of `Pixheet-linux-x86_64` in a Debian 11 container, and the release. |
 | `CHANGELOG.md` | The changes of each version. The release job uses the section of the version as the release notes. |
 
