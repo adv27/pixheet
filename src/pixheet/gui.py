@@ -1344,6 +1344,8 @@ class App:
         tree = ttk.Treeview(
             frame,
             columns=("name", "folder", "status"),
+            # Name the shown columns. _fit_columns() cannot sum the widths of "#all".
+            displaycolumns=("name", "folder", "status"),
             show="headings",
             selectmode="extended",
             # The minimum size of the window keeps 5 rows, also with a note and the details.
@@ -1365,7 +1367,6 @@ class App:
         tree.grid(row=1, column=0, sticky="nsew")
         bar.grid(row=1, column=1, sticky="ns", padx=(4, 0))
         self.tree = tree
-        self._columns: tuple[str, ...] = ("name", "folder", "status")
         self._heading = "Folder"
         """The full heading of the Folder column. _fit_heading() shortens the folder in it."""
         self.scrollbar = bar
@@ -2585,9 +2586,10 @@ class App:
             columns = ("name", "folder", "status")
         self._fit_count_line()
         self._heading = heading
-        if tuple(self.tree.cget("displaycolumns")) != columns:
+        shown = tuple(self.tree.cget("displaycolumns"))
+        if shown != columns:
             self.tree.configure(displaycolumns=columns)
-            self._fit_columns(columns)
+            self._fit_columns(shown, columns)
         self._fit_heading()
         if labels != self.labels:
             self.labels = labels
@@ -2624,13 +2626,13 @@ class App:
             if self.tree.heading("folder", "text") != heading:
                 self.tree.heading("folder", text=heading)
 
-    def _fit_columns(self, columns: Sequence[str]) -> None:
+    def _fit_columns(self, shown: Sequence[str], columns: Sequence[str]) -> None:
         """Give the width of a hidden Folder column to the Name column, and back.
 
+        ``shown`` are the columns before the change, and ``columns`` are the new columns.
         The sum of the widths stays the same. Thus the window does not get wider.
         """
-        total = sum(int(self.tree.column(name, "width")) for name in self._columns)
-        self._columns = tuple(columns)
+        total = sum(int(self.tree.column(name, "width")) for name in shown)
         status = int(self.tree.column("status", "width"))
         free = max(total - status, 2 * round(80 * self._scale))
         if "folder" in columns:
