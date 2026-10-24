@@ -1601,12 +1601,18 @@ class App:
                 self._show_drop_notes(notes, result)
                 return
             during_run = self.running
+            stopping = self._stopping()
             added = self._add_images(result.images)
         if added is None:
             return
         if added and self.list_mode:
             self.tree.focus_set()
-        if added and during_run and not include:
+        if added and stopping:
+            wait = "It waits" if added == 1 else "They wait"
+            notes.insert(
+                0, f"Added {_plural(added, 'image')} to the list. {wait}, because the run stops."
+            )
+        elif added and during_run and not include:
             notes.insert(0, f"Added {_plural(added, 'image')} to the end of the list.")
         self._show_drop_notes(notes, result)
 
@@ -1809,13 +1815,21 @@ class App:
 
     # The run
 
+    def _stopping(self) -> bool:
+        """Return True after Stop, until the worker ends."""
+        return self.running and self.cancel_event.is_set()
+
     def _enqueue(self, rows: Sequence[Row], options: Options) -> None:
         """Put the waiting rows of ``rows`` into the queue. Start a run if none is active.
 
         A drop during a run adds its rows to that run. The caller checks each row with
         :meth:`_decide` first. For a new run, ``rows`` must include the rows that wait
-        from an earlier run. See :meth:`_waiting_rows`.
+        from an earlier run. See :meth:`_waiting_rows`. After Stop, the rows only wait.
+        The next run takes them.
         """
+        if self._stopping():
+            self._refresh_buttons()
+            return
         if not self.running:
             self.options = options
             self.run_ids = set()
