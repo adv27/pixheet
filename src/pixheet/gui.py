@@ -1862,27 +1862,22 @@ class App:
         self.root.after_idle(self.add_paths, paths)
         return "copy"
 
+    def _pick(self, ask: Callable[..., Any], title: str, **options: Any) -> Any:
+        """Return the answer of a dialog, or None when the app refuses or the window closes."""
+        if self.closing or self._dialogs:
+            return None
+        answer = self._modal(ask, parent=self.root, title=title, **options)
+        return None if self._close_if_asked() else answer
+
     def browse(self) -> None:
         """Let the user choose images, then add them to the list."""
-        if self.closing or self._dialogs:
-            return
-        names = self._modal(
-            self.ask_files, parent=self.root, title="Add images", filetypes=image_types()
-        )
-        if self._close_if_asked():
-            return
+        names = self._pick(self.ask_files, "Add images", filetypes=image_types())
         if names:
             self.add_paths([Path(name) for name in names])
 
     def browse_folder(self) -> None:
         """Let the user choose a folder, then add the images in it to the list."""
-        if self.closing or self._dialogs:
-            return
-        name = self._modal(
-            self.ask_folder, parent=self.root, title="Add a folder of images", mustexist=True
-        )
-        if self._close_if_asked():
-            return
+        name = self._pick(self.ask_folder, "Add a folder of images", mustexist=True)
         if name:
             self.add_paths([Path(name)])
 
