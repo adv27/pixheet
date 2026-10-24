@@ -558,6 +558,38 @@ def test_bad_options_show_an_error_and_do_not_add_rows(harness, tmp_path):
     assert "maximum side" in h.errors[0]
 
 
+@pytest.mark.parametrize("action", ["drop", "convert_waiting", "retry_failed"])
+def test_bad_options_show_the_error_before_the_question(harness, tmp_path, monkeypatch, action):
+    # An error after the question discards the answer. Then the user must answer again.
+    h = harness()
+    if action == "drop":
+        src = image(tmp_path / "a.png")
+        expected = []
+    elif action == "convert_waiting":
+        stop_after_the_first(h, tmp_path, monkeypatch)
+        src = tmp_path / "b.png"
+        expected = ["stopped", "waiting"]
+    else:
+        src = tmp_path / "bad.png"
+        src.write_text("not an image")
+        h.run(src)
+        expected = ["failed"]
+    src.with_suffix(".xlsx").write_bytes(b"old")
+    h.app.max_side_var.set("abc")
+
+    if action == "drop":
+        h.app.add_paths([src])
+    else:
+        getattr(h.app, action)()
+
+    assert h.questions == []
+    assert len(h.errors) == 1
+    assert "maximum side" in h.errors[0]
+    assert h.states() == expected
+    assert not h.app.busy
+    assert src.with_suffix(".xlsx").read_bytes() == b"old"
+
+
 def test_the_window_shows_the_normal_cursor_while_a_dialog_waits(harness, tmp_path):
     # The app shows the "watch" cursor while it reads the disk. A dialog waits for the
     # user, so the cursor is normal then.

@@ -2014,14 +2014,15 @@ class App:
         taken |= {output_key(row.dst) for row in again}
         outputs = assign_outputs(fresh, self.out_dir, taken)
         new_rows = [Row(self._next_id(), src, dst) for src, dst in zip(fresh, outputs, strict=True)]
+        # Check the options before the question. Then an error does not discard the answer.
+        options = self._run_options()
+        if options is None:
+            return None
         # The worker can end while the question is open. The rows wait all the same.
         wait = self._stopping()
         earlier = self._waiting_rows()
         decision = self._decide([*earlier, *new_rows, *again])
         if decision is None:
-            return None
-        options = self._run_options()
-        if options is None:
             return None
         if self.failed_only:
             self._set_failed_only(False)
@@ -2269,11 +2270,11 @@ class App:
         rows = self._waiting_rows()
         if not rows:
             return
-        decision = self._decide(rows, cancel_note=NOT_STARTED_TEXT)
-        if decision is None:
-            return
         options = self._run_options()
         if options is None:
+            return
+        decision = self._decide(rows, cancel_note=NOT_STARTED_TEXT)
+        if decision is None:
             return
         self._enqueue(self._apply(rows, decision), options)
 
@@ -2309,6 +2310,9 @@ class App:
         rows = [row for row in rows if row.state in FINISHED_STATES]
         if not rows:
             return
+        options = self._run_options()
+        if options is None:
+            return
         if ask:
             rows = self._current_outputs(rows)
         # The worker can end while the question is open. The rows wait all the same.
@@ -2320,9 +2324,6 @@ class App:
             cancel_note=NOT_STARTED_TEXT,
         )
         if decision is None:
-            return
-        options = self._run_options()
-        if options is None:
             return
         if self.failed_only:
             self._set_failed_only(False)
