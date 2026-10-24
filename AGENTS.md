@@ -76,7 +76,7 @@ The test session does not disturb the user of the computer:
 - An autouse fixture in `tests/conftest.py` makes a test fail when it writes the system
   clipboard.
 - pytest keeps its temporary folders in `%TEMP%\pytest-of-<user>`, for the last 3 runs.
-  The suite writes nothing else in `%TEMP%`.
+  The suite leaves nothing else in `%TEMP%`.
 
 Set `PIXHEET_TEST_SHOW_WINDOWS=1` to see the test windows, for example to debug a test.
 Then the windows show on the screen, also the window of a new process, and the session
