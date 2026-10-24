@@ -3932,6 +3932,16 @@ def test_python_m_pixheet_gui_smoke():
     assert f"pixheet-gui: drag and drop {state}" in result.stdout
 
 
+@pytest.mark.skipif(sys.platform != "win32", reason="the taskbar is a part of Windows")
+def test_a_test_root_has_no_taskbar_button():
+    """conftest.py gives each root the -toolwindow attribute, so its button cannot flash."""
+    root = new_root()
+    try:
+        assert bool(int(root.attributes("-toolwindow"))) is not SHOW_WINDOWS
+    finally:
+        root.destroy()
+
+
 @pytest.mark.skipif(sys.platform != "win32", reason="the lock is a function of Windows")
 def test_the_tests_hold_the_foreground_lock(foreground_lock):
     if not foreground_lock:

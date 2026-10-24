@@ -65,7 +65,8 @@ Linux without a desktop, run the tests with `xvfb-run -a uv run pytest`.
 
 The test session does not disturb the user of the computer:
 
-- `tests/conftest.py` moves each Tk and Toplevel window off the screen.
+- `tests/conftest.py` moves each Tk and Toplevel window off the screen. On Windows, each
+  Tk root also gets the `-toolwindow` attribute. Thus it has no taskbar button.
 - On Windows, the session holds the foreground lock (`LockSetForegroundWindow`). Thus no
   test window takes the focus from the user. A click or the Alt key of the user removes
   the lock, and each test takes it again. Windows removes the lock when pytest stops.

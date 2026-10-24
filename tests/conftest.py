@@ -15,14 +15,21 @@ except ImportError:  # a Python without Tk: the GUI tests skip
 
 
 def _hide_window(window) -> None:
-    """Move a test window off the screen.
+    """Move a test window off the screen. On Windows, a root also gets no taskbar button.
 
     Some tests must show a window, for example to test the title bar. Without this,
     each of these windows comes up on the desktop of the person who runs the tests.
-    The app sets the -alpha attribute itself, so this function does not change it.
+    Off the screen, a root still gets a taskbar button. The button flashes when Windows
+    refuses to make the window the foreground window. The -toolwindow attribute removes
+    the button, as in the hidden mode of the app. It must come before the window shows.
+    A transient Toplevel has no button. The app sets the -alpha attribute itself, so this
+    function does not change it.
     """
     with contextlib.suppress(tkinter.TclError):
         window.wm_geometry("+-32000+-32000")
+    if sys.platform == "win32" and isinstance(window, tkinter.Tk):
+        with contextlib.suppress(tkinter.TclError):
+            window.attributes("-toolwindow", True)
 
 
 def _hide_new_windows(cls) -> None:
