@@ -23,21 +23,23 @@ This is the first release of Pixheet.
 
 - The command `pixheet` converts images to `.xlsx` files. Each cell is one pixel and has
   the color of that pixel.
-- The options `--output`, `--max-side`, `--background`, `--compact` and `--quiet`.
-- The Python API: `convert()`, `prepare()` and `ConvertResult`.
+- The command has the options `--output`, `--max-side`, `--background`, `--compact`
+  and `--quiet`.
+- The Python API has `convert()`, `prepare()` and `ConvertResult`.
 - When an image has more than 63,999 colors, Pixheet makes the image smaller. A search
   finds the largest size whose colors fit in one sheet.
 - Pixheet uses up to 8 threads to resize the image and to compress the sheet. The cells
   are the same as with one thread.
-- The desktop app `pixheet-gui`, in the `gui` extra. Drop images or folders on the
+- The `gui` extra adds the desktop app `pixheet-gui`. Drop images or folders on the
   window, or click **Add files...** or **Add folder...**.
 - The desktop app shows a list of the images, with the progress, the time left and the
   status of each image. **Stop**, **Retry failed** and **Failed only** control the run.
 - The desktop app asks before it replaces an output file. When two images have the same
   output name, each output gets a tag, for example `photo (png).xlsx`.
-- The Sun Valley theme, with the settings **System**, **Light** and **Dark**.
-- `Pixheet.exe`, the desktop app for Windows in one file. It does not need Python.
-- `Pixheet-linux-x86_64`, the desktop app for x86_64 Linux in one file. It needs glibc
+- The desktop app has the Sun Valley theme, with the settings **System**, **Light**
+  and **Dark**.
+- `Pixheet.exe` is the desktop app for Windows in one file. It does not need Python.
+- `Pixheet-linux-x86_64` is the desktop app for x86_64 Linux in one file. It needs glibc
   2.27 or later and an X server.
 - Each app in the release has a `.sha256` file and a file of third-party notices. The
   notices are also in the app.
@@ -50,4 +52,4 @@ This is the first release of Pixheet.
   18.04, Debian 10 and RHEL 8 have an older libxcb. On these systems, use **Add
   files...** and **Add folder...**.
 - On Linux, the text uses the core X fonts, without antialiasing.
-- Compact mode is verified only in Excel 16 and in openpyxl.
+- Only Excel 16 and openpyxl have tests of compact mode.
