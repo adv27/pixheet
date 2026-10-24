@@ -375,6 +375,13 @@ def _show_if(widget: tk.Widget, visible: object) -> None:
         widget.grid_remove()
 
 
+def _cancel_after(widget: tk.Misc, after_id: str | None) -> None:
+    """Cancel the Tk timer ``after_id``, if there is one. The window can be gone."""
+    if after_id is not None:
+        with contextlib.suppress(tk.TclError):
+            widget.after_cancel(after_id)
+
+
 def summary(dst: Path, result: ConvertResult) -> str:
     """Return the status line for one converted file."""
     w, h = result.size
@@ -713,10 +720,8 @@ class ThemeFollower:
         if event.widget is not self.root:
             return
         self.stop()
-        if self._show_id is not None:
-            with contextlib.suppress(tk.TclError):
-                self.root.after_cancel(self._show_id)
-            self._show_id = None
+        _cancel_after(self.root, self._show_id)
+        self._show_id = None
 
     def poll(self) -> None:
         """Read ``source``. Change the theme and the title bar if the value changed.
@@ -740,10 +745,8 @@ class ThemeFollower:
 
     def stop(self) -> None:
         """Stop the reads of ``source``."""
-        if self._after_id is not None:
-            with contextlib.suppress(tk.TclError):
-                self.root.after_cancel(self._after_id)
-            self._after_id = None
+        _cancel_after(self.root, self._after_id)
+        self._after_id = None
 
     def choose(self, choice: str) -> bool:
         """Use the theme choice "system", "light" or "dark". Return True when it is in use.
@@ -2403,11 +2406,8 @@ class App:
     def dispose(self) -> None:
         """Cancel the timers of the window."""
         for name in ("_poll_id", "_note_id", "_min_width_id"):
-            after_id = getattr(self, name)
-            if after_id is not None:
-                with contextlib.suppress(tk.TclError):
-                    self.root.after_cancel(after_id)
-                setattr(self, name, None)
+            _cancel_after(self.root, getattr(self, name))
+            setattr(self, name, None)
 
     def _set_running(self, running: bool) -> None:
         state = ["disabled"] if running else ["!disabled"]
@@ -2865,10 +2865,8 @@ class App:
         A note with an action has a button, and it stays until the user clicks the button
         or the close button. A note without an action closes after 10 seconds.
         """
-        if self._note_id is not None:
-            with contextlib.suppress(tk.TclError):
-                self.root.after_cancel(self._note_id)
-            self._note_id = None
+        _cancel_after(self.root, self._note_id)
+        self._note_id = None
         self.note_var.set(text)
         self.note_action = action
         if action is not None:
