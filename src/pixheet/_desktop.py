@@ -14,6 +14,7 @@ use it to test the code of each system on one system. The functions do not use T
 
 import contextlib
 import errno
+import ntpath
 import os
 import re
 import shutil
@@ -158,6 +159,43 @@ def open_folder(path: Path, platform: str | None = None, *, select: bool = False
         open_path(path.parent, platform)
 
 
+DEFAULT_WINDOWS_FOLDER = r"C:\Windows"
+
+
+def _system_windows_folder() -> str | None:
+    """Return the Windows folder from GetSystemWindowsDirectoryW, or None off Windows.
+
+    On a terminal server, GetWindowsDirectoryW can give a folder of the user. Explorer is
+    in the shared Windows folder, which GetSystemWindowsDirectoryW gives.
+    """
+    try:
+        import ctypes
+
+        kernel32 = ctypes.windll.kernel32
+    except ImportError, AttributeError, OSError:
+        return None
+    buffer = ctypes.create_unicode_buffer(32768)
+    length = kernel32.GetSystemWindowsDirectoryW(buffer, len(buffer))
+    return buffer.value if 0 < length < len(buffer) else None
+
+
+def windows_folder(environ: Mapping[str, str] | None = None) -> str:
+    r"""Return the full path of the Windows folder, for example ``C:\Windows``.
+
+    The function asks Windows first. Then it reads ``SystemRoot`` and ``WINDIR``. It uses
+    only an absolute path, because a relative path can point to the current folder.
+    """
+    folder = _system_windows_folder()
+    if folder and ntpath.isabs(folder):
+        return folder
+    environ = os.environ if environ is None else environ
+    for name in ("SystemRoot", "WINDIR"):
+        value = environ.get(name, "")
+        if ntpath.isabs(value):
+            return value
+    return DEFAULT_WINDOWS_FOLDER
+
+
 def show_items_commands(uri: str) -> list[list[str]]:
     """Return the commands that ask the file manager to show and select the file ``uri``.
 
@@ -213,8 +251,11 @@ def show_in_folder(path: Path, platform: str | None = None) -> None:
     platform = platform or sys.platform
     full = os.path.abspath(path)  # noqa: PTH100 - resolve() follows links
     if platform == "win32":
-        # Explorer reads its own command line. It needs the comma and the quotes so.
-        _spawn(f'explorer /select,"{full}"')
+        # Give the full path. With the bare name, Windows looks for explorer.exe in the
+        # folder of the app and in the current folder first. Explorer reads its own
+        # command line. It needs the comma and the quotes so.
+        explorer = ntpath.join(windows_folder(), "explorer.exe")
+        _spawn(f'"{explorer}" /select,"{full}"')
     elif platform == "darwin":
         _spawn(["open", "-R", full])
     elif not any(shutil.which(name) for name in ("gdbus", "dbus-send", "xdg-open")):

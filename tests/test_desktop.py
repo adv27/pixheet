@@ -9,6 +9,7 @@ import subprocess
 import sys
 import threading
 import types
+from pathlib import Path
 
 import pytest
 
@@ -88,9 +89,28 @@ def test_open_folder_opens_the_parent_or_selects_the_file(tmp_path, popen):
     ]
 
 
-def test_show_in_folder_on_windows_selects_the_file(tmp_path, popen):
+def test_show_in_folder_on_windows_selects_the_file(tmp_path, popen, monkeypatch):
+    monkeypatch.setattr(_desktop, "windows_folder", lambda environ=None: r"C:\Windows")
     _desktop.show_in_folder(tmp_path / "a b.xlsx", platform="win32")
-    assert popen.commands == [f'explorer /select,"{tmp_path / "a b.xlsx"}"']
+    # The full path: Windows does not look for an explorer.exe next to the app.
+    explorer = r'"C:\Windows\explorer.exe"'
+    assert popen.commands == [f'{explorer} /select,"{tmp_path / "a b.xlsx"}"']
+
+
+def test_windows_folder_without_the_api_reads_the_environment(monkeypatch):
+    monkeypatch.setattr(_desktop, "_system_windows_folder", lambda: None)
+    assert _desktop.windows_folder({"SystemRoot": r"D:\Win"}) == r"D:\Win"
+    assert _desktop.windows_folder({"WINDIR": r"E:\Win"}) == r"E:\Win"
+    # A relative value can name a folder that an attacker controls.
+    assert _desktop.windows_folder({"SystemRoot": "Windows"}) == r"C:\Windows"
+    assert _desktop.windows_folder({}) == r"C:\Windows"
+
+
+@pytest.mark.skipif(sys.platform != "win32", reason="needs Windows")
+def test_windows_folder_holds_explorer():
+    folder = _desktop.windows_folder({})
+    assert Path(folder, "explorer.exe").is_file()
+    assert _desktop.windows_folder({"SystemRoot": r"D:\Win"}) == folder  # the API wins
 
 
 def test_show_in_folder_on_linux_runs_on_a_worker_thread(tmp_path, monkeypatch):
