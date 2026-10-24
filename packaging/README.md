@@ -85,7 +85,29 @@ the new `pixheet.ico` and the new `pixheet.png`. Tests make sure that they agree
 
 ## Build the Linux app
 
-Run this command from the repository root, on Debian 11 or in a `debian:11` container:
+Use Debian 11 or a `debian:11` container. First install these system packages. The job
+`build-linux` of `release.yml` installs the same packages:
+
+- `git` and `ca-certificates`. `git` clones the repository over HTTPS, and `build.sh`
+  reads the time of the last commit.
+- `binutils`. `linux_guards.py` uses its `objdump`.
+- `libx11-6` and `libxcursor1`. The app includes these X libraries of the system.
+- `xvfb`, `xauth` and `xfonts-base`. They give an X server with the core X fonts to the
+  tests and to `check_exe.py`, the same as in CI.
+
+Debian 11 gets no more updates, and its packages are on `archive.debian.org`. Thus the
+apt sources must point to the archive, as in `release.yml`. In a `debian:11` container,
+run these commands as root:
+
+```console
+# printf '%s\n' 'deb http://archive.debian.org/debian bullseye main' \
+    'deb http://archive.debian.org/debian-security bullseye-security main' \
+    > /etc/apt/sources.list
+# apt-get -o Acquire::Check-Valid-Until=false update
+# apt-get install -y git ca-certificates binutils libx11-6 libxcursor1 xvfb xauth xfonts-base
+```
+
+Then run this command from the repository root:
 
 ```console
 $ bash packaging/build.sh
@@ -99,9 +121,6 @@ The script does the same steps as `build.ps1`, with these differences:
   `dist/Pixheet-linux-x86_64.sha256`. With `--onedir`, it builds the folder
   `dist/Pixheet/` and does not rename it.
 - PyInstaller uses `SOURCE_DATE_EPOCH` as the time stamp of the files in the bundle.
-
-Install these packages first: `git`, `binutils` (for `objdump`), `libx11-6`,
-`libxcursor1`, `xvfb` and `xauth`.
 
 ### Why Debian 11
 

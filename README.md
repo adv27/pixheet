@@ -220,8 +220,9 @@ A GitHub-hosted runner builds the file in a Debian 11 container on `ubuntu-lates
 build passes the smoke test and the conversion test under Xvfb. Nobody has tested the
 file on a real Linux desktop yet. Please report a problem in an issue.
 
-To build the file yourself, use Debian 11 or a `debian:11` container. Install `git`,
-`binutils`, `libx11-6`, `libxcursor1`, `xvfb` and `xauth`, then run this command:
+To build the file yourself, use Debian 11 or a `debian:11` container. Install the
+packages that [Build the Linux app](packaging/README.md#build-the-linux-app) lists, then
+run this command:
 
 ```console
 $ bash packaging/build.sh
