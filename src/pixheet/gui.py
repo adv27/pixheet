@@ -2723,8 +2723,11 @@ class App:
         self.open_button.configure(style="Accent.TButton" if accent else "TButton")
         # With one image, the zone shows Stop only during the run, and the two buttons
         # after a done run. The list always shows Open, and Show in folder for a target.
+        # During a run, the only done row is a target only for a moment. Thus the list
+        # then shows Show in folder only for a selected row, and the buttons do not move.
         if self.list_mode:
-            show, open_ = target is not None, True
+            show = target is not None and (not running or bool(self._selected_rows()))
+            open_ = True
         else:
             show = open_ = not running and tally.done > 0
         _show_if(self.show_button, show)

@@ -2123,6 +2123,57 @@ def test_open_and_show_in_folder_buttons(harness, tmp_path, monkeypatch):
     assert shown == [tmp_path / "a.xlsx"]
 
 
+def gate_each_file(monkeypatch):
+    """Make each convert wait at its first progress call. Each release lets one file go."""
+    gate = threading.Semaphore(0)
+
+    def convert(*args, progress, **kwargs):
+        first = True
+
+        def wait_then_report(done, total):
+            nonlocal first
+            if first:
+                first = False
+                gate.acquire(timeout=10)
+            progress(done, total)
+
+        return real_convert(*args, progress=wait_then_report, **kwargs)
+
+    monkeypatch.setattr(gui, "convert", convert)
+    return gate
+
+
+def test_show_in_folder_shows_during_a_run_only_for_a_selected_row(harness, tmp_path, monkeypatch):
+    # During a run, the only done row changes soon. A button for it comes and goes.
+    gate = gate_each_file(monkeypatch)
+    h = harness()
+    app = h.app
+    h.drop(*(image(tmp_path / f"{name}.png") for name in "abc"))
+    h.root.update()
+    gate.release()
+    h.pump(lambda: h.states() == ["done", "converting", "waiting"])
+    h.root.update()
+    assert app.running
+    assert app.show_button.winfo_manager() == ""
+    assert app.open_button.winfo_manager() == "grid"
+
+    app.tree.selection_set(h.iid("a.png"))
+    h.root.update()
+    assert app.show_button.winfo_manager() == "grid"
+    app.tree.selection_set(())
+    h.root.update()
+    assert app.show_button.winfo_manager() == ""
+
+    # After the run, the only done row is the target also without a selection.
+    app.stop_button.invoke()
+    gate.release()
+    h.wait()
+    assert h.states() == ["done", "stopped", "waiting"]
+    assert app.tree.selection() == ()
+    assert app.show_button.winfo_manager() == "grid"
+    assert app.show_button.instate(["!disabled"])
+
+
 def test_show_in_folder_error_is_shown(harness, tmp_path, monkeypatch):
     def fail(path):
         raise OSError("no file manager")
