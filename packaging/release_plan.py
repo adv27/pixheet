@@ -5,7 +5,7 @@ script decides the next step from that state. It does not call GitHub. The scrip
 commands:
 
     python packaging/release_plan.py tag SHA [TAG_COMMIT]
-    python packaging/release_plan.py upload RELEASE_EXISTS FILE... < ASSETS
+    python packaging/release_plan.py upload RELEASE FILE... < ASSETS
 
 ``tag`` prints "create", "publish" or "skip":
 
@@ -16,12 +16,17 @@ commands:
   commit. The job does nothing.
 
 ``upload`` reads the names of the files of the release from stdin, one name on each line.
-RELEASE_EXISTS is "true" or "false". FILE is a file that the release must have. The first
-line of the output is "create", "upload" or "done". Each next line is a file to publish.
-The job never replaces a file of a release, because users can have downloaded it already.
-If the release has a file but not its checksum file, or the checksum file but not the
-file, the exit code is 1. A new build can give a different file, and then the checksum
-does not agree with the file.
+RELEASE is "none", "draft" or "published": the state of the release. FILE is a file that
+the release must have. The first line of the output is "create", "upload", "publish" or
+"done". Each next line is a file to upload. "publish" is for a draft: the job uploads the
+files, then publishes the draft. The job never replaces a file of a release, because
+users can have downloaded it already. If the release has a file but not its checksum
+file, or the checksum file but not the file, the exit code is 1. A new build can give a
+different file, and then the checksum does not agree with the file.
+
+``gh release create`` makes a draft, uploads the files, and then publishes the draft. A
+job that stops during the upload, for example after a cancel or at the time limit, leaves
+the draft. Users cannot see a draft. Thus a new run of the job must publish it.
 
 The script needs only the standard library. It must also run on Python 3.12, because the
 release job runs it with the Python of the Ubuntu runner.
@@ -32,6 +37,8 @@ import sys
 from collections.abc import Iterable, Sequence
 
 CHECKSUM_SUFFIX = ".sha256"
+RELEASE_STATES = ("none", "draft", "published")
+"""The states of a release: it does not exist, it is a draft, or users can see it."""
 
 
 class PlanError(Exception):
@@ -59,16 +66,20 @@ def partner(name: str) -> str:
 
 
 def upload_plan(
-    release_exists: bool, existing: Iterable[str], wanted: Sequence[str]
+    release: str, existing: Iterable[str], wanted: Sequence[str]
 ) -> tuple[str, list[str]]:
-    """Return the action for the release, and the files to publish, in the order of ``wanted``.
+    """Return the action for the release, and the files to upload, in the order of ``wanted``.
 
-    The action is "create" when the release does not exist, "upload" when the release
-    does not have all files of ``wanted``, and "done" when it has them all. ``existing``
-    is the list of the files of the release. A file that is not in ``wanted`` has no
-    effect. Raise ``PlanError`` when the release has only one file of a pair in ``wanted``.
+    ``release`` is a value of :data:`RELEASE_STATES`. The action is "create" when the
+    release does not exist, and "publish" when it is a draft. For a published release, the
+    action is "upload" when the release does not have all files of ``wanted``, and "done"
+    when it has them all. ``existing`` is the list of the files of the release. A file
+    that is not in ``wanted`` has no effect. Raise ``PlanError`` when the release has only
+    one file of a pair in ``wanted``. Raise ``ValueError`` for an unknown ``release``.
     """
-    if not release_exists:
+    if release not in RELEASE_STATES:
+        raise ValueError(f"unknown state of the release: {release!r}")
+    if release == "none":
         return "create", list(wanted)
     have = set(existing)
     missing = [name for name in wanted if name not in have]
@@ -80,6 +91,8 @@ def upload_plan(
                 f"and then the checksum is not correct. Delete {other} in the release by "
                 "hand, then run the job again."
             )
+    if release == "draft":
+        return "publish", missing
     if not missing:
         return "done", []
     return "upload", missing
@@ -92,7 +105,7 @@ def main(argv: list[str] | None = None) -> int:
     tag.add_argument("sha", help="the commit of the push")
     tag.add_argument("tag_commit", nargs="?", default="", help="the commit of the tag")
     upload = commands.add_parser("upload", help="decide which files to publish")
-    upload.add_argument("release_exists", choices=("true", "false"))
+    upload.add_argument("release", choices=RELEASE_STATES, help="the state of the release")
     upload.add_argument("files", nargs="+", help="the files that the release must have")
     args = parser.parse_args(argv)
 
@@ -101,7 +114,7 @@ def main(argv: list[str] | None = None) -> int:
         return 0
     existing = [line.strip() for line in sys.stdin if line.strip()]
     try:
-        action, files = upload_plan(args.release_exists == "true", existing, args.files)
+        action, files = upload_plan(args.release, existing, args.files)
     except PlanError as e:
         print(f"::error::{e}")
         return 1

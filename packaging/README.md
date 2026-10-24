@@ -387,6 +387,11 @@ release does not have. It stops when the release has a file but not its `.sha256
 or the opposite, because the new checksum can be different. To replace a file, delete it
 in the release on GitHub, and then run the job again.
 
+`gh release create` makes a draft, uploads the files, and then publishes the draft. When
+the job stops during the upload, for example after a cancel, the draft stays. Users
+cannot see a draft. When the job runs again, it uploads the missing files to the draft,
+and then publishes the draft.
+
 You can also protect the releases in the settings of the repository:
 
 - Turn on immutable releases.

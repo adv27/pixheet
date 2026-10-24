@@ -328,6 +328,10 @@ jobs:
       # checksum file, or the opposite, the job stops. To replace a file, delete it in the
       # release by hand, then run again. A download drops the executable bit of the Linux
       # file. The README tells the users to run chmod +x.
+      # gh release create makes a draft, uploads the files, and then publishes the draft.
+      # A job that stops during the upload, for example after a cancel or at the time
+      # limit, leaves the draft. Users cannot see a draft. Thus for a draft, the job
+      # uploads the missing files and then publishes the draft.
       - name: Create the release, or add the missing files to it
         if: steps.tag.outputs.publish == 'true'
         env:
@@ -338,11 +342,16 @@ jobs:
           (cd dist && sha256sum -c Pixheet.exe.sha256 Pixheet-linux-x86_64.sha256)
           files=(Pixheet.exe Pixheet.exe.sha256 Pixheet-linux-x86_64 Pixheet-linux-x86_64.sha256
             THIRD-PARTY-NOTICES-windows-x64.txt THIRD-PARTY-NOTICES-linux-x86_64.txt)
-          release=false
+          release=none
           assets=""
-          if view=$(gh release view "$TAG" --repo "$REPO" --json assets --jq '.assets[].name' 2>&1); then
-            release=true
-            assets=$view
+          # The first line is "true" for a draft. Each next line is the name of a file.
+          if view=$(gh release view "$TAG" --repo "$REPO" --json isDraft,assets --jq '.isDraft, .assets[].name' 2>&1); then
+            mapfile -t found <<< "$view"
+            release=published
+            if [[ "${found[0]}" == true ]]; then
+              release=draft
+            fi
+            assets=$(printf '%s\n' "${found[@]:1}")
           elif [[ "$view" != *"release not found"* ]]; then
             echo "::error::gh cannot read the release $TAG: $view"
             exit 1
@@ -364,6 +373,14 @@ jobs:
             upload)
               echo "The release $TAG exists. The job uploads: ${missing[*]}"
               gh release upload "$TAG" "${missing[@]}" --repo "$REPO"
+              ;;
+            publish)
+              if (( ${#missing[@]} > 0 )); then
+                echo "The release $TAG is a draft. The job uploads: ${missing[*]}"
+                gh release upload "$TAG" "${missing[@]}" --repo "$REPO"
+              fi
+              echo "The job publishes the draft release $TAG."
+              gh release edit "$TAG" --repo "$REPO" --draft=false
               ;;
             done)
               echo "The release $TAG has all files. The job has nothing to do."

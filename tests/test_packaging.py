@@ -1288,7 +1288,9 @@ def test_release_waits_for_both_builds_and_publishes_all_files():
     assert "VERSION: ${{ needs.build-windows.outputs.version }}" in text
     assert f"files=({' '.join(RELEASE_FILES)}\n" in text
     assert 'release_plan.py upload "$release" "${files[@]}"' in text
+    assert "--json isDraft,assets --jq '.isDraft, .assets[].name'" in text
     assert 'gh release upload "$TAG" "${missing[@]}"' in text
+    assert 'gh release edit "$TAG" --repo "$REPO" --draft=false' in text
     assert 'gh release create "$TAG" "${missing[@]}"' in text
     assert "sha256sum -c Pixheet.exe.sha256 Pixheet-linux-x86_64.sha256" in text
     for name in ("Pixheet-windows-x64", "Pixheet-linux-x86_64"):
@@ -1376,32 +1378,53 @@ def test_tag_action(tag_commit, action):
 
 
 def test_upload_plan_creates_a_missing_release_with_all_files():
-    assert release_plan.upload_plan(False, [], RELEASE_FILES) == ("create", list(RELEASE_FILES))
+    assert release_plan.upload_plan("none", [], RELEASE_FILES) == ("create", list(RELEASE_FILES))
 
 
 def test_upload_plan_adds_only_the_missing_pairs():
     # An earlier run uploaded the Windows pair, then stopped.
     existing = ["Pixheet.exe", "Pixheet.exe.sha256", "notes.txt"]
-    assert release_plan.upload_plan(True, existing, RELEASE_FILES) == (
+    assert release_plan.upload_plan("published", existing, RELEASE_FILES) == (
         "upload",
         ["Pixheet-linux-x86_64", "Pixheet-linux-x86_64.sha256"],
     )
 
 
 def test_upload_plan_uploads_all_files_to_an_empty_release():
-    assert release_plan.upload_plan(True, [], RELEASE_FILES) == ("upload", list(RELEASE_FILES))
+    plan = release_plan.upload_plan("published", [], RELEASE_FILES)
+    assert plan == ("upload", list(RELEASE_FILES))
 
 
 def test_upload_plan_does_nothing_for_a_complete_release():
     existing = [*reversed(RELEASE_FILES), "notes.txt"]
-    assert release_plan.upload_plan(True, existing, RELEASE_FILES) == ("done", [])
+    assert release_plan.upload_plan("published", existing, RELEASE_FILES) == ("done", [])
 
 
+def test_upload_plan_publishes_a_draft_with_all_files():
+    """A job that stopped in "gh release create" can leave a draft. Users cannot see it."""
+    plan = release_plan.upload_plan("draft", list(RELEASE_FILES), RELEASE_FILES)
+    assert plan == ("publish", [])
+
+
+def test_upload_plan_adds_the_missing_files_to_a_draft_then_publishes_it():
+    existing = ["Pixheet.exe", "Pixheet.exe.sha256"]
+    assert release_plan.upload_plan("draft", existing, RELEASE_FILES) == (
+        "publish",
+        ["Pixheet-linux-x86_64", "Pixheet-linux-x86_64.sha256"],
+    )
+
+
+def test_upload_plan_refuses_an_unknown_state():
+    with pytest.raises(ValueError, match="unknown state"):
+        release_plan.upload_plan("true", [], RELEASE_FILES)
+
+
+@pytest.mark.parametrize("release", ["published", "draft"])
 @pytest.mark.parametrize("present", ["Pixheet.exe", "Pixheet-linux-x86_64.sha256"])
-def test_upload_plan_stops_for_half_a_pair(present):
+def test_upload_plan_stops_for_half_a_pair(present, release):
     """A new build can differ, so a new checksum file must not go next to an old file."""
     with pytest.raises(release_plan.PlanError, match=f"The release has {present}, but not"):
-        release_plan.upload_plan(True, [present], RELEASE_FILES)
+        release_plan.upload_plan(release, [present], RELEASE_FILES)
 
 
 def test_release_plan_tag_command(capsys):
@@ -1415,10 +1438,12 @@ def test_release_plan_tag_command(capsys):
 @pytest.mark.parametrize(
     ("release", "assets", "code", "out"),
     [
-        ("false", "", 0, ["create", *RELEASE_FILES]),
-        ("true", "Pixheet.exe\nPixheet.exe.sha256\n", 0, ["upload", *RELEASE_FILES[2:]]),
-        ("true", "\n".join(RELEASE_FILES) + "\n", 0, ["done"]),
-        ("true", "Pixheet.exe\n", 1, ["::error::The release has Pixheet.exe, but not"]),
+        ("none", "", 0, ["create", *RELEASE_FILES]),
+        ("published", "Pixheet.exe\nPixheet.exe.sha256\n", 0, ["upload", *RELEASE_FILES[2:]]),
+        ("published", "\n".join(RELEASE_FILES) + "\n", 0, ["done"]),
+        ("published", "Pixheet.exe\n", 1, ["::error::The release has Pixheet.exe, but not"]),
+        ("draft", "Pixheet.exe\nPixheet.exe.sha256\n", 0, ["publish", *RELEASE_FILES[2:]]),
+        ("draft", "\n".join(RELEASE_FILES) + "\n", 0, ["publish"]),
     ],
 )
 def test_release_plan_upload_command(monkeypatch, capsys, release, assets, code, out):
@@ -1971,7 +1996,8 @@ def test_builds_and_release_publish_the_notices():
     files = re.search(r"files=\(([^)]*)\)", release).group(1).split()
     assert files == [*RELEASE_FILES, *RELEASE_NOTICES]
     # A notices file has no .sha256 file. release_plan.py uploads it alone.
-    assert release_plan.upload_plan(True, RELEASE_FILES, files) == ("upload", [*RELEASE_NOTICES])
+    plan = release_plan.upload_plan("published", RELEASE_FILES, files)
+    assert plan == ("upload", [*RELEASE_NOTICES])
     build_ps1 = (PACKAGING / "build.ps1").read_text(encoding="utf-8")
     assert "dist\\THIRD-PARTY-NOTICES-windows-x64.txt" in build_ps1
     build_sh = (PACKAGING / "build.sh").read_text(encoding="utf-8")
