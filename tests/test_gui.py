@@ -3225,13 +3225,15 @@ def test_nothing_is_cut_off_at_the_minimum_size(percent, themed, mode, tmp_path)
         root.destroy()
 
 
+@pytest.mark.parametrize("many", [False, True])
 @pytest.mark.parametrize("font_size", [None, 14])
 @pytest.mark.parametrize("themed", [True, False])
-def test_all_buttons_fit_at_the_minimum_size(themed, font_size, tmp_path):
+def test_all_buttons_fit_at_the_minimum_size(themed, font_size, many, tmp_path):
     """The button row can show all its buttons. They must fit, also with a wide font.
 
     The Linux build in Debian 11 has wider fonts. There, "Open" went past the right edge.
-    A larger default font gives the same problem on each system.
+    A larger default font gives the same problem on each system. Counts of 1,000 or more
+    make the buttons and the summary of the progress line wider.
     """
     if themed:
         pytest.importorskip("sv_ttk")
@@ -3247,9 +3249,22 @@ def test_all_buttons_fit_at_the_minimum_size(themed, font_size, tmp_path):
         fill_the_list(app, tmp_path)
         d = tmp_path / "d" / "w.png"
         app._insert_row(gui.Row(4, d, d.with_suffix(".xlsx")))  # a waiting row
+        if many:  # counts with 4 digits make the buttons and the summary wider
+            for i in range(10, 3_610):
+                src = d.with_name(f"IMG_{i}.png")
+                state = ("waiting", "failed", "skipped")[i % 3]
+                app._insert_row(gui.Row(i, src, src.with_suffix(".xlsx"), state=state))
         app._refresh_all()
         app.tree.selection_set("1")
         app._on_select()
+        app._show_failed_toggle()
+        app.title_var.set(gui.summary_line(app.tally, len(app.rows), stopped=True))
+        if many:
+            assert app.title_var.get() == (
+                "Stopped. Converted 2 of 3,604 files. 1,201 failed. 1,200 skipped."
+            )
+            assert app.stop_button.cget("text") == "Convert 1,201"
+            assert app.retry_button.cget("text") == "Retry failed (1,201)"
         buttons = [
             app.stop_button,
             app.retry_button,
@@ -3258,6 +3273,7 @@ def test_all_buttons_fit_at_the_minimum_size(themed, font_size, tmp_path):
             app.show_button,
             app.open_button,
         ]
+        root.update()  # the app can make the minimum size larger for the new texts
         width, height = root.minsize()
         root.geometry(f"{width}x{height}")
         root.deiconify()
@@ -3268,6 +3284,15 @@ def test_all_buttons_fit_at_the_minimum_size(themed, font_size, tmp_path):
             assert button.winfo_width() >= button.winfo_reqwidth(), button
             assert button.winfo_x() + button.winfo_width() <= bar.winfo_width(), button
         assert bar.winfo_x() + bar.winfo_width() <= bar.master.winfo_width()
+        # The progress line: the summary at the left, "Failed only (N)" at the right.
+        line = app.failed_only_button.master
+        for widget in (app.title_label, app.failed_only_button):
+            assert widget.winfo_ismapped(), widget
+            assert widget.winfo_width() >= widget.winfo_reqwidth(), widget
+            assert widget.winfo_x() + widget.winfo_width() <= line.winfo_width(), widget
+        assert app.title_label.winfo_x() + app.title_label.winfo_width() <= (
+            app.failed_only_button.winfo_x()
+        )
         app.dispose()
     finally:
         root.destroy()
@@ -3278,6 +3303,7 @@ def show_at_the_minimum_size(themed):
     if themed:
         pytest.importorskip("sv_ttk")
     root = new_root()
+    root.tk.call("tk", "scaling", 96 / 72)  # other tests change the scale of the display
     if themed:
         gui.apply_theme(root, "light")
     app = gui.App(root, dnd_type=None)
@@ -3286,6 +3312,52 @@ def show_at_the_minimum_size(themed):
     root.deiconify()
     root.update()
     return root, app
+
+
+@pytest.mark.parametrize("themed", [True, False])
+def test_counts_larger_than_the_samples_make_the_window_wider(themed, tmp_path):
+    root, app = show_at_the_minimum_size(themed)
+    try:
+        start = root.minsize()
+        fill_the_list(app, tmp_path)
+        app.tree.selection_set("1")  # a done row: "Show in folder" shows too
+        app._on_select()
+        app.tally.waiting = app.tally.failed = 10**12  # much more than the samples
+        app._refresh_buttons()
+        app._show_failed_toggle()
+        root.update()
+        width, height = root.minsize()
+        assert width > start[0]
+        assert height == start[1]
+        assert root.winfo_width() >= width  # the window grows with its minimum size
+        bar = app.buttons
+        assert app.open_button.winfo_x() + app.open_button.winfo_width() <= bar.winfo_width()
+        # Small counts again: the minimum width goes back, but the window keeps its size.
+        app.tally.waiting = app.tally.failed = 1
+        app._refresh_buttons()
+        app._show_failed_toggle()
+        root.update()
+        assert root.minsize() == start
+        app.dispose()
+    finally:
+        root.destroy()
+
+
+@pytest.mark.parametrize("themed", [True, False])
+def test_a_long_file_name_in_the_progress_line_does_not_make_the_window_wider(themed):
+    root, app = show_at_the_minimum_size(themed)
+    try:
+        start, width = root.minsize(), root.winfo_width()
+        app.worker = threading.current_thread()  # a run of one file
+        app._set_running(True)
+        app.title_var.set(f"File 1 of 1: {'A' * 150}.jpg")
+        root.update()
+        assert root.minsize() == start
+        assert root.winfo_width() == width
+        app.worker = None
+        app.dispose()
+    finally:
+        root.destroy()
 
 
 @pytest.mark.parametrize("percent", [100, 150])

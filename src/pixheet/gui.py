@@ -96,6 +96,10 @@ from pixheet.core import DEFAULT_BACKGROUND, DEFAULT_MAX_SIDE, ConvertResult, co
 TITLE = "Pixheet"
 MIN_WIDTH, MIN_HEIGHT = 620, 460
 """The smallest size of the window. The window can need more, for example with large text."""
+BODY_PADDING = 16
+"""The space at the left and at the right of the window content, in pixels."""
+SUMMARY_SAMPLE = "Stopped. Converted 9,999 of 99,999 files. 9,999 failed. 9,999 skipped."
+"""A long progress line after a run. The minimum width of the window includes it."""
 POLL_MS = 50
 """Time between two reads of the message queue, in milliseconds."""
 BUSY_POLL_MS = 250
@@ -1063,6 +1067,9 @@ class App:
         """True while the dialog of an unexpected error is open."""
         self._poll_id: str | None = None
         self._note_id: str | None = None
+        self._min_width_id: str | None = None
+        self._min_size = (MIN_WIDTH, MIN_HEIGHT)
+        """The minimum size that fit_min_size() measured."""
         self.note_action: Callable[[], None] | None = None
 
         self.rows: dict[int, Row] = {}
@@ -1133,7 +1140,7 @@ class App:
             self._strong_font = tkfont.nametofont("TkDefaultFont", root=root).copy()
             self._strong_font.configure(weight="bold")
 
-        body = ttk.Frame(root, padding=(16, 12, 16, 16))
+        body = ttk.Frame(root, padding=(BODY_PADDING, 12, BODY_PADDING, 16))
         body.pack(fill="both", expand=True)
         body.columnconfigure(0, weight=1)
         body.rowconfigure(2, weight=1)
@@ -1204,7 +1211,9 @@ class App:
         line.grid(row=5, column=0, sticky="ew")
         line.columnconfigure(0, weight=1)
         self.title_var = tk.StringVar(root, value="")
-        ttk.Label(line, textvariable=self.title_var).grid(row=0, column=0, sticky="w")
+        self.title_label = ttk.Label(line, textvariable=self.title_var)
+        self.title_label.grid(row=0, column=0, sticky="w", padx=(0, 8))
+        self.title_var.trace_add("write", lambda *args: self._fit_min_width())
         self.eta_var = tk.StringVar(root, value="")
         self.eta_label = ttk.Label(line, textvariable=self.eta_var)
         self.eta_label.grid(row=0, column=1, sticky="e")
@@ -1500,15 +1509,22 @@ class App:
         list has waiting rows, failed rows, two output folders and a selected row. Thus
         the size includes each button. The app shows "Show folder" only when it does not
         show the wider "Show folders (N)". Thus the size does not include "Show folder".
+
+        The texts of the buttons and of the progress line have counts. The size uses
+        samples with large counts. For larger counts, _fit_min_width() makes the minimum
+        width larger when the texts change.
         """
         samples = {
-            self.stop_button: "Convert 999",
-            self.retry_button: "Retry failed (99)",
-            self.folders_button: "Show folders (99)",
+            self.stop_button: "Convert 99,999",
+            self.retry_button: "Retry failed (99,999)",
+            self.folders_button: "Show folders (999)",
+            self.failed_only_button: "Failed only (99,999)",
         }
         texts = {button: button.cget("text") for button in samples}
         for button, text in samples.items():
             button.configure(text=text)
+        title = self.title_var.get()
+        self.title_var.set(SUMMARY_SAMPLE)
         widgets = (
             self.list_frame,
             self.note,
@@ -1529,13 +1545,39 @@ class App:
             widget.grid_remove()
         for button, text in texts.items():
             button.configure(text=text)
-        self.root.minsize(max(MIN_WIDTH, width), max(MIN_HEIGHT, height))
+        self.title_var.set(title)
+        self._min_size = (max(MIN_WIDTH, width), max(MIN_HEIGHT, height))
+        self.root.minsize(*self._min_size)
+
+    def _fit_min_width(self) -> None:
+        """Make the minimum width larger when the buttons or the progress line need it.
+
+        Counts larger than the samples of fit_min_size() make these texts wider. The app
+        calls this after the texts change. It waits until Tk measured the new texts.
+
+        During a run, the progress line can name the file, for example "File 1 of 1:
+        <a long name>". A long name must not make the window wider, so the app uses the
+        progress line only after the run, for the summary.
+        """
+        if self._min_width_id is None:
+            self._min_width_id = self.root.after_idle(self._check_min_width)
+
+    def _check_min_width(self) -> None:
+        self._min_width_id = None
+        with contextlib.suppress(tk.TclError):  # the window can be gone
+            rows = [self.buttons]
+            if not self.running:
+                rows.append(self.title_label.master)
+            need = max(row.winfo_reqwidth() for row in rows) + 2 * BODY_PADDING
+            width = max(self._min_size[0], need)
+            if self.root.minsize()[0] != width:
+                self.root.minsize(width, self._min_size[1])
 
     def _label_font(self) -> Any:
         return style_font(self.root, "TLabel")
 
     def _wrap_status(self, event: tk.Event) -> None:
-        width = max(event.width - 32, 100)
+        width = max(event.width - 2 * BODY_PADDING, 100)
         self.status_label.configure(wraplength=width)
         if width != self._line_width:
             self._line_width = width
@@ -2245,7 +2287,7 @@ class App:
 
     def dispose(self) -> None:
         """Cancel the timers of the window."""
-        for name in ("_poll_id", "_note_id"):
+        for name in ("_poll_id", "_note_id", "_min_width_id"):
             after_id = getattr(self, name)
             if after_id is not None:
                 with contextlib.suppress(tk.TclError):
@@ -2370,6 +2412,7 @@ class App:
         self.eta_label.grid_remove()
         self.failed_only_button.configure(text=f"Failed only ({self.tally.failed:,})")
         self.failed_only_button.grid()
+        self._fit_min_width()
 
     def _set_failed_only(self, on: bool) -> None:
         """Show only the failed rows, or all rows in their order."""
@@ -2554,6 +2597,7 @@ class App:
                 button.grid()
             else:
                 button.grid_remove()
+        self._fit_min_width()
 
     def _path_line(self, src: Path, dst: Path | None = None, extra: str = "") -> str:
         """Return line 1 of the details: the image and its output, on one line.
