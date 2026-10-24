@@ -2,6 +2,7 @@
 
 import contextlib
 import os
+import sys
 
 import pytest
 from images import SAMPLES
@@ -35,9 +36,50 @@ def _hide_new_windows(cls) -> None:
 
 
 # Set PIXHEET_TEST_SHOW_WINDOWS=1 to see the test windows, for example to debug a test.
-if tkinter is not None and os.environ.get("PIXHEET_TEST_SHOW_WINDOWS") != "1":
+SHOW_WINDOWS = os.environ.get("PIXHEET_TEST_SHOW_WINDOWS") == "1"
+if tkinter is not None and not SHOW_WINDOWS:
     _hide_new_windows(tkinter.Tk)
     _hide_new_windows(tkinter.Toplevel)
+
+LSFW_LOCK, LSFW_UNLOCK = 1, 2
+
+
+def _lock_foreground(action: int) -> bool:
+    """Call LockSetForegroundWindow with ``action``. Return False outside Windows."""
+    if sys.platform != "win32" or SHOW_WINDOWS:
+        return False
+    import ctypes
+
+    return bool(ctypes.windll.user32.LockSetForegroundWindow(action))
+
+
+@pytest.fixture(scope="session", autouse=True)
+def foreground_lock():
+    """On Windows, stop the test windows from taking the foreground from the user.
+
+    Each Tk window becomes the foreground window when it shows for the first time, also
+    off the screen. Then the user loses the focus many times during a test run. While
+    this process holds the lock, Windows refuses these changes for all processes. The
+    value is True if this process holds the lock.
+
+    The lock stops when the user presses Alt or clicks a window. Thus each test takes
+    the lock again, in renew_foreground_lock. Windows also removes the lock when this
+    process stops, also after a crash. PIXHEET_TEST_SHOW_WINDOWS=1 turns off the lock.
+    """
+    locked = _lock_foreground(LSFW_LOCK)
+    yield locked
+    if locked:
+        _lock_foreground(LSFW_UNLOCK)
+
+
+@pytest.fixture(autouse=True)
+def renew_foreground_lock(foreground_lock):
+    """Take the foreground lock again before each test, after a click of the user.
+
+    While this process holds the lock, the call fails and changes nothing.
+    """
+    if foreground_lock:
+        _lock_foreground(LSFW_LOCK)
 
 
 @pytest.fixture

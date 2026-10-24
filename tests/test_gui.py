@@ -2842,6 +2842,17 @@ def test_python_m_pixheet_gui_smoke():
     assert f"pixheet-gui: drag and drop {state}" in result.stdout
 
 
+@pytest.mark.skipif(sys.platform != "win32", reason="the lock is a function of Windows")
+def test_the_tests_hold_the_foreground_lock(foreground_lock):
+    if not foreground_lock:
+        pytest.skip("no foreground lock, for example with PIXHEET_TEST_SHOW_WINDOWS=1")
+    # While this process holds the lock, a new process cannot take it. A click of the user
+    # removes the lock, but renew_foreground_lock took it again just before this test.
+    code = "import ctypes; print(ctypes.windll.user32.LockSetForegroundWindow(1))"
+    result = run_python("-c", code)
+    assert result.stdout.split() == ["0"], result.stderr
+
+
 REGISTER_DROP = """
 import tkinter as tk
 from pixheet import gui
