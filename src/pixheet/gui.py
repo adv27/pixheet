@@ -1423,12 +1423,22 @@ class App:
         A dialog runs a nested event loop, so events still come in. The app refuses a
         drop in that time, so that a second drop cannot change the list in the middle of
         the code that opened the dialog.
+
+        The dialog waits for the user. Thus the window shows the normal cursor, also when
+        the code that opens the dialog shows the "watch" cursor. After the dialog, the
+        cursor that was there before comes back.
         """
+        cursor = ""
+        with contextlib.suppress(tk.TclError):
+            cursor = self.root.cget("cursor")
+            self.root.configure(cursor="")
         self._dialogs += 1
         try:
             return dialog(*args, **kwargs)
         finally:
             self._dialogs -= 1
+            with contextlib.suppress(tk.TclError):  # the window can be gone
+                self.root.configure(cursor=cursor)
 
     def _close_if_asked(self) -> bool:
         """Destroy the window if the user closed it while a dialog was open.

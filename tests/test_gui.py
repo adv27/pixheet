@@ -520,6 +520,28 @@ def test_bad_options_show_an_error_and_do_not_add_rows(harness, tmp_path):
     assert "maximum side" in h.errors[0]
 
 
+def test_the_window_shows_the_normal_cursor_while_a_dialog_waits(harness, tmp_path):
+    # The app shows the "watch" cursor while it reads the disk. A dialog waits for the
+    # user, so the cursor is normal then.
+    h = harness(answer="cancel")
+    cursors = []
+    ask = h.app.ask_replace
+    h.app.ask_replace = lambda question: cursors.append(h.root.cget("cursor")) or ask(question)
+    show = h.app.show_error
+    h.app.show_error = lambda *args, **kw: cursors.append(h.root.cget("cursor")) or show(*args)
+    src = image(tmp_path / "a.png")
+    (tmp_path / "a.xlsx").write_bytes(b"old")
+
+    h.app.add_paths([src])
+    h.app.max_side_var.set("abc")
+    h.app.add_paths([image(tmp_path / "b.png")])
+
+    assert len(h.questions) == 1
+    assert len(h.errors) == 1
+    assert cursors == ["", ""]
+    assert h.root.cget("cursor") == ""
+
+
 def test_options_go_to_convert(harness, tmp_path):
     h = harness()
     h.app.max_side_var.set("5")
