@@ -134,7 +134,9 @@ def _write(
     except BaseException as e:
         tmp.unlink(missing_ok=True)
         if isinstance(e, OSError) and e.filename == str(tmp):
-            # Report the target, not the hidden temp file.
+            # Report the target, not the hidden temp file. The cause keeps the error of the
+            # step. The error of the rename also has the target as filename2. The app uses
+            # it to find an output that another app has open.
             raise type(e)(e.errno, e.strerror, str(path)) from e
         raise
     return colors

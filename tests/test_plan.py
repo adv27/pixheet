@@ -2,6 +2,7 @@
 
 import errno
 import posixpath
+import stat
 import sys
 import threading
 import time
@@ -54,7 +55,7 @@ from pixheet._plan import (
     subfolder_note,
     summary_line,
 )
-from pixheet.core import ConvertResult
+from pixheet.core import ConvertResult, convert
 
 windows = pytest.mark.skipif(sys.platform != "win32", reason="Windows paths")
 
@@ -722,6 +723,71 @@ def test_failure_detail(tmp_path):
     )
     assert failure_detail("image", "the app cannot read it", dst) == "the app cannot read it"
     assert failure_detail("other", "[Errno 28] No space", dst) == "[Errno 28] No space"
+    assert failure_detail("in use", "denied", dst) == (
+        "Windows cannot replace a.xlsx, because another app has the file open, for example "
+        "Excel. Close the file in that app, then click Retry failed."
+    )
+
+
+def rename_error(dst: Path) -> PermissionError:
+    """Return the error of convert() when the rename of the temporary file over ``dst`` fails.
+
+    core._write gives the output as the file name, and keeps the error of the rename as
+    the cause. That error has the temporary file and the output.
+    """
+    temp = dst.with_name(".pixheet-0123456789abcdef.tmp")
+    error = PermissionError(errno.EACCES, "Access is denied", str(dst))
+    error.__cause__ = PermissionError(errno.EACCES, "Access is denied", str(temp), None, str(dst))
+    return error
+
+
+def test_failure_kind_of_an_output_that_another_app_has_open(tmp_path):
+    dst = tmp_path / "a.xlsx"
+    dst.write_bytes(b"old")
+    assert failure_kind(rename_error(dst), dst, platform="win32") == "in use"
+    # On Linux and macOS, a rename over an open file works. Thus the cause is other.
+    assert failure_kind(rename_error(dst), dst, platform="linux") == "write"
+
+    # The temporary file: the app cannot write in the folder.
+    open_error = PermissionError(errno.EACCES, "Access is denied", str(dst))
+    temp = dst.with_name(".pixheet-0123456789abcdef.tmp")
+    open_error.__cause__ = PermissionError(errno.EACCES, "Access is denied", str(temp))
+    assert failure_kind(open_error, dst, platform="win32") == "write"
+    assert failure_kind(PermissionError(errno.EACCES, "denied", str(dst)), dst, "win32") == "write"
+
+    dst.unlink()  # no file to replace, or a folder with the name of the output
+    assert failure_kind(rename_error(dst), dst, platform="win32") == "write"
+    dst.mkdir()
+    assert failure_kind(rename_error(dst), dst, platform="win32") == "write"
+
+
+@windows
+def test_convert_over_an_output_that_another_app_has_open(tmp_path, gradient_png, hold_open):
+    dst = tmp_path / "a.xlsx"
+    convert(gradient_png, dst)
+    close = hold_open(dst)
+    try:
+        with pytest.raises(PermissionError) as info:
+            convert(gradient_png, dst)
+    finally:
+        close()
+    assert failure_kind(info.value, dst) == "in use"
+    assert short_reason("in use", str(info.value)) == "file is in use"
+    assert not list(tmp_path.glob(".pixheet-*.tmp"))
+    convert(gradient_png, dst)  # the other app closed the file
+
+
+@windows
+def test_convert_over_a_read_only_output(tmp_path, gradient_png):
+    dst = tmp_path / "a.xlsx"
+    convert(gradient_png, dst)
+    dst.chmod(stat.S_IREAD)
+    try:
+        with pytest.raises(PermissionError) as info:
+            convert(gradient_png, dst)
+        assert failure_kind(info.value, dst) == "write"
+    finally:
+        dst.chmod(stat.S_IREAD | stat.S_IWRITE)
 
 
 @windows
@@ -736,6 +802,7 @@ def test_short_reason():
     assert short_reason("missing", "") == "cannot find the folder"
     assert short_reason("image", "") == "not an image"
     assert short_reason("long", "") == "path too long"
+    assert short_reason("in use", "Access is denied") == "file is in use"
     assert short_reason("other", "[Errno 28] No space left on device") == "No space left on device"
     assert short_reason("other", "[WinError 112] There is not enough space") == (
         "There is not enough spa\u2026"

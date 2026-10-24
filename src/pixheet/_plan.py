@@ -468,11 +468,33 @@ def _is_output_path(filename: object, dst: Path) -> bool:
     return path_key(path.parent) == folder and path.name.startswith(TEMP_PREFIX)
 
 
-def failure_kind(error: BaseException, dst: Path) -> str:
-    """Return the kind of a conversion error: "write", "missing", "image" or "other".
+def _is_in_use(error: PermissionError, dst: Path, platform: str | None) -> bool:
+    """Return True when Windows did not let the app replace ``dst``, an output that exists.
+
+    convert() writes a temporary file, then renames it over the output. When the rename
+    fails, the error of the rename is the cause, with the output as its second file name.
+    The app wrote the temporary file, thus the app can write in the folder. On Windows,
+    the usual reason is another app that has the output open, for example Excel. On
+    Linux and macOS, a rename over an open file works.
+
+    A read-only output also stops the rename. Then the result is False.
+    """
+    cause = error.__cause__
+    if (platform or sys.platform) != "win32" or not isinstance(cause, PermissionError):
+        return False
+    target = cause.filename2
+    if not isinstance(target, (str, os.PathLike)) or path_key(target) != path_key(dst):
+        return False
+    return dst.is_file() and os.access(dst, os.W_OK)
+
+
+def failure_kind(error: BaseException, dst: Path, platform: str | None = None) -> str:
+    """Return the kind of a conversion error: "write", "in use", "missing", "image" or "other".
 
     - "image": Pillow cannot read the source.
     - "write": the system does not let the app write the output or its temporary file.
+    - "in use": on Windows, the app cannot replace the output, because another app has it
+      open.
     - "missing": the folder of the output does not exist, for example a share that went
       away.
     - "other": all other errors, for example a source that does not exist.
@@ -482,6 +504,8 @@ def failure_kind(error: BaseException, dst: Path) -> str:
     if not isinstance(error, OSError):
         return "other"
     filename = error.filename
+    if isinstance(error, PermissionError) and _is_in_use(error, dst, platform):
+        return "in use"
     if isinstance(error, PermissionError) or error.errno == errno.EROFS:
         return "write" if filename is None or _is_output_path(filename, dst) else "other"
     if isinstance(error, FileNotFoundError):
@@ -493,6 +517,7 @@ def failure_kind(error: BaseException, dst: Path) -> str:
 
 SHORT_REASONS = {
     "write": "cannot write here",
+    "in use": "file is in use",
     "missing": "cannot find the folder",
     "image": "not an image",
     "long": "path too long",
@@ -504,8 +529,14 @@ _ERRNO_PREFIX = re.compile(r"^\[(?:Errno|WinError) -?\d+\] ")
 def failure_detail(kind: str, error: str, dst: Path, platform: str | None = None) -> str:
     """Return the full reason of a failed row, for the details line.
 
-    For "write", the text tells the user what to do. For the other kinds, it is ``error``.
+    For "write" and "in use", the text tells the user what to do. For the other kinds, it
+    is ``error``.
     """
+    if kind == "in use":
+        return (
+            f"Windows cannot replace {dst.name}, because another app has the file open, "
+            "for example Excel. Close the file in that app, then click Retry failed."
+        )
     if kind != "write":
         return error
     system = "Windows" if (platform or sys.platform) == "win32" else "The system"

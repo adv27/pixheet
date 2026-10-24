@@ -100,6 +100,52 @@ def no_system_clipboard(monkeypatch):
 
 
 @pytest.fixture
+def hold_open():
+    """Return a function that opens a file as Excel does, on Windows only.
+
+    Other apps can read the file, but they cannot write, rename or delete it. The
+    function returns a function that closes the file. The fixture closes the files that
+    are still open at the end of the test.
+    """
+    if sys.platform != "win32":
+        pytest.skip("Windows only")
+    import ctypes
+    from ctypes import wintypes
+
+    kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+    kernel32.CreateFileW.restype = wintypes.HANDLE
+    kernel32.CreateFileW.argtypes = [
+        wintypes.LPCWSTR,
+        wintypes.DWORD,
+        wintypes.DWORD,
+        ctypes.c_void_p,
+        wintypes.DWORD,
+        wintypes.DWORD,
+        wintypes.HANDLE,
+    ]
+    kernel32.CloseHandle.argtypes = [wintypes.HANDLE]
+    generic_read, generic_write, file_share_read, open_existing = 0x80000000, 0x40000000, 1, 3
+    handles = []
+
+    def close(handle):
+        if handle in handles:
+            handles.remove(handle)
+            kernel32.CloseHandle(handle)
+
+    def hold(path):
+        handle = kernel32.CreateFileW(
+            str(path), generic_read | generic_write, file_share_read, None, open_existing, 0, None
+        )
+        assert handle not in (None, ctypes.c_void_p(-1).value), ctypes.get_last_error()
+        handles.append(handle)
+        return lambda: close(handle)
+
+    yield hold
+    while handles:
+        close(handles[-1])
+
+
+@pytest.fixture
 def rgb_gradient() -> Image.Image:
     return SAMPLES["gradient"]()
 

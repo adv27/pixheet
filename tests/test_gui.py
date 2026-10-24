@@ -1103,6 +1103,27 @@ def test_unwritable_output_folder_fails_in_its_row(harness, tmp_path, monkeypatc
     assert f"write in {logo.parent}." in line
 
 
+def test_an_output_that_another_app_has_open_fails_in_its_row(harness, tmp_path, hold_open):
+    h = harness()  # the answer to the replace question is "replace"
+    a = image(tmp_path / "a.png", 8, 6)
+    real_convert(a, tmp_path / "a.xlsx")
+    close = hold_open(tmp_path / "a.xlsx")  # for example, Excel has the file open
+    h.run(a, image(tmp_path / "b.png", 8, 6))
+
+    assert h.rows()[0] == ("a.png", "✕ Failed: file is in use")
+    assert h.states() == [gui.FAILED, gui.DONE]
+    assert h.app.tree.selection() == (h.iid("a.png"),)
+    assert h.app.status_var.get() == (
+        "Failed: Windows cannot replace a.xlsx, because another app has the file open, "
+        "for example Excel. Close the file in that app, then click Retry failed."
+    )
+
+    close()  # the user follows the advice
+    h.app.retry_button.invoke()
+    h.wait()
+    assert h.states() == [gui.DONE, gui.DONE]
+
+
 def test_a_long_output_path_fails_at_once(harness, tmp_path):
     h = harness()
     h.app.set_out_dir(tmp_path.joinpath(*["x" * 200] * 21))  # too long on all systems
