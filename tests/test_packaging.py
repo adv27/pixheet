@@ -1331,6 +1331,28 @@ def test_all_jobs_use_only_the_python_of_uv():
     )
 
 
+def test_ci_uses_one_exact_uv_and_users_can_use_a_newer_uv():
+    """An upper bound in required-version stops the README commands with each new uv."""
+    with (PACKAGING.parent / "pyproject.toml").open("rb") as f:
+        required = tomllib.load(f)["tool"]["uv"]["required-version"]
+    match = re.fullmatch(r">=(\d+)\.(\d+)\.(\d+)", required)
+    assert match, required
+    minimum = tuple(map(int, match.groups()))
+    step = re.compile(
+        r"uses: astral-sh/setup-uv@\S+ # \S+\n        with:\n(?:          \S.*\n)*?"
+        r'          version: "(\d+\.\d+\.\d+)"\n'
+    )
+    versions = []
+    for name in ("ci.yml", "release.yml"):
+        text = (WORKFLOWS / name).read_text(encoding="utf-8")
+        found = step.findall(text)
+        assert len(found) == text.count("uses: astral-sh/setup-uv@"), name
+        versions += found
+    assert len(versions) == 3
+    assert len(set(versions)) == 1, versions
+    assert tuple(map(int, versions[0].split("."))) >= minimum
+
+
 @pytest.mark.parametrize("name", ["release_version", "release_plan"])
 def test_release_scripts_run_on_python_3_12(name):
     """ci.yml and the release job run the scripts with the Python 3.12 of the Ubuntu runner."""

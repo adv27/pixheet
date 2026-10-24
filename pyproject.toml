@@ -49,8 +49,10 @@ dev = [
 build = ["pyinstaller>=6.22.3", "pyinstaller-hooks-contrib>=2026.8"]
 
 [tool.uv]
-# The CI workflows install the newest uv in this range.
-required-version = ">=0.13.1,<0.14"
+# The oldest uv that can use this project. A newer uv also works, so the README commands
+# work with the uv of the user. The CI workflows install one exact uv version: read the
+# "version" input of each setup-uv step.
+required-version = ">=0.13.1"
 # Use only a Python that uv installs (python-build-standalone), also when the computer has
 # a different Python 3.15. Then the CI jobs, the release builds and a local build all use
 # the same Python build on Windows and on Linux.
