@@ -1708,9 +1708,10 @@ class App:
                 self.root.configure(cursor=cursor)
 
     def _close_if_asked(self) -> bool:
-        """Destroy the window if the user closed it while a dialog was open.
+        """Destroy the window if the user closed it, and the app is not busy now.
 
-        Call this after each dialog. Return True when the window is gone.
+        Call this after each dialog and when the worker ends. Return True when the window
+        is gone.
         """
         if not self.closing or self.busy:
             return False
@@ -2504,10 +2505,7 @@ class App:
             self.worker.join()
             self.worker = None
         if self.closing:
-            if not self._dialogs:  # else the window closes after the dialog
-                self.dispose()
-                with contextlib.suppress(tk.TclError):
-                    self.root.destroy()
+            self._close_if_asked()  # with an open dialog, the window closes after the dialog
             return
         # The user can click Stop after the worker sent Finished(False), and a drop can
         # add jobs in that time. Then the run stops too, as the user asked.
