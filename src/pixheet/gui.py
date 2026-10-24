@@ -63,6 +63,7 @@ from pixheet._plan import (
     SKIPPED,
     STOPPED,
     WAITING,
+    WAITING_AS,
     Converted,
     DropResult,
     Failed,
@@ -135,8 +136,6 @@ STATUS_PADDING = 12
 """The space at the two sides of the text in a cell, at 100 % scale, in pixels."""
 COUNT_GAP = 8
 """The space between the count line and the Add files button, in pixels."""
-WAITING_AS = f"Waiting{SEP}as "
-"""The start of the status of a waiting row with a tagged output."""
 TAG_END = ").xlsx"
 """The end of an output name with a tag, for example "photo (png).xlsx"."""
 STATUS_SAMPLE = f"{WAITING_AS}{ELLIPSIS} (Hội{ELLIPSIS}, jpeg){TAG_END}"

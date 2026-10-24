@@ -41,6 +41,8 @@ QUIET_NAMES = frozenset({"desktop.ini", "thumbs.db", ".ds_store"})
 
 SEP = " \u00b7 "
 """The separator between the parts of a status text, for example "Done · 2.0 MB"."""
+WAITING_AS = f"Waiting{SEP}as "
+"""The start of the status of a waiting row with a tagged output."""
 ELLIPSIS = "\u2026"
 DONE_MARK, FAILED_MARK, MUTED_MARK = "\u2713", "\u2715", "\u2013"
 
@@ -718,7 +720,7 @@ def status_text(row: Row) -> str:
     match row.state:
         case "waiting":
             if row.dst.name != f"{row.src.stem}.xlsx":
-                return f"Waiting{SEP}as {row.dst.name}"
+                return f"{WAITING_AS}{row.dst.name}"
             return "Waiting"
         case "converting":
             return f"Converting {row.percent}%"
