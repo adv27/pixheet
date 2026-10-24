@@ -931,7 +931,6 @@ class ReplaceDialog:
         strong_font: Any,
         dark: bool = False,
     ) -> None:
-        self.root = root
         self.answer = "cancel"
         self.dark = dark
         scale = root.winfo_fpixels("1i") / 96
