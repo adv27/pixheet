@@ -185,8 +185,8 @@ def image_types(platform: str | None = None) -> list[tuple[str, str]]:
     if (platform or sys.platform) == "win32":
         return IMAGE_TYPES
     patterns = [
-        "*." + "".join(f"[{c.lower()}{c.upper()}]" if c.isalpha() else c for c in p[2:])
-        for p in IMAGE_TYPES[0][1].split()
+        "*." + "".join(f"[{c.lower()}{c.upper()}]" if c.isalpha() else c for c in s[1:])
+        for s in IMAGE_SUFFIX_ORDER
     ]
     return [(IMAGE_TYPES[0][0], " ".join(patterns)), ("All files", "*")]
 
