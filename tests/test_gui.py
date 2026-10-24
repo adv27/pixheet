@@ -702,6 +702,64 @@ def test_a_drop_while_the_run_stops_waits(harness, tmp_path, monkeypatch):
     assert not c.with_suffix(".xlsx").exists()
 
 
+def test_a_drop_while_the_run_stops_waits_when_the_worker_ends_in_the_question(
+    harness, tmp_path, monkeypatch
+):
+    gate = gate_convert(monkeypatch)
+    h = harness()
+    h.drop(image(tmp_path / "a.png"), image(tmp_path / "b.png"))
+    h.root.update()
+    h.pump(converting(h))
+    h.app.stop_button.invoke()
+    c = image(tmp_path / "c.png")
+    c.with_suffix(".xlsx").write_bytes(b"old")
+
+    def ask(question):
+        gate.set()
+        h.pump(lambda: h.app.worker is None)  # the worker ends during the question
+        return "replace"
+
+    h.app.ask_replace = ask
+    h.app.add_paths([c])
+    h.root.update()
+    assert h.app.note_var.get() == "Added 1 image to the list. It waits, because the run stops."
+    assert h.app.worker is None
+    assert h.states() == ["stopped", "waiting", "waiting"]
+    assert h.app.title_var.get() == "Stopped. Converted 0 of 2 files. 1 stopped."
+    assert h.app.stop_button.cget("text") == "Convert 2"
+    assert c.with_suffix(".xlsx").read_bytes() == b"old"
+
+
+def test_a_retry_while_the_run_stops_waits_when_the_worker_ends_in_the_question(
+    harness, tmp_path, monkeypatch
+):
+    h = harness()
+    bad = tmp_path / "bad.png"
+    bad.write_bytes(b"not an image")
+    h.run(bad)
+    assert h.states() == ["failed"]
+    gate = gate_convert(monkeypatch)
+    h.drop(image(tmp_path / "a.png"), image(tmp_path / "b.png"))
+    h.root.update()
+    h.pump(converting(h))
+    h.app.stop_button.invoke()
+    bad.with_suffix(".xlsx").write_bytes(b"old")
+
+    def ask(question):
+        gate.set()
+        h.pump(lambda: h.app.worker is None)  # the worker ends during the question
+        return "replace"
+
+    h.app.ask_replace = ask
+    h.app.retry_failed()
+    h.root.update()
+    assert h.app.worker is None
+    assert h.states() == ["waiting", "stopped", "waiting"]
+    assert h.app.title_var.get() == "Stopped. Converted 0 of 2 files. 1 stopped."
+    assert h.app.stop_button.cget("text") == "Convert 2"
+    assert bad.with_suffix(".xlsx").read_bytes() == b"old"
+
+
 def test_stop_then_continue(harness, tmp_path, monkeypatch):
     gate = gate_convert(monkeypatch)
     h = harness()

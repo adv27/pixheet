@@ -1655,6 +1655,8 @@ class App:
         taken |= {output_key(row.dst) for row in again}
         outputs = assign_outputs(fresh, self.out_dir, taken)
         new_rows = [Row(self._next_id(), src, dst) for src, dst in zip(fresh, outputs, strict=True)]
+        # The worker can end while the question is open. The rows wait all the same.
+        wait = self._stopping()
         earlier = self._waiting_rows()
         decision = self._decide([*earlier, *new_rows, *again])
         if decision is None:
@@ -1671,7 +1673,7 @@ class App:
             queued.append(new)
         queued += self._apply(again, decision, to_end=True)
         self._refresh_list()
-        self._enqueue(queued, options)
+        self._enqueue(queued, options, wait=wait)
         return len(queued)
 
     def _decide(
@@ -1822,15 +1824,17 @@ class App:
         """Return True after Stop, until the worker ends."""
         return self.running and self.cancel_event.is_set()
 
-    def _enqueue(self, rows: Sequence[Row], options: Options) -> None:
+    def _enqueue(self, rows: Sequence[Row], options: Options, *, wait: bool = False) -> None:
         """Put the waiting rows of ``rows`` into the queue. Start a run if none is active.
 
         A drop during a run adds its rows to that run. The caller checks each row with
         :meth:`_decide` first. For a new run, ``rows`` must include the rows that wait
         from an earlier run. See :meth:`_waiting_rows`. After Stop, the rows only wait.
-        The next run takes them.
+        The next run takes them. With ``wait``, the rows also only wait. The caller sets
+        it when the user clicked Stop before the question of :meth:`_decide`. The worker
+        can end while the question is open, but the user asked the run to stop.
         """
-        if self._stopping():
+        if wait or self._stopping():
             self._refresh_buttons()
             return
         if not self.running:
@@ -1933,6 +1937,8 @@ class App:
             return
         if ask:
             rows = self._current_outputs(rows)
+        # The worker can end while the question is open. The rows wait all the same.
+        wait = self._stopping()
         earlier = self._waiting_rows()
         decision = self._decide(
             [*earlier, *rows],
@@ -1946,7 +1952,9 @@ class App:
             return
         if self.failed_only:
             self._set_failed_only(False)
-        self._enqueue([*self._apply(earlier, decision), *self._apply(rows, decision)], options)
+        self._enqueue(
+            [*self._apply(earlier, decision), *self._apply(rows, decision)], options, wait=wait
+        )
 
     def retry_selected(self) -> None:
         self.retry([row for row in self._selected_rows() if row.state in (FAILED, STOPPED)])
