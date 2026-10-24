@@ -1627,8 +1627,9 @@ class App:
         """Add rows for ``images``, ask about outputs that exist, and queue the rows.
 
         An image that is in a finished row goes back to the end of the queue, without a
-        second row. Return the number of rows that the app added or queued again. Return
-        None when the user clicked Cancel, or when the options have an error.
+        second row. It gets an output with the current "Save to", as with Retry. Return
+        the number of rows that the app added or queued again. Return None when the user
+        clicked Cancel, or when the options have an error.
         """
         by_key = {path_key(row.src): row for row in self.rows.values()}
         fresh: list[Path] = []
@@ -1639,7 +1640,10 @@ class App:
                 fresh.append(path)
             elif row.state in FINISHED_STATES:
                 again.append(row)
-        taken = {output_key(row.dst) for row in self.rows.values()}
+        again = self._current_outputs(again)
+        again_ids = {row.id for row in again}
+        taken = {output_key(row.dst) for row in self.rows.values() if row.id not in again_ids}
+        taken |= {output_key(row.dst) for row in again}
         outputs = assign_outputs(fresh, self.out_dir, taken)
         new_rows = [Row(self._next_id(), src, dst) for src, dst in zip(fresh, outputs, strict=True)]
         earlier = self._waiting_rows()
@@ -1710,6 +1714,16 @@ class App:
             return replace(fresh, state=WAITING)
 
         return decide
+
+    def _current_outputs(self, rows: Sequence[Row]) -> list[Row]:
+        """Return copies of ``rows`` with outputs for the current "Save to" folder.
+
+        The outputs of the other rows in the list stay with those rows.
+        """
+        ids = {row.id for row in rows}
+        taken = {output_key(row.dst) for row in self.rows.values() if row.id not in ids}
+        outputs = assign_outputs([row.src for row in rows], self.out_dir, taken)
+        return [replace(row, dst=dst) for row, dst in zip(rows, outputs, strict=True)]
 
     def _waiting_rows(self) -> list[Row]:
         """Return the rows that wait, when no run is active. A new run takes them too.
@@ -1888,10 +1902,7 @@ class App:
         if not rows:
             return
         if ask:
-            ids = {row.id for row in rows}
-            taken = {output_key(row.dst) for row in self.rows.values() if row.id not in ids}
-            outputs = assign_outputs([row.src for row in rows], self.out_dir, taken)
-            rows = [replace(row, dst=dst) for row, dst in zip(rows, outputs, strict=True)]
+            rows = self._current_outputs(rows)
         earlier = self._waiting_rows()
         decision = self._decide(
             [*earlier, *rows],

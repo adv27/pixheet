@@ -666,6 +666,22 @@ def test_the_same_file_again(harness, tmp_path, monkeypatch):
     assert h.states() == ["done", "done"]
 
 
+def test_the_same_file_again_uses_the_current_save_to(harness, tmp_path):
+    h = harness()
+    x = image(tmp_path / "x" / "photo.png")
+    h.run(x)
+    out = tmp_path / "out"
+    out.mkdir()
+    h.app.set_out_dir(out)
+
+    y = image(tmp_path / "y" / "photo.png")
+    h.run(x, y)  # the done row of x goes to the end of the queue, after the new y
+    outputs = {row.src: row.dst for row in h.app.rows.values()}
+    assert outputs == {x: out / "photo.xlsx", y: out / "photo (y).xlsx"}
+    assert sorted(p.name for p in out.iterdir()) == ["photo (y).xlsx", "photo.xlsx"]
+    assert h.questions == []
+
+
 def test_stop_then_continue(harness, tmp_path, monkeypatch):
     gate = gate_convert(monkeypatch)
     h = harness()
