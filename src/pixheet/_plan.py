@@ -171,8 +171,8 @@ def expand_drop(
       ``skipped_subfolders``. With ``recursive``, it adds the images of all subfolders,
       after the images of the folder itself.
     - An image whose key (see :func:`path_key`) is in ``known`` is a duplicate. Give the
-      keys of the rows that wait or convert. An image that comes two times in one drop
-      is added one time, and it is not a duplicate.
+      keys of the rows that wait or convert. When an image comes two times in one drop,
+      the result has it one time, and it is not a duplicate.
 
     The dropped paths keep their order. ``listdir``, ``isdir`` and ``isfile`` let the
     tests use a fake disk. ``listdir`` returns the full paths of the items in a folder.

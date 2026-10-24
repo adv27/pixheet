@@ -308,9 +308,9 @@ def run_queue(
     The worker thread runs this function. It takes jobs until the queue is empty. The
     window can add jobs during the run. An error in one job does not stop the queue.
 
-    - When the ``skip`` event of a job is set, the job stops, and the worker posts
-      :class:`Stopped` for it. Then the worker continues with the next job.
-    - When ``cancel`` is set, the current job stops, and the worker posts
+    - When the window sets the ``skip`` event of a job, the job stops, and the worker
+      posts :class:`Stopped` for it. Then the worker continues with the next job.
+    - When the window sets ``cancel``, the current job stops, and the worker posts
       :class:`Stopped` for it. Then the queue stops.
 
     The last message is always :class:`Finished`.
@@ -409,8 +409,8 @@ def set_icon(root: tk.Tk, platform: str | None = None) -> bool:
     """Show the Pixheet icon on ``root`` and on all windows that come later.
 
     Return True when the window has the icon. On Windows, Tk reads the .ico file. On
-    other systems, Tk reads the PNG file. When the icon file is not found, the window
-    keeps the Tk icon.
+    other systems, Tk reads the PNG file. When the app does not find the icon file, the
+    window keeps the Tk icon.
     """
     if (platform or sys.platform) == "win32":
         path = icon_path()
@@ -1483,7 +1483,8 @@ class App:
         a fixed text color. Then the text does not change to gray when the widget is
         disabled, and the user cannot see that "Save to" and the options are locked
         during a run.
-        ttk::ThemeChanged sends the event to the root first, so tk_setPalette is done here.
+        ttk::ThemeChanged sends the event to the root first. Thus tk_setPalette is complete
+        when a widget gets the event.
         """
         event.widget.configure(foreground="")
 
@@ -2048,7 +2049,7 @@ class App:
     def _waiting_rows(self) -> list[Row]:
         """Return the rows that wait, when no run is active. A new run takes them too.
 
-        These rows are left from a run that the user stopped. Their outputs can have
+        These rows come from a run that the user stopped. Their outputs can have
         changed with "Save to", and new files can exist. Thus the app checks them with
         :meth:`_decide` again before the new run.
         """
