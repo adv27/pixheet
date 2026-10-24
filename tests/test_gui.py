@@ -3433,6 +3433,49 @@ def test_replace_dialog_for_one_file_without_other_images(harness, tmp_path):
     assert dialog.run() == "replace"
 
 
+class CharFont:
+    """A font in which each character is 10 pixels wide."""
+
+    @staticmethod
+    def measure(text):
+        return 10 * len(text)
+
+
+def test_fit_text_shortens_only_the_text_between_the_prefix_and_the_suffix():
+    path = r"D:\Photos\2024\Trip to Da Lat\Day 2"
+    assert gui.fit_text(CharFont, 1000, path, prefix="in ") == f"in {path}"
+    line = gui.fit_text(CharFont, 200, path, prefix="(", suffix=")")
+    assert line == "(D:\\…\\Day 2)"  # the longest middle_ellipsis() that fits
+    assert len(line) * 10 <= 200
+    line = gui.fit_text(CharFont, 120, "photo (Hội An).xlsx", gui.end_ellipsis, prefix="as ")
+    assert line == "as photo (H…"
+    # No limit fits: the shortest text.
+    assert gui.fit_text(CharFont, 10, "abcdef", gui.end_ellipsis, prefix="xyz") == "xyz…"
+    assert gui.end_ellipsis("abc", 3) == "abc"
+
+
+def test_replace_dialog_for_one_file_in_a_deep_folder_stays_narrow(harness, tmp_path):
+    """A long folder must not make the dialog wider than the screen."""
+    h = harness()
+    folder = tmp_path.joinpath(*[f"Chuyến đi Đà Lạt tháng {n}" for n in range(1, 9)])
+    path = folder / "IMG_1123.xlsx"  # the file does not need to exist
+    dialog = gui.ReplaceDialog(
+        h.root,
+        ReplaceQuestion([path], other_count=0),
+        heading_font=h.app._big_font,
+        strong_font=h.app._strong_font,
+    )
+    h.root.update_idletasks()
+    scale = h.root.winfo_fpixels("1i") / 96
+    assert dialog.top.winfo_reqwidth() <= round(520 * scale)
+    labels = [w.cget("text") for w in descendants(dialog.top) if isinstance(w, ttk.Label)]
+    line = labels[2]
+    assert line.startswith(folder.anchor)
+    assert line.endswith(folder.name)
+    assert "…" in line
+    dialog.close("cancel")
+
+
 def test_the_app_asks_with_the_replace_dialog(tmp_path):
     root = new_root()
     try:

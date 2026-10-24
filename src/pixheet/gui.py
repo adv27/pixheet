@@ -51,6 +51,7 @@ from pixheet._image import RGB, check_max_side, parse_background
 from pixheet._plan import (
     CONVERTING,
     DONE,
+    ELLIPSIS,
     FAILED,
     FINISHED_STATES,
     NOT_AN_IMAGE,
@@ -764,6 +765,51 @@ def _configure_style(root: tk.Tk, style: str, option: str, value: object) -> Non
         styles.configure(style, **{option: value})
 
 
+def style_font(root: tk.Misc, style: str) -> Any:
+    """Return the font of a ttk style, or TkDefaultFont when the style has no font."""
+    name = ttk.Style(root).lookup(style, "font") or "TkDefaultFont"
+    try:
+        return tkfont.nametofont(name, root=root)
+    except tk.TclError:
+        return tkfont.nametofont("TkDefaultFont", root=root)
+
+
+def end_ellipsis(text: str, limit: int) -> str:
+    """Shorten ``text`` to ``limit`` characters or fewer. Cut the end, and add "…"."""
+    if len(text) <= limit:
+        return text
+    return text[: max(limit - 1, 0)].rstrip() + ELLIPSIS
+
+
+def fit_text(
+    font: Any,
+    width: int,
+    text: str,
+    shorten: Callable[[str, int], str] = middle_ellipsis,
+    *,
+    prefix: str = "",
+    suffix: str = "",
+) -> str:
+    """Return ``prefix + text + suffix``, with ``text`` shortened to fit ``width`` pixels.
+
+    ``shorten(text, limit)`` gives ``text`` with ``limit`` characters or fewer. The result
+    uses the largest limit that fits. When no limit fits, the result has the shortest text.
+    """
+    full = f"{prefix}{text}{suffix}"
+    if font.measure(full) <= width or len(text) <= 1:
+        return full
+    low, high = 1, len(text) - 1
+    best = f"{prefix}{shorten(text, 1)}{suffix}"
+    while low <= high:
+        limit = (low + high) // 2
+        line = f"{prefix}{shorten(text, limit)}{suffix}"
+        if font.measure(line) <= width:
+            best, low = line, limit + 1
+        else:
+            high = limit - 1
+    return best
+
+
 class ReplaceDialog:
     """Ask one time what to do with the output files of a drop that exist.
 
@@ -801,8 +847,17 @@ class ReplaceDialog:
         )
         self.tree: ttk.Treeview | None = None
         if len(question.existing) == 1:
+            # The folder gets "…" in the middle, so that a deep folder does not make the
+            # dialog wider than the screen. The heading names the file.
             path = question.existing[0]
-            ttk.Label(body, text=f"{path.parent}{SEP}{changed_text(path)}").pack(anchor="w")
+            changed = changed_text(path)
+            line = fit_text(
+                style_font(root, "TLabel"),
+                round(460 * scale),
+                str(path.parent),
+                suffix=f"{SEP}{changed}" if changed else "",
+            )
+            ttk.Label(body, text=line).pack(anchor="w")
         else:
             self.tree = self._build_list(body, question, strong_font, scale)
         buttons = ttk.Frame(body, padding=(0, 16, 0, 0))
@@ -1391,11 +1446,7 @@ class App:
         self.root.minsize(max(MIN_WIDTH, width), max(MIN_HEIGHT, height))
 
     def _label_font(self) -> Any:
-        name = ttk.Style(self.root).lookup("TLabel", "font") or "TkDefaultFont"
-        try:
-            return tkfont.nametofont(name, root=self.root)
-        except tk.TclError:
-            return tkfont.nametofont("TkDefaultFont", root=self.root)
+        return style_font(self.root, "TLabel")
 
     def _wrap_status(self, event: tk.Event) -> None:
         width = max(event.width - 32, 100)
