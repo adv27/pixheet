@@ -2,6 +2,7 @@
 
 import gc
 import importlib.util
+import os
 import subprocess
 import sys
 import threading
@@ -2831,11 +2832,25 @@ def has_tkinterdnd2() -> bool:
     return importlib.util.find_spec("tkinterdnd2") is not None
 
 
+SHOW_WINDOWS = os.environ.get("PIXHEET_TEST_SHOW_WINDOWS") == "1"
+
+
 def run_python(*args: str) -> subprocess.CompletedProcess[str]:
-    """Run Python in a new process. Tk loads tkdnd reliably only in a new interpreter."""
+    """Run Python in a new process. Tk loads tkdnd reliably only in a new interpreter.
+
+    conftest.py does not move the windows of the new process off the screen. Thus the
+    process gets the hidden mode of the app, except with PIXHEET_TEST_SHOW_WINDOWS=1.
+    """
+    env = os.environ | ({} if SHOW_WINDOWS else {gui.HIDDEN_ENV: "1"})
     return subprocess.run(
-        [sys.executable, *args], capture_output=True, text=True, timeout=60, check=False
+        [sys.executable, *args], capture_output=True, text=True, timeout=60, check=False, env=env
     )
+
+
+def test_run_python_hides_the_window_of_the_app():
+    result = run_python("-c", f"import os; print(os.environ.get({gui.HIDDEN_ENV!r}))")
+    expected = os.environ.get(gui.HIDDEN_ENV) if SHOW_WINDOWS else "1"
+    assert result.stdout.strip() == str(expected)
 
 
 def test_python_m_pixheet_gui_smoke():
