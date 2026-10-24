@@ -81,6 +81,7 @@ from pixheet._plan import (
     apply_message,
     assign_outputs,
     drop_note,
+    end_ellipsis,
     eta_text,
     expand_drop,
     failure_detail,
@@ -804,13 +805,6 @@ def style_font(root: tk.Misc, style: str) -> Any:
         return tkfont.nametofont(name, root=root)
     except tk.TclError:
         return tkfont.nametofont("TkDefaultFont", root=root)
-
-
-def end_ellipsis(text: str, limit: int) -> str:
-    """Shorten ``text`` to ``limit`` characters or fewer. Cut the end, and add "…"."""
-    if len(text) <= limit:
-        return text
-    return text[: max(limit - 1, 0)].rstrip() + ELLIPSIS
 
 
 def middle_cut(text: str, limit: int) -> str:

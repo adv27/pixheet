@@ -415,6 +415,13 @@ def folder_labels(folders: Sequence[Path]) -> tuple[str, dict[str, str]]:
     return f"{FOLDER_IN}{where})", labels
 
 
+def end_ellipsis(text: str, limit: int) -> str:
+    """Shorten ``text`` to ``limit`` characters or fewer. Cut the end, and add "…"."""
+    if len(text) <= limit:
+        return text
+    return text[: max(limit - 1, 0)].rstrip() + ELLIPSIS
+
+
 def middle_ellipsis(text: str, limit: int) -> str:
     r"""Shorten a path to ``limit`` characters or fewer. Cut it in the middle.
 
@@ -570,9 +577,7 @@ def short_reason(kind: str, text: str) -> str:
     if kind in SHORT_REASONS:
         return SHORT_REASONS[kind]
     text = _ERRNO_PREFIX.sub("", " ".join(text.split())) or "unknown error"
-    if len(text) > REASON_LENGTH:
-        text = text[: REASON_LENGTH - 1].rstrip() + ELLIPSIS
-    return text
+    return end_ellipsis(text, REASON_LENGTH)
 
 
 # --- Jobs and messages ---------------------------------------------------------------
