@@ -96,8 +96,16 @@ MIN_WIDTH, MIN_HEIGHT = 620, 460
 """The smallest size of the window. The window can need more, for example with large text."""
 POLL_MS = 50
 """Time between two reads of the message queue, in milliseconds."""
-PROGRESS_INTERVAL = 0.05
-"""Minimum time between two progress messages from the worker, in seconds."""
+BUSY_POLL_MS = 250
+"""Time until the next read of the message queue after a read that found messages."""
+PROGRESS_INTERVAL = 0.25
+"""Minimum time between two progress messages from the worker, in seconds.
+
+Each message changes the Status cell, and Tk then draws the whole list again. With more
+than about 4 messages each second, clicks and scrolls are slow during a run.
+"""
+BAR_STEP = 0.01
+"""The smallest move of the progress bar during a run, as a part of the full bar."""
 NOTE_MS = 10_000
 """Time until a note without a button closes, in milliseconds."""
 FOLLOW_ABOVE = 3
@@ -310,6 +318,12 @@ def run_queue(
             post(Converted(job.id, result, size))
     finally:
         post(Finished(stopped))
+
+
+def _set_if_changed(var: tk.Variable, value: object) -> None:
+    """Set ``var`` only when ``value`` is new. Each set makes Tk draw the widgets again."""
+    if var.get() != value:
+        var.set(value)
 
 
 def _plural(count: int, word: str) -> str:
@@ -1482,7 +1496,18 @@ class App:
         self._count(new, None, new.state)
         if to_end:
             self.tree.move(str(new.id), "", "end")
-        self._render(new)
+        if new.src != old.src:
+            self._render(new)
+            return
+        # Tk draws the whole list again after each change, and that is slow. Thus write
+        # only the Status cell and the tag, and only when they change.
+        iid = str(new.id)
+        status = status_text(new)
+        if status != status_text(old):
+            self.tree.set(iid, "status", status)
+        tag = STATE_TAGS[new.state]
+        if tag != STATE_TAGS[old.state]:
+            self.tree.item(iid, tags=(tag,))
 
     def _remove_row(self, row: Row) -> None:
         del self.rows[row.id]
@@ -2056,21 +2081,27 @@ class App:
         An error in a handler goes to the error dialog. The next poll comes anyway, so
         the app reads Finished, and the window can close. The message that failed is
         already out of the queue, thus the same error does not come again.
+
+        After a poll that read messages, the next poll comes after BUSY_POLL_MS. Thus Tk
+        draws the list at most about 4 times each second, also for many small files.
         """
         self._poll_id = None
         messages = self.queue
+        read = False
         try:
             while True:
                 try:
                     message = messages.get_nowait()
                 except queue.Empty:
                     break
+                read = True
                 self._handle(message)
                 if self.worker is None or self.queue is not messages:
                     break  # the run ended, a new worker started, or the window is gone
         finally:
             if self.worker is not None and self._poll_id is None:
-                self._poll_id = self.root.after(POLL_MS, self._poll)
+                delay = BUSY_POLL_MS if read else POLL_MS
+                self._poll_id = self.root.after(delay, self._poll)
 
     def _handle(self, message: Message) -> None:
         if isinstance(message, Finished):
@@ -2230,11 +2261,17 @@ class App:
         fraction = current.percent / 100 if current is not None else 0.0
         index = min(tally.finished + 1, total)
         name = current.src.name if current is not None else ""
-        self.title_var.set(progress_text(index, total, name, tally))
-        self.progress_var.set(min(1.0, (tally.finished + fraction) / total))
+        _set_if_changed(self.title_var, progress_text(index, total, name, tally))
+        # Each move of the bar makes Tk draw it again. Thus move it by BAR_STEP or more.
+        bar = min(1.0, (tally.finished + fraction) / total)
+        shown = self.progress_var.get()
+        if abs(bar - shown) >= BAR_STEP or (bar != shown and bar in (0.0, 1.0)):
+            self.progress_var.set(bar)
         left = tally.waiting + (1 - fraction if current is not None else 0)
-        self.eta_var.set(eta_text(self._run_seconds, self._run_processed, left))
-        self.root.title(f"{TITLE} - {index:,} of {total:,}")
+        _set_if_changed(self.eta_var, eta_text(self._run_seconds, self._run_processed, left))
+        title = f"{TITLE} - {index:,} of {total:,}"
+        if self.root.title() != title:
+            self.root.title(title)
 
     def _open_target(self) -> Row | None:
         """Return the done row that Open and Show in folder use, or None."""

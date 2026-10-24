@@ -96,6 +96,17 @@ def test_throttle_limits_updates_but_lets_the_first_and_last_through():
     assert throttle(10, 10)  # the last, at once after the one before
 
 
+def test_the_worker_sends_about_four_progress_messages_each_second():
+    # Tk draws the whole list again after each change of a cell, and that is slow.
+    now = [0.0]
+    throttle = Throttle(clock=lambda: now[0])
+    assert throttle(0, 10)
+    now[0] = 0.2
+    assert not throttle(1, 10)
+    now[0] = 0.25
+    assert throttle(2, 10)
+
+
 def test_image_suffixes_match_the_file_dialog_types():
     patterns = gui.IMAGE_TYPES[0][1].split()
     assert {pattern.removeprefix("*") for pattern in patterns} == IMAGE_SUFFIXES
@@ -847,6 +858,102 @@ def test_failed_only_shows_only_the_failed_rows(harness, tmp_path):
     assert h.app.tree.get_children() == (h.iid("b.png"),)
     button.invoke()
     assert h.app.tree.get_children() == tuple(h.iid(n) for n in ("a.png", "b.png", "c.png"))
+
+
+def record_tree_writes(monkeypatch, tree):
+    """Record each write of a cell or a tag of ``tree``. Reads are not in the list."""
+    writes = []
+    item, set_ = tree.item, tree.set
+
+    def record_item(iid, option=None, **kw):
+        if kw:
+            writes.append(("item", iid, kw))
+        return item(iid, option, **kw)
+
+    def record_set(iid, column=None, value=None):
+        if value is not None:
+            writes.append(("set", iid, column, value))
+        return set_(iid, column, value)
+
+    monkeypatch.setattr(tree, "item", record_item)
+    monkeypatch.setattr(tree, "set", record_set)
+    return writes
+
+
+def test_progress_writes_only_a_status_cell_that_changes(harness, monkeypatch, tmp_path):
+    h = harness()
+    gate = gate_convert(monkeypatch)
+    assert h.drop(image(tmp_path / "a.png", 8, 6), image(tmp_path / "b.png", 8, 6)) == "copy"
+    h.pump(converting(h))
+    app = h.app
+    row = next(row for row in app.rows.values() if row.state == gui.CONVERTING)
+    iid = str(row.id)
+    writes = record_tree_writes(monkeypatch, app.tree)
+
+    app._handle(gui.Progress(row.id, 50, 100))
+    assert writes == [("set", iid, "status", "Converting 50%")]
+    writes.clear()
+    app._handle(gui.Progress(row.id, 50, 100))  # the same text
+    assert writes == []
+
+    gate.set()
+    h.wait()
+    tags = [w for w in writes if w[0] == "item"]
+    assert ("item", iid, {"tags": ("done",)}) in tags
+    assert all(set(w[2]) == {"tags"} for w in tags)  # the name and the folder stay
+    assert h.states() == [gui.DONE, gui.DONE]
+    assert app.tree.item(iid, "values")[0] == row.src.name
+
+
+def test_the_bar_moves_only_by_one_percent_or_more(harness, monkeypatch, tmp_path):
+    h = harness()
+    gate = gate_convert(monkeypatch)
+    assert h.drop(image(tmp_path / "a.png", 8, 6), image(tmp_path / "b.png", 8, 6)) == "copy"
+    h.pump(converting(h))
+    app = h.app
+    row = next(row for row in app.rows.values() if row.state == gui.CONVERTING)
+    bar = []
+    app.progress_var.trace_add("write", lambda *args: bar.append(app.progress_var.get()))
+
+    app._handle(gui.Progress(row.id, 1, 100))  # 0.5 % of the run of 2 files
+    assert bar == []
+    app._handle(gui.Progress(row.id, 2, 100))
+    assert bar == [0.01]
+    app._handle(gui.Progress(row.id, 3, 100))
+    assert bar == [0.01]
+
+    gate.set()
+    h.wait()
+    assert app.progress_var.get() == 1.0
+
+
+def test_the_poll_waits_longer_after_it_reads_messages(harness, monkeypatch, tmp_path):
+    h = harness()
+    gate = gate_convert(monkeypatch)
+    assert h.drop(image(tmp_path / "a.png", 8, 6), image(tmp_path / "b.png", 8, 6)) == "copy"
+    h.pump(converting(h))  # the worker now waits at the gate, and sends nothing
+    app = h.app
+    row = next(row for row in app.rows.values() if row.state == gui.CONVERTING)
+    delays = []
+    after = h.root.after
+
+    def record_after(ms, func=None, *args):
+        delays.append(ms)
+        return after(ms, func, *args)
+
+    monkeypatch.setattr(h.root, "after", record_after)
+    for message in (None, gui.Progress(row.id, 50, 100)):
+        h.root.after_cancel(app._poll_id)
+        app._poll_id = None
+        if message is not None:
+            app.queue.put(message)
+        app._poll()
+    assert delays == [gui.POLL_MS, gui.BUSY_POLL_MS]
+    assert gui.status_text(app.rows[row.id]) == "Converting 50%"
+
+    gate.set()
+    h.wait()
+    assert h.states() == [gui.DONE, gui.DONE]
 
 
 @pytest.mark.parametrize("answer", ["replace", "skip", "cancel"])
