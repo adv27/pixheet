@@ -80,13 +80,9 @@ def test_open_path_on_windows_uses_the_file_association(tmp_path, monkeypatch, p
     assert popen.calls == []
 
 
-def test_open_folder_opens_the_parent_or_selects_the_file(tmp_path, popen):
-    _desktop.open_folder(tmp_path / "a.xlsx", platform="darwin")
-    _desktop.open_folder(tmp_path / "a.xlsx", platform="darwin", select=True)
-    assert popen.commands == [
-        ["open", str(tmp_path)],
-        ["open", "-R", str(tmp_path / "a.xlsx")],
-    ]
+def test_show_in_folder_on_macos_selects_the_file(tmp_path, popen):
+    _desktop.show_in_folder(tmp_path / "a.xlsx", platform="darwin")
+    assert popen.commands == [["open", "-R", str(tmp_path / "a.xlsx")]]
 
 
 def test_show_in_folder_on_windows_selects_the_file(tmp_path, popen, monkeypatch):

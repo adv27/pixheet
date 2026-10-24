@@ -317,7 +317,7 @@ def test_enable_dnd_can_be_turned_off(monkeypatch):
 
 
 @pytest.mark.parametrize(("platform", "opener"), [("linux", "xdg-open"), ("darwin", "open")])
-def test_open_folder_does_not_wait_for_the_opener(tmp_path, monkeypatch, platform, opener):
+def test_open_path_does_not_wait_for_the_opener(tmp_path, monkeypatch, platform, opener):
     started = []
     real_popen = subprocess.Popen
 
@@ -328,7 +328,7 @@ def test_open_folder_does_not_wait_for_the_opener(tmp_path, monkeypatch, platfor
 
     monkeypatch.setattr(_desktop.subprocess, "Popen", popen)
     t0 = time.monotonic()
-    gui.open_folder(tmp_path / "a.xlsx", platform=platform)
+    gui.open_path(tmp_path, platform=platform)
     assert time.monotonic() - t0 < 0.5
 
     [(command, kwargs)] = started
@@ -340,13 +340,13 @@ def test_open_folder_does_not_wait_for_the_opener(tmp_path, monkeypatch, platfor
     assert not waiter.is_alive()
 
 
-def test_open_folder_without_an_opener_raises(tmp_path, monkeypatch):
+def test_open_path_without_an_opener_raises(tmp_path, monkeypatch):
     def popen(command, **kwargs):
         raise FileNotFoundError(2, "No such file", command[0])
 
     monkeypatch.setattr(_desktop.subprocess, "Popen", popen)
     with pytest.raises(FileNotFoundError, match="xdg-open"):  # App shows it in a dialog
-        gui.open_folder(tmp_path / "a.xlsx", platform="linux")
+        gui.open_path(tmp_path, platform="linux")
 
 
 # --- The window ----------------------------------------------------------------------
@@ -2039,20 +2039,20 @@ def test_open_and_show_in_folder_buttons(harness, tmp_path, monkeypatch):
     opened = []
     shown = []
     monkeypatch.setattr(gui, "open_path", opened.append)
-    monkeypatch.setattr(gui, "open_folder", lambda path, select=False: shown.append((path, select)))
+    monkeypatch.setattr(gui, "show_in_folder", shown.append)
     h = harness()
     h.run(image(tmp_path / "a.png"))
     h.app.open_button.invoke()
     h.app.show_button.invoke()
     assert opened == [tmp_path / "a.xlsx"]
-    assert shown == [(tmp_path / "a.xlsx", True)]
+    assert shown == [tmp_path / "a.xlsx"]
 
 
-def test_open_folder_error_is_shown(harness, tmp_path, monkeypatch):
-    def fail(path, select=False):
+def test_show_in_folder_error_is_shown(harness, tmp_path, monkeypatch):
+    def fail(path):
         raise OSError("no file manager")
 
-    monkeypatch.setattr(gui, "open_folder", fail)
+    monkeypatch.setattr(gui, "show_in_folder", fail)
     h = harness()
     h.run(image(tmp_path / "a.png"))
     h.app.show_output()

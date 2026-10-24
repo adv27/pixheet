@@ -43,9 +43,9 @@ from PIL import UnidentifiedImageError
 from pixheet._desktop import (
     LatestValue,
     dnd_allowed,
-    open_folder,
     open_path,
     settings_path,
+    show_in_folder,
     system_theme,
 )
 from pixheet._image import RGB, check_max_side, parse_background
@@ -3055,7 +3055,7 @@ class App:
         """Show the .xlsx file of the selected done row in its folder."""
         row = self._open_target()
         if row is not None:
-            self._show(lambda: open_folder(row.dst, select=True))
+            self._show(lambda: show_in_folder(row.dst))
 
     def show_folder(self, folder: Path | None = None) -> None:
         """Open an output folder. Without ``folder``, open the only output folder."""

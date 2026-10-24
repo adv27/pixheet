@@ -147,18 +147,6 @@ def open_path(path: Path, platform: str | None = None) -> None:
     _spawn(["open" if platform == "darwin" else "xdg-open", os.fspath(path)])
 
 
-def open_folder(path: Path, platform: str | None = None, *, select: bool = False) -> None:
-    """Open the folder that holds ``path`` in the file manager of the system.
-
-    With ``select``, the file manager also selects ``path``, when the system can do that.
-    See :func:`show_in_folder`. Raise OSError when the system has no opener.
-    """
-    if select:
-        show_in_folder(path, platform)
-    else:
-        open_path(path.parent, platform)
-
-
 DEFAULT_WINDOWS_FOLDER = r"C:\Windows"
 
 
