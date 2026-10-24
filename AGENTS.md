@@ -26,7 +26,8 @@ Read [README.md](README.md) for usage, the Python API, and the Excel limits.
 | `scripts/` | `excel_check.ps1` (Excel COM check, Windows) and `sample_pixels.py`. |
 | `packaging/` | The build of `Pixheet.exe` and of the Linux app: the PyInstaller spec `pixheet.spec` (Windows and Linux), the Tcl and Tk trim `trim_tcltk.py`, the Linux checks `linux_guards.py`, the entry script, the icons `pixheet.ico` and `pixheet.png` and `make_icon.py`, `build.ps1` (Windows), `build.sh` (Linux), `check_exe.py`, `release_version.py` for the release job, and the hook `runner_job_started.ps1` for a later self-hosted runner. Read `packaging/README.md`. |
 | `.gitattributes` | Keeps LF line ends in `*.sh` files. |
-| `.github/workflows/` | `ci.yml`: tests and lint on GitHub-hosted Windows and Ubuntu. `release.yml`: the build of `Pixheet.exe` on GitHub-hosted Windows, the build of `Pixheet-linux-x86_64` in a Debian 11 container, and the release. |
+| `.github/workflows/` | `ci.yml`: tests and lint on GitHub-hosted Windows and Ubuntu, and the check of the version tag and of `CHANGELOG.md`. `release.yml`: the build of `Pixheet.exe` on GitHub-hosted Windows, the build of `Pixheet-linux-x86_64` in a Debian 11 container, and the release. |
+| `CHANGELOG.md` | The changes of each version. The release job uses the section of the version as the release notes. |
 
 Modules with a leading underscore are private. Do not import them from outside the
 package, except in tests and in `bench/bench.py`, which times each stage.
@@ -109,6 +110,8 @@ Run the tests, the lint, and the format check before you report a change as comp
   job of `release.yml` can write to the repository.
 - Before you move a job to a self-hosted runner, you MUST remove the `pull_request`
   trigger of its workflow. Read "Later: self-hosted runner" in `packaging/README.md`.
+- When you change `version` in `pyproject.toml`, add a section `## <version>` at the top
+  of `CHANGELOG.md`. Without it, the CI job "Check the version tag" fails.
 
 ## Commits
 

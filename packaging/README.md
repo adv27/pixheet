@@ -20,6 +20,7 @@ This folder holds the build of the desktop app in one file: `Pixheet.exe` for Wi
 | `build.ps1` | Builds the exe on Windows and tests it. |
 | `build.sh` | Builds the Linux app and tests it. Run it on Debian 11. |
 | `release_version.py` | Reads the version from `pyproject.toml` for the release job. It also stops a pull request that changes the version to a version with a tag. |
+| `release_notes.py` | Prints the release notes of a version: its section of `CHANGELOG.md`, then the download steps. The release job uses the output. The job "Check the version tag" of `ci.yml` runs it for each pull request. |
 | `release_plan.py` | Decides the steps of the release job from the tag and the release on GitHub: make the tag, publish the missing files, or do nothing. |
 | `check_exe.py` | Makes sure that a built app starts, and that it converts test images of 11 formats and modes correctly. It works on Windows and on Linux. |
 | `runner_job_started.ps1` | The job-started hook for a later self-hosted runner. It refuses each job that is not a trusted build. Read [Later: self-hosted runner](#later-self-hosted-runner). |
@@ -267,7 +268,7 @@ exe did not stop in 120 s. The output of the exe then shows the `ModuleNotFoundE
 
 | Workflow | Runner | Triggers | Steps |
 |---|---|---|---|
-| `.github/workflows/ci.yml` | GitHub-hosted `windows-latest` and `ubuntu-latest` | pull request, push to `master`, manual | tests with coverage, `ruff check`, `ruff format --check`, upload of the coverage and the test results to Codecov; for a pull request, the check of the version tag |
+| `.github/workflows/ci.yml` | GitHub-hosted `windows-latest` and `ubuntu-latest` | pull request, push to `master`, manual | tests with coverage, `ruff check`, `ruff format --check`, upload of the coverage and the test results to Codecov; for a pull request, the check of the version tag and of `CHANGELOG.md` |
 | `.github/workflows/release.yml` | GitHub-hosted `windows-2025`; GitHub-hosted `ubuntu-latest` with the container `debian:11` | pull request, push to `master`, push of a `v*` tag, manual | job `build-windows`: tests, `build.ps1`, upload of the artifact `Pixheet-windows-x64`; job `build-linux`: tests, `build.sh`, upload of the artifact `Pixheet-linux-x86_64`; job `release` |
 
 Each job runs on a new virtual machine. GitHub deletes the machine after the job. Thus
@@ -295,19 +296,32 @@ fast.
 
 ### Releases
 
-To publish a release, change `version` in `pyproject.toml`, run `uv lock`, and merge the
-pull request.
+To publish a release, do these steps in a pull request:
 
-After the build job passes on `master`, the release job reads the version that the build
+1. Add a section `## <version>` at the top of `CHANGELOG.md`, with the changes of the
+   version.
+2. Change `version` in `pyproject.toml`, and run `uv lock`.
+3. Merge the pull request.
+
+After both build jobs pass on `master`, the release job reads the version that the build
 job gives. If the tag `v<version>` does not exist yet, the job makes the tag at the
 commit of the push. Then it publishes six files in the GitHub release "Pixheet
-v<version>", with generated release notes:
+v<version>":
 
 - `Pixheet.exe`, `Pixheet.exe.sha256` and `THIRD-PARTY-NOTICES-windows-x64.txt`.
 - `Pixheet-linux-x86_64`, `Pixheet-linux-x86_64.sha256` and
   `THIRD-PARTY-NOTICES-linux-x86_64.txt`.
 
 The job waits for both build jobs. When one build fails, the job does not run.
+
+The release notes have three parts:
+
+1. The section of the version in `CHANGELOG.md`.
+2. The download steps of `release_notes.py`.
+3. The list of the pull requests. `gh release create --generate-notes` makes it.
+
+The job writes the notes before it makes the tag. Thus a missing section stops the job
+before the tag.
 
 When the tag exists, `release_plan.py` compares the commit of the tag with the commit of
 the push:
@@ -330,12 +344,14 @@ These rules apply to the release job:
 - A tag that the job makes with `GITHUB_TOKEN` does not start a new workflow run. This
   is correct, because the job publishes the release itself.
 
-A pull request that changes the version fails in `ci.yml` when the tag `v<version>`
-exists already. Without this check, the merge does not publish a release, and nobody
-sees the problem.
+For each pull request, the job "Check the version tag" of `ci.yml` makes these checks:
+
+- The tag `v<version>` must not exist yet when the pull request changes the version.
+  Without this check, the merge does not publish a release, and nobody sees the problem.
+- `CHANGELOG.md` must have a section for the version in `pyproject.toml`.
 
 You can also push a tag by hand: `git tag v0.2.0`, then `git push origin v0.2.0`. Then
-the release job publishes the exe of the tag. The tag must agree with the version in
+the release job publishes the apps of the tag. The tag must agree with the version in
 `pyproject.toml`, for example `v0.1.0` for version `0.1.0`.
 
 The release job never replaces a file of a published release, because users can have

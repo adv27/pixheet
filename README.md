@@ -166,8 +166,14 @@ build the folder `dist\Pixheet\`. The folder starts faster, because the exe does
 extract itself each time. [packaging/README.md](packaging/README.md) gives more data
 about the build and the CI.
 
-To publish a release, change `version` in `pyproject.toml`, run `uv lock`, and merge the
-pull request.
+To publish a release, do these steps in a pull request:
+
+1. Add a section `## <version>` at the top of [CHANGELOG.md](CHANGELOG.md).
+2. Change `version` in `pyproject.toml`, and run `uv lock`.
+3. Merge the pull request.
+
+The release notes come from the section of the version in `CHANGELOG.md`. Read
+"Releases" in [packaging/README.md](packaging/README.md#releases).
 
 The exe has all the features of the app, but it does not have these parts:
 
