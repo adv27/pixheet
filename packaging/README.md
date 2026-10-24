@@ -344,6 +344,17 @@ These rules apply to the release job:
 - A tag that the job makes with `GITHUB_TOKEN` does not start a new workflow run. This
   is correct, because the job publishes the release itself.
 
+GitHub keeps only one waiting run of `release.yml` for `master`. Thus three quick pushes
+to `master` have this result:
+
+1. The run of the first push starts, and the run of the second push waits.
+2. The third push cancels the waiting run of the second push.
+3. The run of the third push releases the same version at its own, later commit.
+
+Thus the tag of a version can be at a later commit than the change of the version. A
+version that a newer version replaces before its run starts gets no release. To tag a
+version at a given commit, push the tag `v<version>` at that commit.
+
 For each pull request, the job "Check the version tag" of `ci.yml` makes these checks:
 
 - The tag `v<version>` must not exist yet when the pull request changes the version.
