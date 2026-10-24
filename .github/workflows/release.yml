@@ -38,6 +38,13 @@ on:
 
 permissions: {}
 
+# One run at a time for each ref. A new run of a pull request cancels the old run. A push
+# to master never cancels a run that has started. But GitHub keeps only one waiting run in
+# a group: a third quick push cancels the waiting run of the second push. The run of the
+# third push then releases the version at its own, later commit. Thus the tag of a version
+# can be at a later commit than the change of the version. A version that a newer version
+# replaces before its run starts gets no release. To tag a version at a different commit,
+# push the tag v<version> at that commit.
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
@@ -199,9 +206,11 @@ jobs:
     timeout-minutes: 10
     permissions:
       contents: write # make the tag, create the release and upload the files
-    # One release job at a time, for all refs. When two merges come quickly, the second job
-    # waits. When the two merges have the same version, the second job finds the tag of the
-    # first job at a different commit, and does nothing.
+    # One release job at a time, for all refs, for example a push to master and a push of a
+    # tag. The group never cancels a job that has started. When two merges come quickly, the
+    # second job waits. When the two merges have the same version, the second job finds the
+    # tag of the first job at a different commit, and does nothing. Only one job can wait:
+    # read the comment at the concurrency of the workflow.
     concurrency:
       group: ${{ github.workflow }}-release
       cancel-in-progress: false

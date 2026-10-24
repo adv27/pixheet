@@ -1434,3 +1434,13 @@ def test_release_job_uses_the_release_plan():
     assert "persist-credentials: false" in job
     # The decision comes before the downloads, so that "skip" downloads nothing.
     assert job.index("release_plan.py tag") < job.index("Download the Windows app")
+
+
+def test_release_runs_never_cancel_a_push():
+    """A cancelled release job can leave a tag without a release."""
+    text = (WORKFLOWS / "release.yml").read_text(encoding="utf-8")
+    top = text[: text.index("\njobs:\n")]
+    assert "  cancel-in-progress: ${{ github.event_name == 'pull_request' }}\n" in top
+    job = text[text.index("\n  release:\n") :]
+    assert "      group: ${{ github.workflow }}-release\n" in job
+    assert "      cancel-in-progress: false\n" in job
