@@ -101,6 +101,9 @@ BODY_PADDING = 16
 """The space at the left and at the right of the window content, in pixels."""
 SUMMARY_SAMPLE = "Stopped. Converted 9,999 of 99,999 files. 9,999 failed. 9,999 skipped."
 """A long progress line after a run. The minimum width of the window includes it."""
+REASON_SAMPLE = "Failed: the reason\nof the failure."
+"""The status of a failed row in the details. A long reason uses two lines. The minimum
+height of the window includes them."""
 POLL_MS = 50
 """Time between two reads of the message queue, in milliseconds."""
 BUSY_POLL_MS = 250
@@ -1564,7 +1567,9 @@ class App:
         The size that the widgets need changes with the theme, the fonts, and the screen
         resolution. A smaller window cuts off a part of the options row. The size includes
         the list, the note bar and the buttons after a stopped run, so the list keeps some
-        rows at the minimum size.
+        rows at the minimum size. The size also includes three lines of details: the path,
+        and two lines for the reason of a failed row. After a run with failed rows, the
+        app selects the first failed row.
 
         The button row can show all its buttons at the same time, for example when the
         list has waiting rows, failed rows, two output folders and a selected row. Thus
@@ -1584,8 +1589,9 @@ class App:
         texts = {button: button.cget("text") for button in samples}
         for button, text in samples.items():
             button.configure(text=text)
-        title = self.title_var.get()
+        title, status = self.title_var.get(), self.status_var.get()
         self.title_var.set(SUMMARY_SAMPLE)
+        self.status_var.set(REASON_SAMPLE)
         widgets = (
             self.list_frame,
             self.note,
@@ -1607,6 +1613,7 @@ class App:
         for button, text in texts.items():
             button.configure(text=text)
         self.title_var.set(title)
+        self.status_var.set(status)
         self._min_size = (max(MIN_WIDTH, width), max(MIN_HEIGHT, height))
         self.root.minsize(*self._min_size)
 

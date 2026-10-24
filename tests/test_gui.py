@@ -3620,9 +3620,12 @@ def test_a_long_file_name_in_the_progress_line_does_not_make_the_window_wider(th
         root.destroy()
 
 
+@pytest.mark.parametrize("selected", ["done", "failed"])
 @pytest.mark.parametrize("percent", [100, 150])
 @pytest.mark.parametrize("themed", [True, False])
-def test_the_list_shows_five_rows_with_a_note_at_the_minimum_size(themed, percent, tmp_path):
+def test_the_list_shows_five_rows_with_a_note_at_the_minimum_size(
+    themed, percent, selected, tmp_path
+):
     if themed:
         pytest.importorskip("sv_ttk")
     root = new_root()
@@ -3635,8 +3638,11 @@ def test_the_list_shows_five_rows_with_a_note_at_the_minimum_size(themed, percen
         for i in range(4, 21):
             src = tmp_path / "e" / f"IMG_{i}.png"
             app._insert_row(gui.Row(i, src, src.with_suffix(".xlsx")))
+        app._update_row(replace(app.rows[2], kind="missing"))  # a reason of two lines
         app._refresh_all()
-        app.tree.selection_set("1")  # a done row: the details use two lines
+        # A done row: the details use two lines. A failed row with a long reason: three
+        # lines. After a run with failed rows, the app selects the first failed row.
+        app.tree.selection_set("1" if selected == "done" else "2")
         app._on_select()
         width, height = root.minsize()
         root.geometry(f"{width}x{height}")
@@ -3645,11 +3651,14 @@ def test_the_list_shows_five_rows_with_a_note_at_the_minimum_size(themed, percen
         assert app.note.winfo_ismapped()
         assert app.path_label.winfo_ismapped()
         assert app.status_label.winfo_ismapped()
+        assert app.status_var.get().count("\n") == (0 if selected == "done" else 1)
         app.tree.yview_moveto(0)
         root.update()
         fifth = app.tree.get_children()[4]
         _x, y, _width, h = app.tree.bbox(fifth)
         assert y + h <= app.tree.winfo_height(), (y, h, app.tree.winfo_height())
+        # The bottom line of the fifth row is in the cells, not in the border of the list.
+        assert app.tree.identify_row(y + h - 1) == fifth
         app.dispose()
     finally:
         root.destroy()
