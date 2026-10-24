@@ -661,7 +661,10 @@ def test_one_folder_hides_the_folder_column(harness, tmp_path):
     h = harness()
     folder = tmp_path / "Đà Lạt"
     h.run(image(folder / "a.png"), image(folder / "b.png"))
-    assert h.app.count_var.get() == f"2 images in {middle_ellipsis(str(folder), 48)}"
+    # The folder gets "…" by the free width in pixels, so the test does not give the text.
+    count = h.app.count_var.get()
+    assert count.startswith(f"2 images in {folder.anchor}")
+    assert count.endswith(r"\Đà Lạt" if sys.platform == "win32" else "/Đà Lạt")
     assert tuple(h.app.tree.cget("displaycolumns")) == ("name", "status")
     assert h.app.folder_open_button.winfo_manager() == "grid"
     assert h.app.folders_button.winfo_manager() == ""
@@ -3283,6 +3286,48 @@ def show_at_the_minimum_size(themed):
     root.deiconify()
     root.update()
     return root, app
+
+
+@pytest.mark.parametrize("themed", [True, False])
+def test_the_count_line_and_the_folder_heading_fit_at_the_minimum_size(themed, tmp_path):
+    root, app = show_at_the_minimum_size(themed)
+    try:
+        # All images in one folder: the count line names the folder.
+        folder = tmp_path / ("M" * 44)
+        for i in (1, 2):
+            src = folder / f"IMG_{i}.png"
+            app._insert_row(gui.Row(i, src, src.with_suffix(".xlsx")))
+        app._refresh_all()
+        root.update()
+        label, button = app.count_label, app.list_browse_button
+        text = app.count_var.get()
+        assert text.startswith("2 images in ")
+        assert "…" in text
+        assert app._strong_font.measure(text) <= label.winfo_width(), text
+        assert label.winfo_x() + label.winfo_width() + 6 <= button.winfo_x()
+        # Three folders: the heading of the Folder column names the folder above them.
+        app.clear_list()
+        trip = tmp_path / "Chuyến đi Phú Quốc tháng Mười" / "Photos"
+        for i, name in enumerate(("Ngày 1", "Ngày 2", "Ngày 3"), start=10):
+            src = trip / name / "IMG.png"
+            app._insert_row(gui.Row(i, src, src.with_suffix(".xlsx")))
+        app._refresh_all()
+        root.update()
+        font = gui.style_font(root, "Treeview.Heading")
+        headings = []
+        for size in ("", "1200x600"):
+            if size:
+                root.geometry(size)
+                root.update()
+            heading = app.tree.heading("folder", "text")
+            assert heading.startswith("Folder (in ")
+            assert heading.endswith("tháng Mười)")  # the closing ")" stays
+            assert font.measure(heading) < int(app.tree.column("folder", "width")), heading
+            headings.append(heading)
+        assert len(headings[1]) > len(headings[0])  # a wider column shows more
+        app.dispose()
+    finally:
+        root.destroy()
 
 
 @pytest.mark.parametrize("themed", [True, False])

@@ -375,6 +375,10 @@ def common_folder(folders: Sequence[Path]) -> Path | None:
         return None
 
 
+FOLDER_IN = "Folder (in "
+"""The start of the heading of the Folder column when the folders have a common folder."""
+
+
 def folder_labels(folders: Sequence[Path]) -> tuple[str, dict[str, str]]:
     r"""Return the heading of the Folder column, and a short label for each folder.
 
@@ -383,7 +387,8 @@ def folder_labels(folders: Sequence[Path]) -> tuple[str, dict[str, str]]:
     folder. For example, ``D:\Photos\2023`` and ``D:\Photos\2024\Da Lat`` give the
     heading ``Folder (in D:\)`` and the labels ``Photos\2023`` and ``Photos\2024\Da Lat``.
     When the common folder is a drive or a share, the labels start below it. Without a
-    common folder, the heading is ``Folder`` and the labels are the full paths.
+    common folder, the heading is ``Folder`` and the labels are the full paths. The
+    heading has the full folder. The window shortens it to the width of the column.
     """
     unique: dict[str, Path] = {}
     for folder in folders:
@@ -402,7 +407,7 @@ def folder_labels(folders: Sequence[Path]) -> tuple[str, dict[str, str]]:
         for key, folder in unique.items():
             relative = os.path.relpath(folder, root)
             labels[key] = root.name if relative == os.curdir else str(root.name / Path(relative))
-    return f"Folder (in {middle_ellipsis(where, 40)})", labels
+    return f"{FOLDER_IN}{where})", labels
 
 
 def middle_ellipsis(text: str, limit: int) -> str:

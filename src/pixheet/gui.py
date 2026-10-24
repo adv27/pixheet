@@ -54,6 +54,7 @@ from pixheet._plan import (
     ELLIPSIS,
     FAILED,
     FINISHED_STATES,
+    FOLDER_IN,
     NOT_AN_IMAGE,
     SEP,
     SKIPPED,
@@ -115,6 +116,8 @@ STATUS_WIDTH = 220
 """The width of the Status column at 100 % scale, in pixels."""
 STATUS_PADDING = 12
 """The space at the two sides of the text in a cell, at 100 % scale, in pixels."""
+COUNT_GAP = 8
+"""The space between the count line and the Add files button, in pixels."""
 LINE_PATH_LIMITS = (40, 28, 16)
 """The lengths of the paths in line 2 of the details. A long reason uses a shorter one."""
 ARROW = " → "
@@ -1269,9 +1272,15 @@ class App:
         head.grid(row=0, column=0, columnspan=2, sticky="ew")
         head.columnconfigure(0, weight=1)
         self.count_var = tk.StringVar(self.root, value="")
-        ttk.Label(head, textvariable=self.count_var, font=self._strong_font).grid(
-            row=0, column=0, sticky="w"
+        # A width of one character: _fit_count_line() makes the text fit the free width.
+        self.count_label = ttk.Label(
+            head, textvariable=self.count_var, font=self._strong_font, width=1
         )
+        self.count_label.grid(row=0, column=0, sticky="ew", padx=(0, COUNT_GAP))
+        self._count_line: tuple[str, Path | None] = ("", None)
+        """The count line, and the folder at its end that can get "…"."""
+        for sequence in ("<Configure>", "<Map>"):
+            head.bind(sequence, self._fit_count_line, add="+")
         self.list_browse_button = ttk.Button(head, text="Add files...", command=self.browse)
         self.list_browse_button.grid(row=0, column=1, padx=(0, 6))
         self.list_folder_button = ttk.Button(head, text="Add folder...", command=self.browse_folder)
@@ -1298,7 +1307,12 @@ class App:
         bar.grid(row=1, column=1, sticky="ns", padx=(4, 0))
         self.tree = tree
         self._columns: tuple[str, ...] = ("name", "folder", "status")
+        self._heading = "Folder"
+        """The full heading of the Folder column. _fit_heading() shortens the folder in it."""
         self.scrollbar = bar
+        # The tree sets the widths of the columns when it draws, after this event.
+        for sequence in ("<Configure>", "<Map>"):
+            tree.bind(sequence, lambda event: self.root.after_idle(self._fit_heading), add="+")
         tree.bind("<<TreeviewSelect>>", self._on_select)
         tree.bind("<Double-1>", self._on_double_click)
         tree.bind("<Return>", lambda event: self.activate())
@@ -2396,20 +2410,51 @@ class App:
         heading, labels = folder_labels([row.src.parent for row in self.rows.values()])
         if len(labels) == 1:
             folder = next(iter(self.rows.values())).src.parent
-            where = middle_ellipsis(str(folder), 48)
-            self.count_var.set(f"{_plural(count, 'image')} in {where}")
+            self._count_line = (f"{_plural(count, 'image')} in ", folder)
             columns: tuple[str, ...] = ("name", "status")
         else:
-            self.count_var.set(f"{_plural(count, 'image')} from {len(labels):,} folders")
+            self._count_line = (f"{_plural(count, 'image')} from {len(labels):,} folders", None)
             columns = ("name", "folder", "status")
-        self.tree.heading("folder", text=heading)
+        self._fit_count_line()
+        self._heading = heading
         if tuple(self.tree.cget("displaycolumns")) != columns:
             self.tree.configure(displaycolumns=columns)
             self._fit_columns(columns)
+        self._fit_heading()
         if labels != self.labels:
             self.labels = labels
             for row in self.rows.values():
                 self.tree.set(str(row.id), "folder", labels.get(path_key(row.src.parent), ""))
+
+    def _fit_count_line(self, event: Any = None) -> None:
+        """Show the count line. A folder in it gets "…" so that it ends before the buttons."""
+        text, folder = self._count_line
+        if folder is not None:
+            head = self.count_label.master
+            if head.winfo_width() > 1:
+                buttons = self.list_browse_button, self.list_folder_button
+                room = head.winfo_width() - sum(b.winfo_reqwidth() for b in buttons)
+                room -= COUNT_GAP + 6  # the space after the label and between the buttons
+                text = fit_text(self._strong_font, room, str(folder), prefix=text)
+            else:  # the list does not show yet
+                text += middle_ellipsis(str(folder), 48)
+        _set_if_changed(self.count_var, text)
+
+    def _fit_heading(self, event: Any = None) -> None:
+        """Show the heading of the Folder column. The folder in it fits the column."""
+        heading = self._heading
+        with contextlib.suppress(tk.TclError):  # after a resize, the window can be gone
+            if heading.startswith(FOLDER_IN) and heading.endswith(")"):
+                where = heading[len(FOLDER_IN) : -1]
+                if self.tree.winfo_ismapped():
+                    font = style_font(self.root, "Treeview.Heading")
+                    room = int(self.tree.column("folder", "width"))
+                    room -= round(STATUS_PADDING * self._scale)
+                    heading = fit_text(font, room, where, prefix=FOLDER_IN, suffix=")")
+                else:  # the list does not show yet
+                    heading = f"{FOLDER_IN}{middle_ellipsis(where, 40)})"
+            if self.tree.heading("folder", "text") != heading:
+                self.tree.heading("folder", text=heading)
 
     def _fit_columns(self, columns: Sequence[str]) -> None:
         """Give the width of a hidden Folder column to the Name column, and back.

@@ -621,11 +621,11 @@ def test_folder_labels_without_a_common_folder_are_full_paths():
 
 
 @windows
-def test_folder_labels_shorten_a_long_heading():
+def test_folder_labels_give_the_full_folder_in_a_long_heading():
+    # The window shortens the heading to the width of the column, in pixels.
     folder = Path("D:\\" + "\\".join(f"level {i}" for i in range(12)))
     heading, labels = folder_labels([folder / "a", folder / "b"])
-    assert len(heading) <= len("Folder (in )") + 40
-    assert heading.endswith("level 10)")
+    assert heading == f"Folder (in {folder.parent})"
     assert labels[path_key(folder / "a")] == r"level 11\a"
 
 
