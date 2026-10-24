@@ -9,7 +9,9 @@ section in CHANGELOG.md cannot get to master. Usage:
 
 The default CHANGELOG is ``CHANGELOG.md``. A section starts at a line ``## VERSION`` or
 ``## [VERSION]``, and stops at the next line that starts with ``## ``. When the file has
-no section for VERSION, or the section is empty, the exit code is 1.
+no section for VERSION, or the section is empty, the exit code is 1. The exit code is
+also 1 when the script cannot read CHANGELOG. The error goes to stderr as an ``::error::``
+line, because the workflows send stdout to a file.
 
 The script needs only the standard library. It must also run on Python 3.12, because the
 release job runs it with the Python of the Ubuntu runner.
@@ -107,11 +109,17 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("version", help="the version, for example 0.1.0")
     parser.add_argument("changelog", nargs="?", type=Path, default=Path("CHANGELOG.md"))
     args = parser.parse_args(argv)
-    text = args.changelog.read_text(encoding="utf-8")
+    # The callers send stdout to a file, so the error goes to stderr. The runner reads the
+    # ::error:: command on both streams.
+    try:
+        text = args.changelog.read_text(encoding="utf-8")
+    except OSError as e:
+        print(f"::error::Cannot read {args.changelog}: {e.strerror or e}", file=sys.stderr)
+        return 1
     try:
         notes = release_notes(text, args.version)
     except NotesError as e:
-        print(f"::error::{e}")
+        print(f"::error::{e}", file=sys.stderr)
         return 1
     sys.stdout.write(notes)
     return 0

@@ -1526,7 +1526,19 @@ def test_release_notes_command(tmp_path, capsys):
     assert release_notes.main(["0.2.0", str(changelog)]) == 0
     assert capsys.readouterr().out.startswith("### Added\n\n- Item two.\n\n## Downloads\n")
     assert release_notes.main(["0.3.0", str(changelog)]) == 1
-    assert capsys.readouterr().out.startswith("::error::CHANGELOG.md has no section")
+    # The workflows send stdout to a file. Thus the error must go to stderr.
+    out, err = capsys.readouterr()
+    assert out == ""
+    assert err.startswith("::error::CHANGELOG.md has no section")
+
+
+def test_release_notes_command_without_a_changelog(tmp_path, capsys):
+    missing = tmp_path / "CHANGELOG.md"
+    assert release_notes.main(["0.1.0", str(missing)]) == 1
+    out, err = capsys.readouterr()
+    assert out == ""
+    assert err.startswith(f"::error::Cannot read {missing}: ")
+    assert err.count("\n") == 1
 
 
 def test_changelog_has_the_version_of_pyproject():
