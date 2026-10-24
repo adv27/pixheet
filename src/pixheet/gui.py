@@ -26,7 +26,7 @@ import sys
 import threading
 import time
 from collections.abc import Callable, Collection, Iterable, Iterator, Mapping, Sequence
-from dataclasses import dataclass, replace
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Any
 
@@ -122,6 +122,8 @@ STATUS_PADDING = 12
 """The space at the two sides of the text in a cell, at 100 % scale, in pixels."""
 COUNT_GAP = 8
 """The space between the count line and the Add files button, in pixels."""
+WAITING_AS = f"Waiting{SEP}as "
+"""The start of the status of a waiting row with a tagged output."""
 LINE_PATH_LIMITS = (40, 28, 16)
 """The lengths of the paths in line 2 of the details. A long reason uses a shorter one."""
 ARROW = " → "
@@ -868,6 +870,19 @@ def fit_text(
     return best
 
 
+@dataclass(slots=True)
+class _StatusFit:
+    """The font and the width in pixels for the text of a Status cell, and the cells.
+
+    ``cells`` maps (status, tagged) to the text of the cell. ``tagged`` is True for a
+    waiting row with a tagged output.
+    """
+
+    font: Any
+    room: int
+    cells: dict[tuple[str, bool], str] = field(default_factory=dict)
+
+
 class ReplaceDialog:
     """Ask one time what to do with the output files of a drop that exist.
 
@@ -1101,6 +1116,8 @@ class App:
         self.failed_only = False
         self.labels: dict[str, str] = {}
         self._status_failed = False
+        self._status_fit: _StatusFit | None = None
+        """The font, the width and the cells of the Status column during a batch of rows."""
 
         # The dialogs and the system. The tests replace them, because a modal dialog
         # stops the test.
@@ -1677,14 +1694,40 @@ class App:
         in the middle of the output name, so that the end, for example "png).xlsx", tells
         two rows apart. The details line shows the full name.
         """
+        tagged = row.state == WAITING and text == f"{WAITING_AS}{row.dst.name}"
+        fit = self._status_fit or self._new_status_fit()
+        key = (text, tagged)
+        cell = fit.cells.get(key)
+        if cell is None:
+            if tagged:
+                cell = fit_text(fit.font, fit.room, row.dst.name, middle_cut, prefix=WAITING_AS)
+            else:
+                cell = fit_text(fit.font, fit.room, text, end_ellipsis)
+            fit.cells[key] = cell
+        return cell
+
+    def _new_status_fit(self) -> _StatusFit:
         font = style_font(self.root, "Treeview")
         room = int(self.tree.column("status", "width")) - round(STATUS_PADDING * self._scale)
-        if font.measure(text) <= room:
-            return text
-        prefix = f"Waiting{SEP}as "
-        if row.state == WAITING and text == f"{prefix}{row.dst.name}":
-            return fit_text(font, room, row.dst.name, middle_cut, prefix=prefix)
-        return fit_text(font, room, text, end_ellipsis)
+        return _StatusFit(font, room)
+
+    @contextlib.contextmanager
+    def _status_batch(self) -> Iterator[None]:
+        """Fit the Status cells of a batch of rows with one font and one width.
+
+        Each measure of a text takes about 20 us. Most rows of a batch have the same
+        status, for example "Waiting". Thus in a batch, the app measures each text only
+        one time. The code in a batch must not show a dialog. During a dialog, the user
+        can change the width of the column.
+        """
+        if self._status_fit is not None:  # a batch in a batch
+            yield
+            return
+        self._status_fit = self._new_status_fit()
+        try:
+            yield
+        finally:
+            self._status_fit = None
 
     def _count(self, row: Row, old: str | None, new: str | None) -> None:
         """Count a change of the state of ``row`` in the tallies and the done folders."""
@@ -1918,12 +1961,13 @@ class App:
             return None
         if self.failed_only:
             self._set_failed_only(False)
-        queued = self._apply(earlier, decision)
-        for row in new_rows:
-            new = decision(row)
-            self._insert_row(new)
-            queued.append(new)
-        queued += self._apply(again, decision, to_end=True)
+        with self._status_batch():
+            queued = self._apply(earlier, decision)
+            for row in new_rows:
+                new = decision(row)
+                self._insert_row(new)
+                queued.append(new)
+            queued += self._apply(again, decision, to_end=True)
         self._refresh_list()
         self._enqueue(queued, options, wait=wait)
         return len(queued)
@@ -2021,13 +2065,14 @@ class App:
         removed in the meantime.
         """
         result = []
-        for row in rows:
-            current = self.rows.get(row.id)
-            if current is None:
-                continue
-            new = decision(replace(current, dst=row.dst))
-            self._update_row(new, to_end=to_end)
-            result.append(new)
+        with self._status_batch():
+            for row in rows:
+                current = self.rows.get(row.id)
+                if current is None:
+                    continue
+                new = decision(replace(current, dst=row.dst))
+                self._update_row(new, to_end=to_end)
+                result.append(new)
         return result
 
     # "Save to"
@@ -2065,9 +2110,10 @@ class App:
         ids = {row.id for row in targets}
         taken = {output_key(row.dst) for row in self.rows.values() if row.id not in ids}
         outputs = assign_outputs([row.src for row in targets], folder, taken)
-        for row, dst in zip(targets, outputs, strict=True):
-            if dst != row.dst:
-                self._update_row(replace(row, dst=dst))
+        with self._status_batch():
+            for row, dst in zip(targets, outputs, strict=True):
+                if dst != row.dst:
+                    self._update_row(replace(row, dst=dst))
         self._refresh_details()
 
     # The run

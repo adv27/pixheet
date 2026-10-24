@@ -1048,6 +1048,63 @@ def test_a_long_status_fits_its_cell_with_an_ellipsis(themed, tmp_path):
         root.destroy()
 
 
+class CountingFont:
+    """A font that records the texts that the app measures."""
+
+    def __init__(self, font):
+        self.font = font
+        self.texts = []
+
+    def measure(self, text):
+        self.texts.append(text)
+        return self.font.measure(text)
+
+
+def test_a_batch_of_rows_measures_each_status_text_one_time(harness, monkeypatch, tmp_path):
+    h = harness()
+    app = h.app
+    monkeypatch.setattr(app, "_enqueue", lambda rows, options, **kw: None)  # the rows wait
+    font = CountingFont(gui.style_font(h.root, "Treeview"))
+    lookups = []
+    real_style_font = gui.style_font
+
+    def style_font(root, style):
+        if style != "Treeview":
+            return real_style_font(root, style)
+        lookups.append(style)
+        return font
+
+    monkeypatch.setattr(gui, "style_font", style_font)
+    assert app._add_images([tmp_path / "a" / f"photo{i}.png" for i in range(100)]) == 100
+    assert len(lookups) == 1
+    assert font.texts == ["Waiting"]
+
+    # The second drop checks the 100 rows that wait again, in a batch in the batch.
+    lookups.clear()
+    font.texts.clear()
+    assert app._add_images([tmp_path / "b" / f"photo{i}.png" for i in range(100)]) == 200
+    assert len(lookups) == 1
+    assert font.texts == ["Waiting"]
+    assert {app.tree.set(str(row.id), "status") for row in app.rows.values()} == {"Waiting"}
+
+    # A change of "Save to" gives 200 new outputs, with one lookup of the font.
+    lookups.clear()
+    app.set_out_dir(tmp_path / "out")
+    assert len(lookups) == 1
+    assert app._status_fit is None
+    for row in app.rows.values():
+        assert app.tree.set(str(row.id), "status") == gui.status_text(row)
+
+    # Out of a batch, the app uses the width that the column has now.
+    app.tree.column("status", width=round(120 * app._scale))
+    row = next(iter(app.rows.values()))
+    app._update_row(replace(row, state="failed", error="x" * 60, kind="other"))
+    assert len(lookups) == 2
+    cell = app.tree.set(str(row.id), "status")
+    assert cell.startswith("✕ Failed: xxx")
+    assert font.measure(cell) <= round(120 * app._scale) - round(gui.STATUS_PADDING * app._scale)
+
+
 def test_the_bar_moves_only_by_one_percent_or_more(harness, monkeypatch, tmp_path):
     h = harness()
     gate = gate_convert(monkeypatch)
