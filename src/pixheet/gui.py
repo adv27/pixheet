@@ -418,24 +418,19 @@ def set_icon(root: tk.Tk, platform: str | None = None) -> bool:
     other systems, Tk reads the PNG file. When the app does not find the icon file, the
     window keeps the Tk icon.
     """
-    if (platform or sys.platform) == "win32":
-        path = icon_path()
-        if path is None:
-            return False
-        try:
-            root.iconbitmap(default=os.fspath(path))
-        except tk.TclError:
-            return False
-        return True
-    path = icon_path(ICON_PNG)
+    windows = (platform or sys.platform) == "win32"
+    path = icon_path() if windows else icon_path(ICON_PNG)
     if path is None:
         return False
     try:
-        image = tk.PhotoImage(master=root, file=os.fspath(path))
-        root.iconphoto(True, image)
+        if windows:
+            root.iconbitmap(default=os.fspath(path))
+        else:
+            image = tk.PhotoImage(master=root, file=os.fspath(path))
+            root.iconphoto(True, image)
+            root._pixheet_icon = image  # Tk deletes an image when Python has no reference to it
     except tk.TclError:
         return False
-    root._pixheet_icon = image  # Tk deletes an image when Python has no reference to it
     return True
 
 
