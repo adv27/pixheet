@@ -3,6 +3,7 @@
 import gc
 import importlib.util
 import os
+import re
 import subprocess
 import sys
 import threading
@@ -3431,6 +3432,47 @@ def test_replace_dialog_for_one_file_without_other_images(harness, tmp_path):
     assert dialog.top.bind("<Escape>")
     h.root.after(50, dialog.buttons["replace"].invoke)
     assert dialog.run() == "replace"
+
+
+@pytest.mark.parametrize(
+    ("main", "screen", "expected"),
+    [
+        # A second monitor at the left of the primary monitor has negative x values.
+        ((-1600, 100), (-1920, 0, 4480, 1440), lambda dx, dy, w, h: (-1600 + dx, 100 + dy)),
+        ((300, -900), (0, -1080, 2560, 2520), lambda dx, dy, w, h: (300 + dx, -900 + dy)),
+        # The dialog stays on the screen, also when the main window is at the edge.
+        ((2400, 1400), (0, 0, 2560, 1440), lambda dx, dy, w, h: (2560 - w, 1440 - h)),
+        # The test windows and the hidden mode: the dialog stays off the screen too.
+        ((-32000, -32000), (0, 0, 2560, 1440), lambda dx, dy, w, h: (-32000 + dx, -32000 + dy)),
+    ],
+)
+def test_replace_dialog_shows_on_the_monitor_of_the_main_window(
+    harness, tmp_path, monkeypatch, main, screen, expected
+):
+    h = harness()
+    root, app = h.root, h.app
+    values = {
+        "winfo_rootx": main[0],
+        "winfo_rooty": main[1],
+        "winfo_width": 800,
+        "winfo_height": 600,
+        "winfo_vrootx": screen[0],
+        "winfo_vrooty": screen[1],
+        "winfo_vrootwidth": screen[2],
+        "winfo_vrootheight": screen[3],
+    }
+    for name, value in values.items():
+        monkeypatch.setattr(root, name, lambda value=value: value)
+    question = ReplaceQuestion(existing_outputs(tmp_path, 3), other_count=2)
+    dialog = gui.ReplaceDialog(
+        root, question, heading_font=app._big_font, strong_font=app._strong_font
+    )
+    w, h = dialog.top.winfo_reqwidth(), dialog.top.winfo_reqheight()
+    dx, dy = (800 - w) // 2, max(20, (600 - h) // 3)
+    match = re.search(r"\+(-?\d+)\+(-?\d+)$", dialog.top.geometry())
+    assert match is not None
+    assert (int(match[1]), int(match[2])) == expected(dx, dy, w, h)
+    dialog.close("cancel")
 
 
 class CharFont:

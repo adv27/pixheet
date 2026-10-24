@@ -886,9 +886,29 @@ class ReplaceDialog:
         top.protocol("WM_DELETE_WINDOW", lambda: self.close("cancel"))
         top.bind("<Map>", self._on_map, add="+")
         top.update_idletasks()
-        x = root.winfo_rootx() + (root.winfo_width() - top.winfo_reqwidth()) // 2
-        y = root.winfo_rooty() + max(20, (root.winfo_height() - top.winfo_reqheight()) // 3)
-        top.geometry(f"+{max(0, x)}+{max(0, y)}")
+        x, y = self._position(root, top)
+        top.geometry(f"+{x}+{y}")
+
+    @staticmethod
+    def _position(root: tk.Tk, top: tk.Toplevel) -> tuple[int, int]:
+        """Return the position of the dialog: centered on the main window, near its top.
+
+        A monitor at the left of the primary monitor, or above it, has negative values.
+        Thus the dialog stays on the screen of all monitors (the virtual screen), not in
+        the area from 0 to the right. A main window off the screen, for example in the
+        hidden mode, keeps its dialog off the screen too.
+        """
+        main_x, main_y = root.winfo_rootx(), root.winfo_rooty()
+        width, height = top.winfo_reqwidth(), top.winfo_reqheight()
+        x = main_x + (root.winfo_width() - width) // 2
+        y = main_y + max(20, (root.winfo_height() - height) // 3)
+        left, top_edge = root.winfo_vrootx(), root.winfo_vrooty()
+        right = left + root.winfo_vrootwidth()
+        bottom = top_edge + root.winfo_vrootheight()
+        if left <= main_x < right and top_edge <= main_y < bottom:
+            x = max(left, min(x, right - width))
+            y = max(top_edge, min(y, bottom - height))
+        return x, y
 
     @staticmethod
     def _build_list(
