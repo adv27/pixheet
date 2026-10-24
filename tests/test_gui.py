@@ -1048,6 +1048,35 @@ def test_a_long_status_fits_its_cell_with_an_ellipsis(themed, tmp_path):
         root.destroy()
 
 
+class TclName:
+    """A Tcl object, as ttk.Style.lookup can give it. Its string is the name of a font."""
+
+    def __init__(self, name):
+        self.name = name
+
+    def __str__(self):
+        return self.name
+
+
+def test_style_font_finds_the_font_of_a_tcl_object(monkeypatch):
+    root = new_root()
+    try:
+        monkeypatch.setattr(ttk.Style, "lookup", lambda self, *args: TclName("TkFixedFont"))
+        assert gui.style_font(root, "TLabel").name == "TkFixedFont"
+    finally:
+        root.destroy()
+
+
+def test_style_font_gives_the_font_of_the_sun_valley_theme():
+    root, app = show_at_the_minimum_size(themed=True)
+    try:
+        assert app._label_font().name == "SunValleyBodyFont"
+        assert gui.style_font(root, "Treeview").name == "SunValleyBodyFont"
+        app.dispose()
+    finally:
+        root.destroy()
+
+
 class CountingFont:
     """A font that records the texts that the app measures."""
 

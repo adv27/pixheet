@@ -784,8 +784,12 @@ def _configure_style(root: tk.Tk, style: str, option: str, value: object) -> Non
 
 
 def style_font(root: tk.Misc, style: str) -> Any:
-    """Return the font of a ttk style, or TkDefaultFont when the style has no font."""
-    name = ttk.Style(root).lookup(style, "font") or "TkDefaultFont"
+    """Return the font of a ttk style, or TkDefaultFont when the style has no font.
+
+    The lookup can give a Tcl object, not a string. Python 3.15.0 does not find a named
+    font from a Tcl object, so the function changes the name to a string first.
+    """
+    name = str(ttk.Style(root).lookup(style, "font")) or "TkDefaultFont"
     try:
         return tkfont.nametofont(name, root=root)
     except tk.TclError:
