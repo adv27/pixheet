@@ -327,14 +327,14 @@ def assign_outputs(
     return result
 
 
-def path_problem(dst: Path, limit: int = LONG_PATH, *, platform: str | None = None) -> str | None:
+def path_problem(dst: Path, *, platform: str | None = None) -> str | None:
     """Return the reason why the app cannot write ``dst``, or None.
 
     The function only looks at the length of the path. It does not write to the disk.
     A folder that the app cannot write gives an error in the row when the app writes.
 
     - On Windows, a file name of more than 255 characters fails. A path of more than
-      ``limit`` characters also fails. convert() first writes a temporary file with a
+      259 characters also fails. convert() first writes a temporary file with a
       name of 29 characters next to the output. Its path counts too.
     - On other systems, the limits count bytes in UTF-8, not characters. A file name of
       more than 255 bytes fails, and a path of more than 4,095 bytes fails. A letter
@@ -352,6 +352,7 @@ def path_problem(dst: Path, limit: int = LONG_PATH, *, platform: str | None = No
     full = absolute(dst)
     temp = full.parent / ("x" * TEMP_NAME_LENGTH)
     if windows:
+        limit = LONG_PATH
         length, temp_length = len(str(full)), len(str(temp))
         system = "Windows allows"
     else:
