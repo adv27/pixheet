@@ -2462,12 +2462,13 @@ def test_disabled_spinbox_and_combobox_use_the_gray_text_of_the_style():
     try:
         gui.apply_theme(root, "light")
         app = gui.App(root, dnd_type=None)
-        boxes = (app.max_side_box, app.background_box)
+        boxes = (app.save_box, app.max_side_box, app.background_box)
         # tk_setPalette of sv-ttk gives a fixed text color, for example #1c1c1c. A fixed
-        # color hides the gray text of the disabled state.
+        # color hides the gray text of the disabled state. "Save to" is locked during a
+        # run too.
         for mode in ("dark", "light"):
             root.update_idletasks()
-            assert [str(box.cget("foreground")) for box in boxes] == ["", ""], mode
+            assert [str(box.cget("foreground")) for box in boxes] == ["", "", ""], mode
             assert str(app.or_label.cget("foreground")) != ""  # tk_setPalette did run
             gui.apply_theme(root, mode)
         app.dispose()

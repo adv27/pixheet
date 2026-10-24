@@ -1037,7 +1037,7 @@ class App:
             options, text="Compact file", variable=self.compact_var
         )
         self.compact_check.grid(row=0, column=4)
-        for box in (self.max_side_box, self.background_box):
+        for box in (self.save_box, self.max_side_box, self.background_box):
             box.bind("<<ThemeChanged>>", self._use_style_foreground, add="+")
 
         # Row 2: the drop zone or the list. Both use the same cell.
@@ -1297,11 +1297,12 @@ class App:
         self._theme_tab_stop()
 
     def _use_style_foreground(self, event: tk.Event) -> None:
-        """Let the style set the text color of the Spinbox and the Combobox.
+        """Let the style set the text color of "Save to" and of the option boxes.
 
         On each theme change, sv-ttk calls tk_setPalette. tk_setPalette gives each widget
         a fixed text color. Then the text does not change to gray when the widget is
-        disabled, and the user cannot see that the options are locked during a run.
+        disabled, and the user cannot see that "Save to" and the options are locked
+        during a run.
         ttk::ThemeChanged sends the event to the root first, so tk_setPalette is done here.
         """
         event.widget.configure(foreground="")
