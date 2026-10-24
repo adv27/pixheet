@@ -64,12 +64,16 @@ To add images:
 - A folder adds only the images directly in it. When the folder has subfolders, a note
   shows the button **Include subfolders**.
 - The app ignores files that are not images, and a note names them.
-- Set the maximum side, the background, and compact mode before you add images. During
-  a run, the app locks these options.
+- Set the maximum side, the background, compact mode, and **Save to** before you add
+  images. During a run, the app locks these settings and shows them in gray.
 - **Save to** sets the folder of the outputs: **Next to each image** (the default), or a
   folder that you choose. When two images have the same output name, each output gets a
   tag. For example, `photo.png` and `photo.jpg` give `photo (png).xlsx` and
   `photo (jpg).xlsx`.
+- Two output names that differ only in the case of the letters also get a tag, on all
+  systems. For example, `Photo.png` and `photo.jpg` give `Photo (png).xlsx` and
+  `photo (jpg).xlsx`. Some file systems ignore the case, for example APFS, exFAT, and
+  network shares.
 
 One image shows in the drop zone, with a progress bar and the result. **Show in folder**
 shows the output in its folder, and **Open** opens it.
@@ -78,33 +82,52 @@ Two or more images show in a list, with the name, the folder, and the status of 
 image:
 
 - The conversion starts at once. A drop during a run adds the images to the end of the
-  list.
+  list. A new drop of an image with a finished row converts that row again, into the
+  current **Save to** folder.
 - The progress line shows the number of the current file, the counts, and the time
-  left. The window title also shows the progress.
+  left. The window title also shows the progress. The progress changes about 4 times
+  each second.
 - The list keeps the current file in view. A click or a scroll in the list stops this.
   Esc starts it again.
 - **Stop** stops the run. The app does not write the current file. **Convert N**
-  converts the files that wait.
+  converts the files that wait. A drop after **Stop**, before the current file stops,
+  adds rows that wait. **Convert N** starts them too.
 - An error in one file does not stop the run. The row of the file is red and tells the
-  reason. Select the row to see the full reason below the list.
-- **Retry failed (N)** converts the failed files and the stopped files again.
-  **Failed only (N)** shows only the failed files.
+  reason. Select the row to see the reason and the advice below the list.
+- When another app has the output open, for example Excel, the row shows "Failed: file
+  is in use". Close the file in that app, then click **Retry failed**.
+- **Retry failed (N)** converts the failed files and the stopped files again. A row
+  keeps its output name when **Save to** did not change.
+- **Failed only (N)** shows only the failed files. When you remove the last failed row,
+  the list shows all rows again.
 - **Show folders (N)** opens one of the output folders. **Clear list** removes all rows.
 - Right-click a row, or press Shift+F10, for more actions. Enter opens the selected
   file. Delete removes the selected rows.
 
-When output files exist, the app asks one time for each drop. Click **Replace all**,
-**Skip these N**, or **Cancel**. The Skip button has the focus, so Enter does not
-replace files.
+When output files exist, the app asks one time for each drop:
+
+- For two or more files, click **Replace all**, **Skip these N**, or **Cancel**.
+- For one file, click **Replace**, **Skip this file**, or **Cancel**.
+- The Skip button has the focus, so Enter does not replace files.
+- When the drop has no other images, the dialog has no Skip button, and Cancel has the
+  focus.
+
+**Convert N**, **Retry failed**, and a drop after **Stop** also check the files that
+wait. The app asks again before it replaces an output, also when you clicked **Replace**
+before the Stop. When you cancel **Convert N** or **Retry failed**, the note says "The
+app did not start the run." An output path that is too long fails at once.
 
 Screen readers cannot read the rows of the list, because Tk does not give the list to UI
-Automation. The details line below the list shows the full text of the selected row.
+Automation. The details line below the list shows the paths and the result of the
+selected row. Long paths get "…" there. **Copy full path** and **Copy error** in the
+context menu copy the full text.
 
 The app uses Tkinter from the Python standard library. The `gui` extra adds
 [tkinterdnd2](https://pypi.org/project/tkinterdnd2/) for the drop of files. Without
 tkinterdnd2, the app opens without the drop function, and **Add files...** and **Add
 folder...** still work. You can also give paths of images and folders as arguments:
-`pixheet-gui photo.jpg`.
+`pixheet-gui photo.jpg`. The app makes a relative path a full path, so the tag of an
+output names the real folder.
 
 The `gui` extra also adds [sv-ttk](https://pypi.org/project/sv-ttk/). It gives the
 window the look of Windows 11:
