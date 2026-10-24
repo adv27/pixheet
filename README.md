@@ -133,18 +133,18 @@ To build the Windows app yourself, see [Windows app](#windows-app). For Linux, s
 
 Pixheet.exe is the desktop app in one file. It does not need Python.
 
-To get Pixheet.exe, do one of these steps:
+Download `Pixheet.exe` and `Pixheet.exe.sha256` from the
+[Releases](https://github.com/adv27/pixheet/releases) page. Each merge that changes the
+version publishes a release.
 
-- Download `Pixheet.exe` from the [Releases](https://github.com/adv27/pixheet/releases)
-  page. Each merge that changes the version publishes a release.
-- Download the newest build from the
-  [Actions](https://github.com/adv27/pixheet/actions/workflows/release.yml) page.
-  Open a run, and download the artifact `Pixheet-windows-x64`. You must sign in to
-  GitHub to download an artifact. A GitHub-hosted Windows runner builds the exe for
-  each pull request and for each push to `master`.
+Download the app only from the Releases page. The Actions page of the repository also
+has builds of the app, for each pull request and for each push to `master`. These
+artifacts are for tests only. A pull request from a fork can change the build, and its
+artifact gets the same name. The `.sha256` file in an artifact comes from the same run.
+Thus it does not show where the app comes from.
 
-Each download includes the file `Pixheet.exe.sha256`. To compare the hash, run this
-command in PowerShell:
+To compare the hash with the text in `Pixheet.exe.sha256`, run this command in
+PowerShell:
 
 ```console
 > (Get-FileHash Pixheet.exe -Algorithm SHA256).Hash.ToLower()
@@ -186,12 +186,9 @@ antivirus programs flag UPX-packed exes.
 Python. It runs on x86_64 Linux with glibc 2.27 or later, for example Ubuntu 18.04,
 Debian 10, RHEL 8, and later versions.
 
-To get the file, do one of these steps:
-
-- Download `Pixheet-linux-x86_64` and `Pixheet-linux-x86_64.sha256` from the
-  [Releases](https://github.com/adv27/pixheet/releases) page.
-- Download the artifact `Pixheet-linux-x86_64` from the
-  [Actions](https://github.com/adv27/pixheet/actions/workflows/release.yml) page.
+Download `Pixheet-linux-x86_64` and `Pixheet-linux-x86_64.sha256` from the
+[Releases](https://github.com/adv27/pixheet/releases) page. Do not use the artifacts on
+the Actions page. They are for tests only, as [Windows app](#windows-app) tells.
 
 Then run these commands in the download folder. A download does not keep the
 permission to run the file, so `chmod +x` adds it:
