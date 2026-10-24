@@ -1010,7 +1010,7 @@ def test_progress_writes_only_a_status_cell_that_changes(harness, monkeypatch, t
 
 
 @pytest.mark.parametrize("themed", [True, False])
-def test_a_long_status_fits_its_cell_with_an_ellipsis(themed, tmp_path):
+def test_a_long_status_fits_its_cell_with_an_ellipsis(themed, monkeypatch, tmp_path):
     if themed:
         pytest.importorskip("sv_ttk")
     root = new_root()
@@ -1028,21 +1028,77 @@ def test_a_long_status_fits_its_cell_with_an_ellipsis(themed, tmp_path):
         for row in rows:
             app._insert_row(row)
         font = gui.style_font(root, "Treeview")
-        room = int(app.tree.column("status", "width"))
+        padding = round(gui.STATUS_PADDING * app._scale)
+        room = int(app.tree.column("status", "width")) - padding
         cells = [app.tree.set(str(row.id), "status") for row in rows]
-        for cell in cells[:2]:
-            assert font.measure(cell) < room, cell
-            assert cell.startswith("Waiting · as photo (")
-            assert "…" in cell
-        assert cells[0].endswith("png).xlsx")  # the end tells the two rows apart
-        assert cells[1].endswith("jpg).xlsx")
+        for cell, row, kind in zip(cells[:2], rows[:2], ("png", "jpg"), strict=True):
+            assert font.measure(cell) <= room, cell
+            assert cell.startswith(gui.WAITING_AS)
+            assert "…" in cell or cell == gui.status_text(row)
+            assert cell.endswith(f"{kind}).xlsx"), cell  # the end tells the two rows apart
         assert cells[2] == "Waiting · as c (b, png).xlsx"  # a short name stays
+        # With room for the tag, the name of the image gets "…", and the tag stays. The
+        # widths of a font of X11 do not always add up, so this part uses CharFont.
+        real_style_font = gui.style_font
+        monkeypatch.setattr(
+            gui,
+            "style_font",
+            lambda root, style: CharFont if style == "Treeview" else real_style_font(root, style),
+        )
+        cell = f"{gui.WAITING_AS}ph… (Hội An tháng Mười, png).xlsx"
+        app.tree.column("status", minwidth=0, width=CharFont.measure(cell) + padding)
+        app._render(rows[0])
+        assert app.tree.set("1", "status") == cell
+        monkeypatch.setattr(gui, "style_font", real_style_font)
         # A long reason of a failed row, after a change of the state.
+        app.tree.column("status", width=room + padding)
         failed = replace(rows[2], state="failed", error="x" * 60, kind="other")
         app._update_row(failed)
         cell = app.tree.set("3", "status")
-        assert font.measure(cell) < room, cell
+        assert font.measure(cell) <= room, cell
         assert cell.startswith("✕ Failed: xxx")
+        app.dispose()
+    finally:
+        root.destroy()
+
+
+def test_tag_cut_shortens_the_name_of_the_image_before_the_tag():
+    name = "photo (Hội An, png).xlsx"
+    cuts = [gui.tag_cut(name, limit, stem=5) for limit in (24, 23, 20, 19, 9)]
+    assert cuts == [
+        name,
+        "pho… (Hội An, png).xlsx",
+        "… (Hội An, png).xlsx",
+        "… (Hội…, png).xlsx",  # the end of the tag stays
+        "phot…xlsx",  # no room for a tag
+    ]
+    for limit in range(1, 30):
+        assert len(gui.tag_cut(name, limit, stem=5)) <= limit
+
+
+def test_a_wide_font_gets_a_wider_status_column(monkeypatch, tmp_path):
+    # A bitmap font of X11 can be much wider than the fonts of Windows.
+    real_style_font = gui.style_font
+    monkeypatch.setattr(
+        gui,
+        "style_font",
+        lambda root, style: CharFont if style == "Treeview" else real_style_font(root, style),
+    )
+    root = new_root()
+    try:
+        app = gui.App(root, dnd_type=None)
+        padding = round(gui.STATUS_PADDING * app._scale)
+        width = int(app.tree.column("status", "width"))
+        sample = CharFont.measure(gui.STATUS_SAMPLE) + padding
+        assert width == max(round(gui.STATUS_WIDTH * app._scale), sample)
+        for i, kind in enumerate(("png", "jpg"), start=1):
+            src = tmp_path / "Hội An tháng Mười" / f"photo.{kind}"
+            dst = tmp_path / f"photo (Hội An tháng Mười, {kind}).xlsx"
+            app._insert_row(gui.Row(i, src, dst))
+            cell = app.tree.set(str(i), "status")
+            assert CharFont.measure(cell) <= width - padding
+            assert cell.startswith(gui.WAITING_AS)
+            assert cell.endswith(f", {kind}).xlsx"), cell  # the tag tells the rows apart
         app.dispose()
     finally:
         root.destroy()
@@ -1116,8 +1172,12 @@ def test_a_batch_of_rows_measures_each_status_text_one_time(harness, monkeypatch
     assert font.texts == ["Waiting"]
     assert {app.tree.set(str(row.id), "status") for row in app.rows.values()} == {"Waiting"}
 
-    # A change of "Save to" gives 200 new outputs, with one lookup of the font.
+    # A change of "Save to" gives 200 new outputs, with one lookup of the font. The column
+    # gets room for the longest status in this font, so that each status stays in full.
     lookups.clear()
+    names = [f"photo{i} ({folder}).xlsx" for i in range(100) for folder in "ab"]
+    longest = max(font.font.measure(f"{gui.WAITING_AS}{name}") for name in names)
+    app.tree.column("status", width=longest + round(gui.STATUS_PADDING * app._scale))
     app.set_out_dir(tmp_path / "out")
     assert len(lookups) == 1
     assert app._status_fit is None

@@ -20,6 +20,7 @@ a settings file.
 
 import configparser
 import contextlib
+import functools
 import os
 import queue
 import sys
@@ -117,13 +118,17 @@ NOTE_MS = 10_000
 FOLLOW_ABOVE = 3
 """The maximum number of rows above the converting row when the list follows it."""
 STATUS_WIDTH = 220
-"""The width of the Status column at 100 % scale, in pixels."""
+"""The smallest width of the Status column at 100 % scale, in pixels. See STATUS_SAMPLE."""
 STATUS_PADDING = 12
 """The space at the two sides of the text in a cell, at 100 % scale, in pixels."""
 COUNT_GAP = 8
 """The space between the count line and the Add files button, in pixels."""
 WAITING_AS = f"Waiting{SEP}as "
 """The start of the status of a waiting row with a tagged output."""
+TAG_END = ").xlsx"
+"""The end of an output name with a tag, for example "photo (png).xlsx"."""
+STATUS_SAMPLE = f"{WAITING_AS}{ELLIPSIS} (Hội{ELLIPSIS}, jpeg){TAG_END}"
+"""A text that the Status column has room for with each font: a tag that keeps its end."""
 LINE_PATH_LIMITS = (40, 28, 16)
 """The lengths of the paths in line 2 of the details. A long reason uses a shorter one."""
 ARROW = " → "
@@ -815,6 +820,25 @@ def middle_cut(text: str, limit: int) -> str:
     return f"{text[: keep - tail].rstrip()}{ELLIPSIS}{text[len(text) - tail :]}"
 
 
+def tag_cut(text: str, limit: int, stem: int) -> str:
+    """Shorten an output name with a tag to ``limit`` characters or fewer.
+
+    An example of a name is "photo (Hội An, png).xlsx". The first ``stem`` characters are
+    the name of the image. All rows with a tag for this name have the same stem. Thus the
+    stem gets "…" first, and the tag stays. Then the tag gets "…" in its middle, and the
+    end of the tag, for example "png", stays.
+    """
+    if len(text) <= limit:
+        return text
+    rest = text[stem:]  # " (Hội An, png).xlsx"
+    if limit > len(rest):
+        return end_ellipsis(text[:stem], limit - len(rest)) + rest
+    room = limit - len(f"{ELLIPSIS} ({TAG_END}")
+    if room < 1:
+        return middle_cut(text, limit)
+    return f"{ELLIPSIS} ({middle_cut(rest[2 : -len(TAG_END)], room)}{TAG_END}"
+
+
 def take_line(font: Any, width: int, text: str) -> tuple[str, str]:
     """Split ``text`` into its first line of ``width`` pixels or fewer, and the rest.
 
@@ -1329,7 +1353,9 @@ class App:
         tree.heading("name", text="Name", anchor="w")
         tree.heading("folder", text="Folder", anchor="w")
         tree.heading("status", text="Status", anchor="w")
-        width = round(STATUS_WIDTH * self._scale)
+        # A wide font, for example a bitmap font of X11, gets a wider Status column.
+        sample = style_font(self.root, "Treeview").measure(STATUS_SAMPLE)
+        width = max(round(STATUS_WIDTH * self._scale), sample + round(STATUS_PADDING * self._scale))
         # Name and Folder share the free width. These widths only set the minimum size.
         narrow = round(150 * self._scale)
         tree.column("name", width=narrow, minwidth=round(80 * self._scale), stretch=True)
@@ -1711,17 +1737,22 @@ class App:
     def _status_cell(self, row: Row, text: str) -> str:
         """Return ``text``, the status of ``row``, shortened to fit the Status cell.
 
-        A cell cuts a long text without "…". A waiting row with a tagged output gets "…"
-        in the middle of the output name, so that the end, for example "png).xlsx", tells
-        two rows apart. The details line shows the full name.
+        A cell cuts a long text without "…". A waiting row with a tagged output keeps the
+        tag, because the tag tells two rows apart. The name of the image gets "…" first,
+        then the middle of the tag. See :func:`tag_cut`. The details line shows the full
+        name.
         """
-        tagged = row.state == WAITING and text == f"{WAITING_AS}{row.dst.name}"
+        name = row.dst.name
+        tagged = row.state == WAITING and text == f"{WAITING_AS}{name}"
         fit = self._status_fit or self._new_status_fit()
         key = (text, tagged)
         cell = fit.cells.get(key)
         if cell is None:
             if tagged:
-                cell = fit_text(fit.font, fit.room, row.dst.name, middle_cut, prefix=WAITING_AS)
+                shorten: Callable[[str, int], str] = middle_cut
+                if name.startswith(f"{row.src.stem} (") and name.endswith(TAG_END):
+                    shorten = functools.partial(tag_cut, stem=len(row.src.stem))
+                cell = fit_text(fit.font, fit.room, name, shorten, prefix=WAITING_AS)
             else:
                 cell = fit_text(fit.font, fit.room, text, end_ellipsis)
             fit.cells[key] = cell
