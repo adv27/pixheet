@@ -41,6 +41,7 @@ except ImportError:  # a Python build without Tk
 from PIL import UnidentifiedImageError
 
 from pixheet._desktop import (
+    TITLE,
     LatestValue,
     dnd_allowed,
     open_path,
@@ -75,6 +76,7 @@ from pixheet._plan import (
     Started,
     Stopped,
     Tally,
+    _plural,
     absolute,
     apply_message,
     assign_outputs,
@@ -95,7 +97,6 @@ from pixheet._plan import (
 )
 from pixheet.core import DEFAULT_BACKGROUND, DEFAULT_MAX_SIDE, ConvertResult, convert
 
-TITLE = "Pixheet"
 MIN_WIDTH, MIN_HEIGHT = 620, 460
 """The smallest size of the window. The window can need more, for example with large text."""
 BODY_PADDING = 16
@@ -364,10 +365,6 @@ def _set_if_changed(var: tk.Variable, value: object) -> None:
     """Set ``var`` only when ``value`` is new. Each set makes Tk draw the widgets again."""
     if var.get() != value:
         var.set(value)
-
-
-def _plural(count: int, word: str) -> str:
-    return f"{count:,} {word}" if count == 1 else f"{count:,} {word}s"
 
 
 def summary(dst: Path, result: ConvertResult) -> str:
