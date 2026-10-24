@@ -1441,6 +1441,34 @@ def test_a_job_that_comes_when_the_worker_ends_starts_a_new_worker(harness, tmp_
     assert (tmp_path / "c.xlsx").exists()
 
 
+def test_stop_when_the_worker_ends_after_a_drop_stops_the_run(harness, tmp_path):
+    h = harness()
+    a = image(tmp_path / "a.png")
+    b = image(tmp_path / "b.png")
+    h.drop(a)
+    h.root.update_idletasks()  # runs add_paths(), but not the poll
+    h.app.worker.join(10)  # the worker took an empty queue and sent Finished(False)
+    h.drop(b)
+    h.root.update_idletasks()
+    assert len(h.app.jobs) == 1
+    h.app.stop_button.invoke()  # before the window reads Finished(False)
+
+    h.wait()
+    assert h.states() == ["done", "waiting"]
+    assert not b.with_suffix(".xlsx").exists()
+    assert h.app.title_var.get() == "Stopped. Converted 1 of 2 files."
+
+
+def test_stop_after_the_last_file_is_no_stop(harness, tmp_path):
+    h = harness()
+    h.drop(image(tmp_path / "a.png"))
+    h.root.update_idletasks()
+    h.app.worker.join(10)
+    h.app.stop_button.invoke()  # too late: nothing is left to stop
+    h.wait()
+    assert h.app.title_var.get() == "Converted 1 file."
+
+
 def test_close_when_idle_destroys_the_root(harness):
     h = harness()
     h.app.close()

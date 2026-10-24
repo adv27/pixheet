@@ -2078,6 +2078,9 @@ class App:
                 with contextlib.suppress(tk.TclError):
                     self.root.destroy()
             return
+        # The user can click Stop after the worker sent Finished(False), and a drop can
+        # add jobs in that time. Then the run stops too, as the user asked.
+        stopped = stopped or (self.cancel_event.is_set() and len(self.jobs) > 0)
         if stopped:
             self.jobs.clear()  # the rows that wait stay in the list
         elif len(self.jobs):
