@@ -181,18 +181,18 @@ def expand_drop(
 
     The dropped paths keep their order. ``listdir``, ``isdir`` and ``isfile`` let the
     tests use a fake disk. ``listdir`` returns the full paths of the items in a folder.
+    Give ``listdir`` and ``isdir`` together.
     """
     is_dir = isdir or os.path.isdir
     is_file = isfile or os.path.isfile
-    if listdir is None and isdir is None:
+    if listdir is None:
         scan = _scan_folder
     else:
-        list_items = listdir or (lambda folder: list(Path(folder).iterdir()))
 
         def scan(folder: Path) -> tuple[list[Path], list[Path]]:
             files: list[Path] = []
             folders: list[Path] = []
-            for item in list_items(folder):
+            for item in listdir(folder):
                 (folders if is_dir(item) else files).append(item)
             return files, folders
 
