@@ -500,12 +500,15 @@ SETTINGS_SECTION = "appearance"
 
 
 def _read_settings(path: Path) -> configparser.ConfigParser:
-    """Read the settings file. Raise configparser.Error or ValueError for a damaged file.
+    """Read the settings file. The function does not raise for the content of the file.
 
-    A file that does not exist, or that the app cannot open, gives no settings.
+    A missing file, a damaged file, and a file that the app cannot open give no settings.
     """
     parser = configparser.ConfigParser(interpolation=None)
-    parser.read(path, encoding="utf-8")  # read() ignores a file that it cannot open
+    try:
+        parser.read(path, encoding="utf-8")  # read() ignores a file that it cannot open
+    except configparser.Error, ValueError:  # ValueError includes UnicodeDecodeError
+        return configparser.ConfigParser(interpolation=None)
     return parser
 
 
@@ -517,11 +520,7 @@ def read_theme_choice(path: Path | None) -> str:
     """
     if path is None:
         return "system"
-    try:
-        parser = _read_settings(path)
-    except configparser.Error, ValueError:  # ValueError includes UnicodeDecodeError
-        return "system"
-    value = parser.get(SETTINGS_SECTION, "theme", fallback="").strip().lower()
+    value = _read_settings(path).get(SETTINGS_SECTION, "theme", fallback="").strip().lower()
     return value if value in THEME_CHOICES else "system"
 
 
@@ -533,10 +532,7 @@ def write_theme_choice(path: Path, choice: str) -> bool:
     a damaged file. For an error of the file system, it writes the cause to stderr and
     does not raise.
     """
-    try:
-        parser = _read_settings(path)
-    except configparser.Error, ValueError:
-        parser = configparser.ConfigParser(interpolation=None)
+    parser = _read_settings(path)
     if not parser.has_section(SETTINGS_SECTION):
         parser.add_section(SETTINGS_SECTION)
     parser.set(SETTINGS_SECTION, "theme", choice)
