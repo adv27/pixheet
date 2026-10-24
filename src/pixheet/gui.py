@@ -726,15 +726,18 @@ class ThemeFollower:
         the app does not write the same error each ``interval``.
         """
         self._after_id = None
-        mode = self.source()
+        if self._use_mode(self.source()):
+            self._after_id = self.root.after(self.interval, self.poll)
+
+    def _use_mode(self, mode: str) -> bool:
+        """Show the theme and the title bar of ``mode``. Give False when the theme cannot change."""
         if mode != self.mode:
             theme = apply_theme(self.root, mode)
             if theme is None:
-                return
-            self.mode = mode
-            self.theme = theme
+                return False
+            self.mode, self.theme = mode, theme
             set_title_bar(self.root, dark=mode == "dark")
-        self._after_id = self.root.after(self.interval, self.poll)
+        return True
 
     def stop(self) -> None:
         """Stop the reads of ``source``."""
@@ -755,14 +758,8 @@ class ThemeFollower:
         if self.theme is None:
             return False
         self.stop()
-        mode = self.source() if choice == "system" else choice
-        if mode != self.mode:
-            theme = apply_theme(self.root, mode)
-            if theme is None:
-                return False
-            self.mode = mode
-            self.theme = theme
-            set_title_bar(self.root, dark=mode == "dark")
+        if not self._use_mode(self.source() if choice == "system" else choice):
+            return False
         self.choice = choice
         if choice == "system":
             self._after_id = self.root.after(self.interval, self.poll)
