@@ -856,6 +856,23 @@ def tag_cut(text: str, limit: int, stem: int) -> str:
     return f"{ELLIPSIS} ({middle_cut(rest[2 : -len(TAG_END)], room)}{TAG_END}"
 
 
+def _last_fit(low: int, high: int, fits: Callable[[int], bool], default: int) -> int:
+    """Do a binary search from ``low`` to ``high``. Return the last number that fits.
+
+    The search tests the middle number with ``fits``. When the number fits, the search
+    continues above it, else below it. The result is the last number for which ``fits``
+    gave True, or ``default`` when no number fits.
+    """
+    best = default
+    while low <= high:
+        middle = (low + high) // 2
+        if fits(middle):
+            best, low = middle, middle + 1
+        else:
+            high = middle - 1
+    return best
+
+
 def take_line(font: Any, width: int, text: str) -> tuple[str, str]:
     """Split ``text`` into its first line of ``width`` pixels or fewer, and the rest.
 
@@ -866,23 +883,11 @@ def take_line(font: Any, width: int, text: str) -> tuple[str, str]:
     if font.measure(text) <= width:
         return text, ""
     spaces = [index for index, char in enumerate(text) if char == " "]
-    low, high, best = 0, len(spaces) - 1, -1
-    while low <= high:
-        middle = (low + high) // 2
-        if font.measure(text[: spaces[middle]]) <= width:
-            best, low = middle, middle + 1
-        else:
-            high = middle - 1
+    best = _last_fit(0, len(spaces) - 1, lambda i: font.measure(text[: spaces[i]]) <= width, -1)
     if best >= 0:
         end = spaces[best]
         return text[:end].rstrip(), text[end:].strip()
-    low, high, end = 1, len(text) - 1, 1
-    while low <= high:
-        middle = (low + high) // 2
-        if font.measure(text[:middle]) <= width:
-            end, low = middle, middle + 1
-        else:
-            high = middle - 1
+    end = _last_fit(1, len(text) - 1, lambda i: font.measure(text[:i]) <= width, 1)
     return text[:end], text[end:].strip()
 
 
@@ -903,16 +908,11 @@ def fit_text(
     full = f"{prefix}{text}{suffix}"
     if font.measure(full) <= width or len(text) <= 1:
         return full
-    low, high = 1, len(text) - 1
-    best = f"{prefix}{shorten(text, 1)}{suffix}"
-    while low <= high:
-        limit = (low + high) // 2
-        line = f"{prefix}{shorten(text, limit)}{suffix}"
-        if font.measure(line) <= width:
-            best, low = line, limit + 1
-        else:
-            high = limit - 1
-    return best
+
+    def line(limit: int) -> str:
+        return f"{prefix}{shorten(text, limit)}{suffix}"
+
+    return line(_last_fit(1, len(text) - 1, lambda limit: font.measure(line(limit)) <= width, 1))
 
 
 @dataclass(slots=True)
