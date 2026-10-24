@@ -126,9 +126,14 @@ bundled `libX11.so.6` does not export `XSetIOErrorExitHandler`. The log shows th
 for example `linux_guards: the app needs glibc 2.27 or later (GLIBC_2.27 in
 PIL/_imagingmath...)`.
 
-The app itself does the same libX11 check before it loads tkdnd (see
-`src/pixheet/_desktop.py`). It matters for a source install with `pip` or `uv` on Ubuntu
-20.04 or RHEL 8: then the app runs without drag and drop and does not stop.
+Before the app loads tkdnd, it does the same libX11 check (see `src/pixheet/_desktop.py`).
+This check is necessary for a source install with `pip` or `uv` on Ubuntu 20.04 or RHEL 8.
+There, the app runs without drag and drop and does not stop.
+
+The app also checks the shared `libxcb.so.1`, because libX11 uses it. tkdnd needs libxcb
+1.14 or later, and only these versions export the function `xcb_total_read`. The built
+app has its own libX11 1.7.2, but it uses the libxcb of the system. Ubuntu 18.04, Debian
+10 and RHEL 8 have libxcb 1.13. Thus the built app runs there without drag and drop.
 
 Debian 11 is past its LTS. Its packages are on `archive.debian.org`, and they get no
 more security updates. If the archive goes away, change the container of the job

@@ -121,10 +121,10 @@ window the look of Windows 11:
   `light`, or `dark`. It wins over the saved choice.
 - Without sv-ttk, the app opens with the standard Tk look and has no toggle.
 
-On Linux, drag and drop needs libX11 1.7 or later, for example Ubuntu 22.04 or Debian 11.
-With an older libX11, tkdnd stops the app when it loads. Thus the app does not load it,
-and you use **Add files...** and **Add folder...**. The environment variable `PIXHEET_DND=0` turns off drag and
-drop on all systems.
+On Linux, drag and drop needs libX11 1.7 or later and libxcb 1.14 or later, for example
+Ubuntu 22.04 or Debian 11. With an older library, tkdnd stops the app when it loads. Thus
+the app does not load tkdnd, and you use **Add files...** and **Add folder...**. Set the
+environment variable `PIXHEET_DND` to `0` to turn off drag and drop on all systems.
 
 To build the Windows app yourself, see [Windows app](#windows-app). For Linux, see
 [Linux app](#linux-app).
@@ -210,8 +210,10 @@ Known limits:
 - The text uses the core X fonts of Tk, without antialiasing, so it looks plain. The Tk
   in the app has no Xft. Some letters, for example Vietnamese letters in a file name,
   can show as boxes.
-- When drag and drop cannot load, the app shows "Drag and drop is not available. Use
-  Add files or Add folder.". The app has its own libX11 1.7.2, so this is not usual.
+- Drag and drop needs libxcb 1.14 or later. The app has its own libX11 1.7.2, but it
+  uses the `libxcb.so.1` of the system. Ubuntu 18.04, Debian 10 and RHEL 8 have libxcb
+  1.13. On these systems, the app starts without drag and drop, and the drop zone shows
+  "Drag and drop is not available. Use Add files or Add folder."
 - At each start, the app extracts itself to a folder `/tmp/_MEI...`. If `/tmp` does not
   let programs run (`noexec`), set `TMPDIR` to a different folder.
 - To open a folder, the app uses `xdg-open`.
