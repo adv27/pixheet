@@ -115,6 +115,8 @@ STATUS_WIDTH = 220
 """The width of the Status column at 100 % scale, in pixels."""
 STATUS_PADDING = 12
 """The space at the two sides of the text in a cell, at 100 % scale, in pixels."""
+LINE_PATH_LIMITS = (40, 28, 16)
+"""The lengths of the paths in line 2 of the details. A long reason uses a shorter one."""
 ARROW = " → "
 
 DROP_TEXT = "Drop images or folders here"
@@ -261,9 +263,14 @@ def _describe(error: BaseException) -> str:
 
     The text of Pillow for a file that it cannot open has the full path in quotes, with
     two backslashes for each one. The row already shows the file, so the text is plain.
+    The text of a system error has the error number, for example "[Errno 2]", and the
+    paths in the same quotes. Thus the text is the reason and the plain paths.
     """
     if isinstance(error, UnidentifiedImageError):
         return NOT_AN_IMAGE
+    if isinstance(error, OSError) and error.strerror:
+        names = [str(name) for name in (error.filename, error.filename2) if name is not None]
+        return f"{error.strerror}: {' -> '.join(names)}" if names else error.strerror
     return str(error) or type(error).__name__
 
 
@@ -793,6 +800,36 @@ def middle_cut(text: str, limit: int) -> str:
     keep = max(limit - 1, 0)
     tail = (keep + 1) // 2
     return f"{text[: keep - tail].rstrip()}{ELLIPSIS}{text[len(text) - tail :]}"
+
+
+def take_line(font: Any, width: int, text: str) -> tuple[str, str]:
+    """Split ``text`` into its first line of ``width`` pixels or fewer, and the rest.
+
+    The line ends at a space, as the lines of a Tk label with a wraplength. A word that
+    is too long for one line, for example a path, ends at the last letter that fits.
+    """
+    text = text.strip()
+    if font.measure(text) <= width:
+        return text, ""
+    spaces = [index for index, char in enumerate(text) if char == " "]
+    low, high, best = 0, len(spaces) - 1, -1
+    while low <= high:
+        middle = (low + high) // 2
+        if font.measure(text[: spaces[middle]]) <= width:
+            best, low = middle, middle + 1
+        else:
+            high = middle - 1
+    if best >= 0:
+        end = spaces[best]
+        return text[:end].rstrip(), text[end:].strip()
+    low, high, end = 1, len(text) - 1, 1
+    while low <= high:
+        middle = (low + high) // 2
+        if font.measure(text[:middle]) <= width:
+            end, low = middle, middle + 1
+        else:
+            high = middle - 1
+    return text[:end], text[end:].strip()
 
 
 def fit_text(
@@ -2510,13 +2547,42 @@ class App:
         if row.state == DONE and row.result is not None:
             return path, result_text(row.result), False
         if row.state == FAILED:
-            # The folder is in line 1 already. A short folder keeps the reason short.
-            failed = row.failed_output
-            short = Path(middle_ellipsis(str(failed.parent), 40)) / failed.name
-            return path, f"Failed: {failure_detail(row.kind, row.error, short)}", True
+            return path, self._fit_lines(lambda limit: self._failed_text(row, limit)), True
         if row.state == CONVERTING:
             return path, self._current_text, False
         return path, "", False
+
+    @staticmethod
+    def _failed_text(row: Row, limit: int) -> str:
+        """Return line 2 of a failed row, with its paths shortened to ``limit`` characters.
+
+        The paths are in line 1 already. Short paths keep the reason short.
+        """
+
+        def short(path: Path) -> Path:
+            return Path(middle_ellipsis(str(path.parent), limit)) / path.name
+
+        failed = row.failed_output
+        error = row.error
+        for path in {row.src, failed}:
+            error = error.replace(str(path), str(short(path)))
+        return f"Failed: {failure_detail(row.kind, error, short(failed))}"
+
+    def _fit_lines(self, make: Callable[[int], str]) -> str:
+        """Return the text of ``make(limit)`` on two lines at most of the details.
+
+        ``make`` gives the text with its paths shortened to ``limit`` characters. The
+        result uses the largest limit that fits. When no limit fits, the end of line 2 gets
+        "…". "Copy error" gives the full text.
+        """
+        font, width = self._label_font(), self._line_width
+        first = rest = ""
+        for limit in LINE_PATH_LIMITS:
+            first, rest = take_line(font, width, make(limit))
+            second, after = take_line(font, width, rest)
+            if not after:
+                return f"{first}\n{second}" if second else first
+        return f"{first}\n{fit_text(font, width, rest, end_ellipsis)}"
 
     def _zone_details(self, row: Row | None) -> tuple[str, bool]:
         if row is None:

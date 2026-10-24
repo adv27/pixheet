@@ -529,13 +529,18 @@ _ERRNO_PREFIX = re.compile(r"^\[(?:Errno|WinError) -?\d+\] ")
 def failure_detail(kind: str, error: str, dst: Path, platform: str | None = None) -> str:
     """Return the full reason of a failed row, for the details line.
 
-    For "write" and "in use", the text tells the user what to do. For the other kinds, it
-    is ``error``.
+    For "write", "in use" and "missing", the text tells the user what to do. For the other
+    kinds, it is ``error``.
     """
     if kind == "in use":
         return (
             f"Windows cannot replace {dst.name}, because another app has the file open, "
             "for example Excel. Close the file in that app, then click Retry failed."
+        )
+    if kind == "missing":
+        return (
+            f"The app cannot find the folder {dst.parent}. Make sure that the folder exists, "
+            'or set "Save to" to a different folder. Then click Retry failed.'
         )
     if kind != "write":
         return error

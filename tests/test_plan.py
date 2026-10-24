@@ -727,6 +727,11 @@ def test_failure_detail(tmp_path):
         "Windows cannot replace a.xlsx, because another app has the file open, for example "
         "Excel. Close the file in that app, then click Retry failed."
     )
+    # The folder of the output went away, for example a share. The text tells what to do.
+    assert failure_detail("missing", "No such file or directory", dst) == (
+        f"The app cannot find the folder {dst.parent}. Make sure that the folder exists, "
+        'or set "Save to" to a different folder. Then click Retry failed.'
+    )
 
 
 def rename_error(dst: Path) -> PermissionError:

@@ -187,6 +187,27 @@ def test_run_queue_continues_after_an_error(tmp_path):
     assert (tmp_path / "good.xlsx").exists()
 
 
+@pytest.mark.parametrize(
+    ("error", "text"),
+    [
+        (
+            FileNotFoundError(2, "No such file or directory", r"D:\Photos\Da Lat\IMG_1123.xlsx"),
+            r"No such file or directory: D:\Photos\Da Lat\IMG_1123.xlsx",
+        ),
+        (
+            OSError(18, "Invalid cross-device link", r"C:\a.tmp", None, r"D:\b.xlsx"),
+            r"Invalid cross-device link: C:\a.tmp -> D:\b.xlsx",
+        ),
+        (OSError(28, "No space left on device"), "No space left on device"),
+        (OSError("a plain text"), "a plain text"),
+        (ValueError("bad value"), "bad value"),
+        (MemoryError(), "MemoryError"),
+    ],
+)
+def test_the_text_of_an_error_has_no_error_number_and_no_doubled_backslashes(error, text):
+    assert gui._describe(error) == text
+
+
 def test_run_queue_gives_the_kind_of_a_write_error(tmp_path, monkeypatch):
     def convert(src, dst, **kwargs):
         raise PermissionError(13, "Access is denied", str(dst.with_name(".pixheet-0.tmp")))
@@ -1204,7 +1225,7 @@ def test_unwritable_output_folder_fails_in_its_row(harness, tmp_path, monkeypatc
     assert h.rows()[0] == ("logo.png", "✕ Failed: cannot write here")
     assert h.app.tree.selection() == (h.iid("logo.png"),)
     system = "Windows" if sys.platform == "win32" else "The system"
-    assert h.app.status_var.get() == (
+    assert h.app.status_var.get().replace("\n", " ") == (  # two lines
         f"Failed: {system} does not let the app write in {middle_ellipsis(str(logo.parent), 40)}. "
         'Set "Save to" to a folder of your own, then click Retry failed.'
     )
@@ -1232,7 +1253,7 @@ def test_an_output_that_another_app_has_open_fails_in_its_row(harness, tmp_path,
     assert h.rows()[0] == ("a.png", "✕ Failed: file is in use")
     assert h.states() == [gui.FAILED, gui.DONE]
     assert h.app.tree.selection() == (h.iid("a.png"),)
-    assert h.app.status_var.get() == (
+    assert h.app.status_var.get().replace("\n", " ") == (  # two lines
         "Failed: Windows cannot replace a.xlsx, because another app has the file open, "
         "for example Excel. Close the file in that app, then click Retry failed."
     )
@@ -3249,6 +3270,58 @@ def test_all_buttons_fit_at_the_minimum_size(themed, font_size, tmp_path):
         root.destroy()
 
 
+def show_at_the_minimum_size(themed):
+    """Return an App on a root that shows off the screen at its minimum size."""
+    if themed:
+        pytest.importorskip("sv_ttk")
+    root = new_root()
+    if themed:
+        gui.apply_theme(root, "light")
+    app = gui.App(root, dnd_type=None)
+    width, height = root.minsize()
+    root.geometry(f"{width}x{height}")
+    root.deiconify()
+    root.update()
+    return root, app
+
+
+@pytest.mark.parametrize("themed", [True, False])
+def test_the_reason_of_a_failed_row_has_two_lines_at_most(themed, tmp_path):
+    deep = tmp_path.joinpath(*[f"Chuyến đi Đà Lạt tháng {n}" for n in range(1, 7)])
+    src = deep / "IMG_1123.png"
+    out = deep / "Out" / "IMG_1123.xlsx"
+    rows = [
+        # The worker gives the text of _describe(), with the plain path.
+        gui.Row(1, src, out, state="failed", kind="other", error=f"No such file: {src}"),
+        gui.Row(2, src, out, state="failed", kind="missing", error=f"No such file: {out}"),
+        gui.Row(3, src, out, state="failed", kind="write", error=f"Access is denied: {out}"),
+        gui.Row(4, src, out, state="failed", kind="other", error="Disk full. " * 40),
+    ]
+    root, app = show_at_the_minimum_size(themed)
+    try:
+        for row in rows:
+            app._insert_row(row)
+        app._refresh_all()
+        root.update()
+        font = app._label_font()
+        for row in rows:
+            app.tree.selection_set(str(row.id))
+            app._on_select()
+            root.update()
+            text = app.status_var.get()
+            lines = text.split("\n")
+            assert len(lines) <= 2, text
+            assert all(font.measure(line) <= app._line_width for line in lines), text
+            assert app.status_label.winfo_reqheight() <= 2 * font.metrics("linespace") + 4
+            assert text.startswith("Failed: ")
+            assert "\\\\" not in text
+            if row.kind in ("missing", "write"):
+                assert text.endswith("click Retry failed."), text  # the advice stays
+        app.dispose()
+    finally:
+        root.destroy()
+
+
 # --- The window icon -----------------------------------------------------------------
 
 REPO_ICON = Path(__file__).resolve().parents[1] / "packaging" / gui.ICON_NAME
@@ -3534,6 +3607,12 @@ def test_fit_text_shortens_only_the_text_between_the_prefix_and_the_suffix():
     # No limit fits: the shortest text.
     assert gui.fit_text(CharFont, 10, "abcdef", gui.end_ellipsis, prefix="xyz") == "xyz…"
     assert gui.end_ellipsis("abc", 3) == "abc"
+
+
+def test_take_line_ends_the_line_at_a_space_or_in_a_long_word():
+    assert gui.take_line(CharFont, 100, " short ") == ("short", "")
+    assert gui.take_line(CharFont, 100, "one two three four") == ("one two", "three four")
+    assert gui.take_line(CharFont, 50, r"C:\Photos\Da Lat") == (r"C:\Ph", r"otos\Da Lat")
 
 
 def test_replace_dialog_for_one_file_in_a_deep_folder_stays_narrow(harness, tmp_path):
