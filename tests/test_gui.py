@@ -2998,6 +2998,27 @@ def test_follower_stops_when_the_window_closes():
     assert follower._after_id is None
 
 
+def test_follower_cancels_the_show_timer_when_the_window_closes(monkeypatch):
+    """A timer of a destroyed window runs in a later event loop, and Tcl prints an error."""
+    pytest.importorskip("sv_ttk")
+    monkeypatch.setattr(gui, "SHOW_DELAY_MS", 60_000)
+    root = new_root()
+    tcl = root.tk
+    follower = gui.ThemeFollower(root, ThemeSource("light"), choice="light")
+    follower._hidden = True  # only Windows hides the start; the timer is the same
+    root.deiconify()
+    deadline = time.monotonic() + 10
+    while follower._hidden:
+        assert time.monotonic() < deadline, "the window does not show"
+        root.update()
+        time.sleep(0.01)
+    assert follower._show_id is not None
+    assert tcl.call("after", "info") != ""
+    root.destroy()
+    assert follower._show_id is None
+    assert tcl.call("after", "info") == ""
+
+
 def test_follower_with_a_fixed_theme_does_not_read_the_system():
     pytest.importorskip("sv_ttk")
     root = new_root()

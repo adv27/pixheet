@@ -692,6 +692,7 @@ class ThemeFollower:
         self.mode = source() if choice == "system" else choice
         self.theme = apply_theme(root, self.mode)
         self._after_id: str | None = None
+        self._show_id: str | None = None
         self._hidden = False
         if self.theme is None:
             return
@@ -710,15 +711,22 @@ class ThemeFollower:
         if self._hidden:
             self._hidden = False
             self.root.update_idletasks()
-            self.root.after(SHOW_DELAY_MS, self._show)
+            self._show_id = self.root.after(SHOW_DELAY_MS, self._show)
 
     def _show(self) -> None:
+        self._show_id = None
         with contextlib.suppress(tk.TclError):  # the window can be gone
             self.root.attributes("-alpha", 1.0)
 
     def _on_destroy(self, event: tk.Event) -> None:
-        if event.widget is self.root:
-            self.stop()
+        """Stop the timers. A timer of Tcl stays after the window, and a later loop runs it."""
+        if event.widget is not self.root:
+            return
+        self.stop()
+        if self._show_id is not None:
+            with contextlib.suppress(tk.TclError):
+                self.root.after_cancel(self._show_id)
+            self._show_id = None
 
     def poll(self) -> None:
         """Read ``source``. Change the theme and the title bar if the value changed.
