@@ -1147,7 +1147,6 @@ class App:
         self.list_mode = False
         self.follow = True
         """True when the list keeps the converting row in view."""
-        self.failed_only = False
         self.labels: dict[str, str] = {}
         self._status_failed = False
         self._status_fit: _StatusFit | None = None
@@ -1683,6 +1682,11 @@ class App:
     def busy(self) -> bool:
         """True while a run is active or a modal dialog is open."""
         return self.worker is not None or self._dialogs > 0
+
+    @property
+    def failed_only(self) -> bool:
+        """True while the list shows only the failed rows."""
+        return self.failed_only_var.get()
 
     def _modal[T](self, dialog: Callable[..., T], *args: Any, **kwargs: Any) -> T:
         """Show a modal dialog. The app refuses drops until the dialog closes.
@@ -2370,7 +2374,6 @@ class App:
         self.jobs_by_id.clear()
         self.done_ids.clear()
         self.done_folders.clear()
-        self.failed_only = False
         self.failed_only_var.set(False)
         self.set_note("")
         self.title_var.set("")
@@ -2545,7 +2548,6 @@ class App:
 
     def _set_failed_only(self, on: bool) -> None:
         """Show only the failed rows, or all rows in their order."""
-        self.failed_only = on
         self.failed_only_var.set(on)
         if on:
             for row in self.rows.values():
