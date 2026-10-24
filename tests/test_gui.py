@@ -946,6 +946,21 @@ def test_a_long_output_path_fails_at_once(harness, tmp_path):
     assert h.app.title_var.get() == "Converted 0 of 2 files. 2 failed."
 
 
+def test_the_question_does_not_count_rows_that_fail_at_once(harness, tmp_path, monkeypatch):
+    real_problem = gui.path_problem
+    monkeypatch.setattr(
+        gui, "path_problem", lambda dst: "too long" if dst.stem == "b" else real_problem(dst)
+    )
+    h = harness(answer="replace")
+    a = image(tmp_path / "a.png")
+    a.with_suffix(".xlsx").write_bytes(b"old")
+    h.run(a, image(tmp_path / "b.png"))
+    [question] = h.questions
+    assert question.other_count == 0  # b fails at once: Skip converts nothing
+    assert question.skip_label is None
+    assert h.states() == ["done", "failed"]
+
+
 def test_save_to_one_folder_with_collisions(harness, tmp_path, monkeypatch):
     gate = gate_convert(monkeypatch)
     h = harness()

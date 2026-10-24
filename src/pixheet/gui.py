@@ -1699,9 +1699,9 @@ class App:
         ]
         skip: set[int] = set()
         if existing:
-            question = ReplaceQuestion(
-                [row.dst for row in existing], other_count=len(rows) - len(existing)
-            )
+            # The rows with a problem fail at once. They are not images that convert.
+            others = len(rows) - len(existing) - len(problems)
+            question = ReplaceQuestion([row.dst for row in existing], other_count=others)
             answer = self._modal(self.ask_replace, question)
             if self._close_if_asked() or self.closing:
                 return None
