@@ -28,6 +28,8 @@ DOWNLOADS = """\
 - `Pixheet.exe` is the desktop app for Windows. It does not need Python.
 - `Pixheet-linux-x86_64` is the desktop app for x86_64 Linux. It needs glibc 2.27 or later
   and an X server.
+- Each app has a file of third-party notices, for example
+  `THIRD-PARTY-NOTICES-windows-x64.txt`. It gives the licenses of the parts in the app.
 - Each app has a `.sha256` file. Use it to compare the SHA-256 hash of the download:
   - PowerShell: `(Get-FileHash Pixheet.exe -Algorithm SHA256).Hash.ToLower()`
   - Linux: `sha256sum -c Pixheet-linux-x86_64.sha256`

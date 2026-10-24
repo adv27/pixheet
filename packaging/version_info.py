@@ -54,7 +54,10 @@ class Metadata:
             "OriginalFilename": exe_name,
             "ProductName": self.name,
             "ProductVersion": self.version,
-            "Comments": f"{self.description} License: {self.license}.",
+            "Comments": (
+                f"{self.description} License: {self.license}. The third-party parts have "
+                "their own licenses: read THIRD-PARTY-NOTICES.txt."
+            ),
         }
 
 

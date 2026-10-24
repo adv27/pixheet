@@ -6,7 +6,9 @@
 #   2. Build dist/Pixheet with PyInstaller from packaging/pixheet.spec. Two builds of one
 #      commit with the same tools give the same file. The spec stops the build when the
 #      bundle needs a glibc newer than 2.27 or has a libX11 older than 1.7. Thus build on
-#      Debian 11 (see packaging/README.md).
+#      Debian 11 (see packaging/README.md). The spec also writes the license texts of the
+#      third-party parts to dist/THIRD-PARTY-NOTICES-linux-<machine>.txt, and puts the
+#      same text in the app.
 #   3. Test the app with packaging/check_exe.py. The app must pass the smoke test
 #      (--smoke) and convert a test image correctly. It must also convert images of many
 #      formats to the same sheets as pixheet in Python. Without DISPLAY, the script runs
@@ -76,6 +78,11 @@ else
 fi
 if [[ ! -f "$app" ]]; then
   echo "build.sh: $app does not exist." >&2
+  exit 1
+fi
+notices="$root/dist/THIRD-PARTY-NOTICES-linux-$(uname -m).txt"
+if [[ ! -f "$notices" ]]; then
+  echo "build.sh: $notices does not exist." >&2
   exit 1
 fi
 

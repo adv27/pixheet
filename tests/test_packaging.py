@@ -10,6 +10,7 @@ import shutil
 import struct
 import subprocess
 import sys
+import sysconfig
 import time
 import tomllib
 import zipfile
@@ -133,6 +134,7 @@ def test_metadata_comes_from_pyproject():
     assert strings["LegalCopyright"].startswith("Copyright (c) ")
     assert strings["LegalCopyright"].endswith("Dinh-Anh Vu")
     assert "License: MIT." in strings["Comments"]
+    assert strings["Comments"].endswith("read THIRD-PARTY-NOTICES.txt.")
     assert strings["OriginalFilename"] == "Pixheet.exe"
 
 
@@ -1274,6 +1276,7 @@ RELEASE_FILES = (
     "Pixheet-linux-x86_64",
     "Pixheet-linux-x86_64.sha256",
 )
+RELEASE_NOTICES = ("THIRD-PARTY-NOTICES-windows-x64.txt", "THIRD-PARTY-NOTICES-linux-x86_64.txt")
 
 
 def test_release_waits_for_both_builds_and_publishes_four_files():
@@ -1283,7 +1286,7 @@ def test_release_waits_for_both_builds_and_publishes_four_files():
     assert "\n  build-linux:\n" in text
     assert "    needs: [build-windows, build-linux]\n" in text
     assert "VERSION: ${{ needs.build-windows.outputs.version }}" in text
-    assert f"files=({' '.join(RELEASE_FILES)})" in text
+    assert f"files=({' '.join(RELEASE_FILES)}\n" in text
     assert 'release_plan.py upload "$release" "${files[@]}"' in text
     assert 'gh release upload "$TAG" "${missing[@]}"' in text
     assert 'gh release create "$TAG" "${missing[@]}"' in text
@@ -1547,3 +1550,417 @@ def test_workflows_use_the_release_notes():
     # A missing section stops the job before it makes the tag.
     assert job.index(notes) < job.index("release_plan.py tag")
     assert '--notes-file "$RUNNER_TEMP/notes.md" --generate-notes' in job
+
+
+third_party_notices = load("third_party_notices")
+
+# The bundle of the Windows build at a0b4519 (build/pixheet/PKG-00.toc), before the trim.
+WINDOWS_BUNDLE = [
+    *(
+        (name, f"C:/python/{name}", "BINARY")
+        for name in (
+            "python315.dll",
+            "VCRUNTIME140.dll",
+            "VCRUNTIME140_1.dll",
+            "libffi-8.dll",
+            "tcl90.dll",
+            "tcl9tk90.dll",
+            "libtommath.dll",
+            "zlib1.dll",
+            "tkinterdnd2/tkdnd/win-x64-tcl9/libtkdnd2.10.3.dll",
+        )
+    ),
+    *(
+        (name, f"C:/python/DLLs/{name}", "EXTENSION")
+        for name in (
+            "select.pyd",
+            "unicodedata.pyd",
+            "_ctypes.pyd",
+            "_socket.pyd",
+            "_wmi.pyd",
+            "_tkinter.pyd",
+            "_queue.pyd",
+            "PIL/_webp.cp315-win_amd64.pyd",
+            "PIL/_avif.cp315-win_amd64.pyd",
+            "PIL/_imagingcms.cp315-win_amd64.pyd",
+            "PIL/_imaging.cp315-win_amd64.pyd",
+            "PIL/_imagingmath.cp315-win_amd64.pyd",
+        )
+    ),
+    ("pixheet.ico", "packaging/pixheet.ico", "DATA"),
+    ("sv_ttk/sv.tcl", "site-packages/sv_ttk/sv.tcl", "DATA"),
+    ("tkinterdnd2/tkdnd/win-x64-tcl9/tkdnd.tcl", "site-packages/tkdnd.tcl", "DATA"),
+    ("base_library.zip", "build/base_library.zip", "DATA"),
+]
+WINDOWS_BUILTINS = ("_abc", "_sha2", "binascii", "nt", "zlib")
+
+# The system libraries of the Linux build of the release run 39914134950.
+LINUX_SYSTEM_LIBRARIES = {
+    "libX11.so.6": "libx11-6",
+    "libXau.so.6": "libxau6",
+    "libXcursor.so.1": "libxcursor1",
+    "libXdmcp.so.6": "libxdmcp6",
+    "libXfixes.so.3": "libxfixes3",
+    "libXrender.so.1": "libxrender1",
+    "libbsd.so.0": "libbsd0",
+    "libgcc_s.so.1": "libgcc-s1",
+    "libmd.so.0": "libmd0",
+    "libstdc++.so.6": "libstdc++6",
+    "libz.so.1": "zlib1g",
+}
+# The other files of that build: all binaries of a kind, and a part of the data.
+LINUX_BUNDLE = [
+    *((name, f"/usr/lib/x86_64-linux-gnu/{name}", "BINARY") for name in LINUX_SYSTEM_LIBRARIES),
+    *(
+        (name, f"/opt/python/lib/{name}", "BINARY")
+        for name in ("libpython3.15.so.1.0", "libtcl9.0.so", "libtcl9tk9.0.so")
+    ),
+    *(
+        (f"pillow.libs/{name}", f"/venv/pillow.libs/{name}", "BINARY")
+        for name in ("libjpeg-6dc8d115.so.62.4.0", "libxcb-9065bb12.so.1.1.0")
+    ),
+    # PyInstaller adds a link at the top for each library in pillow.libs.
+    ("libxcb-9065bb12.so.1.1.0", "pillow.libs/libxcb-9065bb12.so.1.1.0", "SYMLINK"),
+    ("PIL/_imaging.cpython-315-x86_64-linux-gnu.so", "/venv/PIL/_imaging.so", "EXTENSION"),
+    (
+        "python3.15/lib-dynload/_tkinter.cpython-315-x86_64-linux-gnu.so",
+        "/opt/python/lib/python3.15/lib-dynload/_tkinter.so",
+        "EXTENSION",
+    ),
+    (
+        "tkinterdnd2/tkdnd/linux-x64-tcl9/libtcl9tkdnd2.10.3.so",
+        "/venv/tkinterdnd2/tkdnd/linux-x64-tcl9/libtcl9tkdnd2.10.3.so",
+        "BINARY",
+    ),
+    ("_tcl_data/init.tcl", "/opt/python/lib/tcl9.0/init.tcl", "DATA"),
+    ("_tk_data/tkfbox.tcl", "/opt/python/lib/tk9.0/tkfbox.tcl", "DATA"),
+    ("tcl9/9.0/msgcat-1.7.1.tm", "/opt/python/lib/tcl9/9.0/msgcat-1.7.1.tm", "DATA"),
+    ("pixheet.png", "packaging/pixheet.png", "DATA"),
+    ("sv_ttk/sv.tcl", "/venv/sv_ttk/sv.tcl", "DATA"),
+    ("base_library.zip", "build/base_library.zip", "DATA"),
+]
+LINUX_BUILTINS = (
+    "_bz2",
+    "_ctypes",
+    "_curses",
+    "_decimal",
+    "_hashlib",
+    "_lzma",
+    "_sqlite3",
+    "_ssl",
+    "_uuid",
+    "_zstd",
+    "pyexpat",
+    "readline",
+    "zlib",
+)
+
+
+def fake_license(name: str) -> str:
+    return f"License of {name}.\n"
+
+
+def fake_copyright(source: str) -> tuple[str, str]:
+    package = LINUX_SYSTEM_LIBRARIES[Path(source).name]
+    return package, f"Copyright of {package}.\n"
+
+
+def collect_notices(entries, system, builtins, package_license=fake_license):
+    return third_party_notices.collect(
+        entries,
+        system=system,
+        builtins=builtins,
+        root=PACKAGING.parent,
+        python_text="License of Python.\n",
+        package_license=package_license,
+        system_copyright=fake_copyright,
+    )
+
+
+def test_each_file_of_the_windows_bundle_has_an_owner():
+    owners = {dest: third_party_notices.owner(dest) for dest, _source, _kind in WINDOWS_BUNDLE}
+    assert owners["python315.dll"] == owners["_ctypes.pyd"] == owners["base_library.zip"]
+    assert owners["python315.dll"] == "python"
+    assert owners["tcl90.dll"] == "tcl"
+    assert owners["tcl9tk90.dll"] == "tk"
+    assert owners["PIL/_imaging.cp315-win_amd64.pyd"] == "pillow"
+    assert owners["tkinterdnd2/tkdnd/win-x64-tcl9/libtkdnd2.10.3.dll"] == "tkdnd"
+    assert owners["VCRUNTIME140_1.dll"] == "msvc"
+    assert None not in owners.values()
+
+
+def test_windows_notices_have_each_part_of_the_bundle():
+    notices = collect_notices(WINDOWS_BUNDLE, "Windows", WINDOWS_BUILTINS)
+    titles = [n.title for n in notices]
+    assert titles == [
+        "Pixheet",
+        "Python",
+        "PyInstaller",
+        "Pillow",
+        "sv-ttk",
+        "tkinterdnd2",
+        "tkdnd",
+        "Microsoft Visual C++ runtime",
+        "Tcl",
+        "Tk",
+        "libffi",
+        "libtommath",
+        "zlib",
+        "zlib-ng",
+    ]
+    by_title = {n.title: n for n in notices}
+    assert by_title["Pixheet"].text == (PACKAGING.parent / "LICENSE").read_text(encoding="utf-8")
+    assert by_title["Pillow"].text == "License of pillow.\n"
+    assert by_title["libffi"].text == third_party_notices.fixed_text("libffi")
+    assert "Files: libffi-8.dll." in by_title["libffi"].about
+    assert "Python modules: _ctypes." in by_title["libffi"].about
+    assert "Python modules: _tkinter, binascii, zlib." in by_title["zlib"].about
+    # The OpenSSL DLLs are not in the Windows bundle, so their license is not either.
+    assert "OpenSSL 3" not in titles
+
+
+def test_linux_notices_have_the_static_libraries_and_the_debian_packages():
+    notices = collect_notices(LINUX_BUNDLE, "Linux", LINUX_BUILTINS)
+    by_title = {n.title: n for n in notices}
+    # libpython3.15.so includes these libraries for its built-in modules.
+    for title in ("OpenSSL 3", "SQLite", "Expat", "libedit", "ncurses", "mpdecimal", "bzip2"):
+        assert title in by_title, title
+    assert "Python modules: _hashlib, _ssl." in by_title["OpenSSL 3"].about
+    # libtcl9tk9.0.so includes libX11, libXau and libxcb.
+    for title in ("libX11", "libXau", "libxcb"):
+        assert "Python modules: _tkinter." in by_title[title].about
+    assert "Microsoft Visual C++ runtime" not in by_title
+    for name, package in LINUX_SYSTEM_LIBRARIES.items():
+        notice = by_title[f"Debian package {package}"]
+        assert notice.text == f"Copyright of {package}.\n"
+        assert name in notice.about
+    assert (
+        by_title["Tcl"].about
+        == "The Linux app includes Tcl. Files: libtcl9.0.so. Python modules: _tkinter."
+    )
+
+
+@pytest.mark.parametrize(
+    ("system", "bundle"), [("Windows", WINDOWS_BUNDLE), ("Linux", LINUX_BUNDLE)]
+)
+def test_notices_stop_for_a_file_without_an_owner(system, bundle):
+    entries = [*bundle, ("libssl-3-x64.dll", "C:/python/DLLs/libssl-3-x64.dll", "BINARY")]
+    with pytest.raises(third_party_notices.NoticeError, match=r"\['libssl-3-x64\.dll'\]"):
+        collect_notices(entries, system, WINDOWS_BUILTINS)
+
+
+def test_a_pattern_without_a_folder_agrees_only_with_a_file_at_the_top():
+    assert third_party_notices.owner("_ctypes.pyd") == "python"
+    assert third_party_notices.owner("other/_speedups.pyd") is None
+    assert third_party_notices.owner("PIL/_imaging.pyd") == "pillow"
+    entries = [*LINUX_BUNDLE, ("other/libfoo.so.1", "/venv/other/libfoo.so.1", "BINARY")]
+    with pytest.raises(third_party_notices.NoticeError, match="other/libfoo"):
+        collect_notices(entries, "Linux", LINUX_BUILTINS)
+
+
+def test_notices_stop_for_a_link_to_a_file_that_is_not_in_the_bundle():
+    entries = [*LINUX_BUNDLE, ("libfoo.so.1", "pillow.libs/libfoo-1234.so.1", "SYMLINK")]
+    with pytest.raises(third_party_notices.NoticeError, match="libfoo-1234"):
+        collect_notices(entries, "Linux", LINUX_BUILTINS)
+
+
+def test_windows_notices_stop_for_a_library_without_an_owner():
+    """Only Linux takes the license of a system library from its Debian package."""
+    entries = [*WINDOWS_BUNDLE, ("libfoo.so.1", "C:/foo/libfoo.so.1", "BINARY")]
+    with pytest.raises(third_party_notices.NoticeError, match=r"libfoo\.so\.1"):
+        collect_notices(entries, "Windows", WINDOWS_BUILTINS)
+
+
+def test_notices_stop_for_an_empty_text():
+    def license_text(name):
+        return "" if name == "pillow" else "Text.\n"
+
+    with pytest.raises(third_party_notices.NoticeError, match="license text of Pillow is empty"):
+        collect_notices(WINDOWS_BUNDLE, "Windows", WINDOWS_BUILTINS, license_text)
+
+
+def test_render_numbers_the_parts_and_gives_each_text():
+    notices = collect_notices(WINDOWS_BUNDLE, "Windows", WINDOWS_BUILTINS)
+    text = third_party_notices.render(notices, "Windows")
+    assert text.startswith("Third-party notices of Pixheet for Windows\n\nPixheet.exe includes")
+    assert "\n  1. Pixheet\n  2. Python\n" in text
+    assert "\n14. zlib-ng\n" in text
+    assert "\r" not in text
+    assert text.endswith("\n")
+    assert not text.endswith("\n\n")
+    for notice in notices:
+        assert notice.text.strip() in text
+    # The same inputs give the same text, so two builds give the same app.
+    again = collect_notices(list(reversed(WINDOWS_BUNDLE)), "Windows", WINDOWS_BUILTINS)
+    assert third_party_notices.render(again, "Windows") == text
+
+
+def test_write_notices_writes_utf8_with_lf(tmp_path, monkeypatch):
+    collect = third_party_notices.collect
+    monkeypatch.setattr(
+        third_party_notices,
+        "collect",
+        lambda *args, **kwargs: collect(*args, package_license=fake_license, **kwargs),
+    )
+    (tmp_path / "LICENSE.txt").write_bytes(b"Python\r\nlicense\r\n")
+    path = tmp_path / "out" / "THIRD-PARTY-NOTICES.txt"
+    third_party_notices.write_notices(
+        path,
+        WINDOWS_BUNDLE,
+        system="Windows",
+        builtins=WINDOWS_BUILTINS,
+        root=PACKAGING.parent,
+        base_prefix=tmp_path,
+        stdlib=tmp_path / "Lib",
+    )
+    data = path.read_bytes()
+    assert b"\r" not in data
+    assert b"\nPython\nlicense\n" in data
+    data.decode("utf-8")
+
+
+def test_python_license_is_in_the_folder_of_python_or_of_the_standard_library(tmp_path):
+    stdlib = tmp_path / "lib" / "python3.15"
+    stdlib.mkdir(parents=True)
+    with pytest.raises(third_party_notices.NoticeError, match=r"has no LICENSE\.txt"):
+        third_party_notices.python_license(tmp_path, stdlib)
+    (stdlib / "LICENSE.txt").write_text("Linux layout\n", encoding="utf-8")
+    assert third_party_notices.python_license(tmp_path, stdlib) == "Linux layout\n"
+    (tmp_path / "LICENSE.txt").write_text("Windows layout\n", encoding="utf-8")
+    assert third_party_notices.python_license(tmp_path, stdlib) == "Windows layout\n"
+
+
+def test_python_of_the_build_has_a_license():
+    stdlib = Path(sysconfig.get_paths()["stdlib"])
+    text = third_party_notices.python_license(Path(sys.base_prefix), stdlib)
+    assert "PYTHON SOFTWARE FOUNDATION LICENSE VERSION 2" in text
+
+
+@pytest.mark.parametrize("name", ["pillow", "sv-ttk", "tkinterdnd2"])
+def test_installed_distributions_have_a_license(name):
+    text = third_party_notices.distribution_license(name)
+    assert "permission" in text.lower()
+
+
+def test_pillow_license_has_the_libraries_of_the_wheel():
+    """The Windows wheel and the Linux wheel use different headings for the libraries."""
+    text = third_party_notices.distribution_license("pillow").lower()
+    for library in ("jpeg", "tiff", "webp", "lcms", "openjp", "avif"):
+        assert library in text, library
+
+
+def test_pyinstaller_license_has_the_bootloader_exception():
+    pytest.importorskip("PyInstaller", reason="PyInstaller is only in the build group")
+    text = third_party_notices.distribution_license("pyinstaller")
+    assert "Bootloader Exception" in text
+
+
+def test_distribution_license_stops_for_a_missing_distribution():
+    with pytest.raises(third_party_notices.NoticeError, match="is not installed"):
+        third_party_notices.distribution_license("no-such-distribution-of-pixheet")
+
+
+def test_each_fixed_text_has_a_file_and_each_file_is_used():
+    names = {path.stem for path in third_party_notices.NOTICES.glob("*")}
+    assert names == set(third_party_notices.FIXED)
+    tables = (third_party_notices.MODULE_LIBRARIES, third_party_notices.LINUX_MODULE_LIBRARIES)
+    used = {library for table in tables for value in table.values() for library in value}
+    assert used <= set(third_party_notices.FIXED)
+    for name in names:
+        data = (third_party_notices.NOTICES / f"{name}.txt").read_bytes()
+        assert data.strip(), name
+        assert b"\r" not in data, name
+        data.decode("utf-8")
+
+
+@pytest.mark.skipif(sys.platform != "win32", reason="the Tcl and Tk DLLs are on Windows")
+@pytest.mark.parametrize(
+    ("dll", "member", "name"),
+    [
+        ("tcl90.dll", "tcl_library/license.terms", "tcl"),
+        ("tcl9tk90.dll", "tk_library/license.terms", "tk"),
+    ],
+)
+def test_fixed_tcl_and_tk_texts_are_the_texts_in_the_dlls(dll, member, name):
+    with zipfile.ZipFile(Path(sys.base_prefix) / "DLLs" / dll) as archive:
+        text = archive.read(member).decode("utf-8").replace("\r\n", "\n")
+    assert text == third_party_notices.fixed_text(name)
+
+
+def fake_dpkg(owned: str):
+    """Return a subprocess.run for dpkg-query that knows only the path ``owned``."""
+
+    def run(command, **_kwargs):
+        if command[-1] == owned:
+            return subprocess.CompletedProcess(command, 0, f"libx11-6:amd64: {owned}\n", "")
+        return subprocess.CompletedProcess(command, 1, "", "no path found")
+
+    return run
+
+
+def test_debian_copyright_tries_the_path_without_usr(tmp_path, monkeypatch):
+    calls = []
+    run = fake_dpkg("/lib/x86_64-linux-gnu/libX11.so.6")
+
+    def record(command, **kwargs):
+        calls.append(command[-1])
+        return run(command, **kwargs)
+
+    monkeypatch.setattr(third_party_notices.subprocess, "run", record)
+    monkeypatch.setattr(third_party_notices, "DEBIAN_DOCS", tmp_path)
+    (tmp_path / "libx11-6").mkdir()
+    (tmp_path / "libx11-6" / "copyright").write_text("X11 copyright\n", encoding="utf-8")
+    source = "/usr/lib/x86_64-linux-gnu/libX11.so.6"
+    assert third_party_notices.debian_copyright(source) == ("libx11-6", "X11 copyright\n")
+    assert calls[0] == source
+    assert "/lib/x86_64-linux-gnu/libX11.so.6" in calls
+
+
+def test_debian_copyright_stops_without_a_copyright_file(tmp_path, monkeypatch):
+    monkeypatch.setattr(third_party_notices.subprocess, "run", fake_dpkg("/usr/lib/libX11.so.6"))
+    monkeypatch.setattr(third_party_notices, "DEBIAN_DOCS", tmp_path)
+    with pytest.raises(third_party_notices.NoticeError, match="libx11-6 has no"):
+        third_party_notices.debian_copyright("/usr/lib/libX11.so.6")
+
+
+def test_debian_copyright_stops_without_a_package(monkeypatch):
+    monkeypatch.setattr(third_party_notices.subprocess, "run", fake_dpkg("/nothing"))
+    with pytest.raises(third_party_notices.NoticeError, match="No Debian package"):
+        third_party_notices.debian_copyright("/opt/libfoo.so.1")
+
+
+def test_debian_copyright_stops_without_dpkg(monkeypatch):
+    def run(command, **_kwargs):
+        raise FileNotFoundError(command[0])
+
+    monkeypatch.setattr(third_party_notices.subprocess, "run", run)
+    with pytest.raises(third_party_notices.NoticeError, match="Build on Debian 11"):
+        third_party_notices.debian_copyright("/usr/lib/libfoo.so.1")
+
+
+def test_spec_writes_the_notices_into_the_app_before_the_guards_and_the_trim():
+    text = SPEC.read_text(encoding="utf-8")
+    for name in ("REQUIRED_FILES_WINDOWS", "REQUIRED_FILES_LINUX"):
+        assert "third-party-notices.txt" in spec_value(name)
+    write = text.index("    write_notices(\n")
+    assert text.index("\na = Analysis(") < write
+    assert write < text.index("files = [dest.replace")  # the guard of REQUIRED_FILES
+    assert write < text.index("trim_binaries(a.binaries")
+    assert 'a.datas += [(FILE_NAME, str(notices), "DATA")]' in text
+    assert 'NOTICES_ASSET = "THIRD-PARTY-NOTICES-windows-x64.txt"' in text
+    assert 'NOTICES_ASSET = f"THIRD-PARTY-NOTICES-linux-{os.uname().machine}.txt"' in text
+    assert 'raise SystemExit(f"third_party_notices: {e}") from e' in text
+
+
+def test_builds_and_release_publish_the_notices():
+    release = (WORKFLOWS / "release.yml").read_text(encoding="utf-8")
+    for name in RELEASE_NOTICES:
+        assert f"            dist/{name}\n" in release  # upload-artifact
+    files = re.search(r"files=\(([^)]*)\)", release).group(1).split()
+    assert files == [*RELEASE_FILES, *RELEASE_NOTICES]
+    # A notices file has no .sha256 file. release_plan.py uploads it alone.
+    assert release_plan.upload_plan(True, RELEASE_FILES, files) == ("upload", [*RELEASE_NOTICES])
+    build_ps1 = (PACKAGING / "build.ps1").read_text(encoding="utf-8")
+    assert "dist\\THIRD-PARTY-NOTICES-windows-x64.txt" in build_ps1
+    build_sh = (PACKAGING / "build.sh").read_text(encoding="utf-8")
+    assert 'notices="$root/dist/THIRD-PARTY-NOTICES-linux-$(uname -m).txt"' in build_sh

@@ -6,7 +6,9 @@ Build the Pixheet desktop app for Windows and test the result.
 The script does these steps:
   1. Install the locked dependencies with uv: the gui extra and the build group.
   2. Build dist\Pixheet.exe with PyInstaller from packaging\pixheet.spec. Two builds of
-     one commit with the same tools give the same exe.
+     one commit with the same tools give the same exe. The spec also writes the license
+     texts of the third-party parts to dist\THIRD-PARTY-NOTICES-windows-x64.txt, and puts
+     the same text in the exe.
   3. Test the exe with packaging\check_exe.py. The exe must pass the smoke test (--smoke)
      and convert a test image correctly. It must also convert images of many formats to
      the same sheets as pixheet in Python. check_exe.py stops the exe and all processes
@@ -98,6 +100,11 @@ if ($OneDir) {
 }
 if (-not (Test-Path -LiteralPath $exe -PathType Leaf)) {
     Write-Host "build.ps1: $exe does not exist."
+    exit 1
+}
+$notices = Join-Path $root 'dist\THIRD-PARTY-NOTICES-windows-x64.txt'
+if (-not (Test-Path -LiteralPath $notices -PathType Leaf)) {
+    Write-Host "build.ps1: $notices does not exist."
     exit 1
 }
 

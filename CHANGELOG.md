@@ -39,7 +39,8 @@ This is the first release of Pixheet.
 - `Pixheet.exe`, the desktop app for Windows in one file. It does not need Python.
 - `Pixheet-linux-x86_64`, the desktop app for x86_64 Linux in one file. It needs glibc
   2.27 or later and an X server.
-- Each app in the release has a `.sha256` file.
+- Each app in the release has a `.sha256` file and a file of third-party notices. The
+  notices are also in the app.
 
 ### Known limits
 

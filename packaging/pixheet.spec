@@ -31,7 +31,10 @@
 
 import argparse
 import fnmatch
+import os
+import shutil
 import sys
+import sysconfig
 from pathlib import Path
 
 WINDOWS = sys.platform == "win32"
@@ -45,6 +48,7 @@ options = parser.parse_args()
 
 HERE = Path(SPECPATH)
 sys.path.insert(0, str(HERE))
+from third_party_notices import FILE_NAME, NoticeError, write_notices  # noqa: E402
 from trim_tcltk import trim_binaries, trim_datas  # noqa: E402
 
 NAME = "Pixheet"
@@ -231,6 +235,7 @@ SV_TTK_FILES = [
     "sv_ttk/theme/spritesheet_dark.png",
 ]
 REQUIRED_FILES_WINDOWS = [
+    "third-party-notices.txt",
     "tcl90.dll",
     "tcl9tk90.dll",
     "tkinterdnd2/tkdnd/win-x64-*/libtkdnd*.dll",
@@ -238,6 +243,7 @@ REQUIRED_FILES_WINDOWS = [
 # Tk on X11 makes the file dialog, the folder dialog and the message box with Tcl
 # scripts, and they need msgcat. tkdnd needs libX11.
 REQUIRED_FILES_LINUX = [
+    "third-party-notices.txt",
     "libtcl9*.so",
     "libtcl9tk9*.so",
     "libx11.so.6",
@@ -250,12 +256,17 @@ REQUIRED_FILES_LINUX = [
     "_tk_data/msgbox.tcl",
     "tcl9/*/msgcat-*.tm",
 ]
+# The release has the notices of each app next to the app, with the system in the name.
 if WINDOWS:
+    SYSTEM = "Windows"
+    NOTICES_ASSET = "THIRD-PARTY-NOTICES-windows-x64.txt"
     TKDND_FOLDER = "win-x64"
     EXTENSION = ".pyd"
     UNWANTED_FILES = UNWANTED_FILES_WINDOWS
     REQUIRED_FILES = REQUIRED_FILES_WINDOWS + SV_TTK_FILES
 else:
+    SYSTEM = "Linux"
+    NOTICES_ASSET = f"THIRD-PARTY-NOTICES-linux-{os.uname().machine}.txt"
     TKDND_FOLDER = "linux-x64"
     EXTENSION = ".so"
     UNWANTED_FILES = UNWANTED_FILES_LINUX
@@ -289,6 +300,27 @@ if len(tkdnd) != 1 or not next(iter(tkdnd)).startswith(TKDND_FOLDER):
     raise SystemExit(
         f"Expected one {TKDND_FOLDER} tkdnd folder in the bundle. Found: {sorted(tkdnd)}"
     )
+
+# Write the license texts of all parts of the bundle, before the trim changes the sources.
+# The build stops when a file of the bundle has no known owner, or when a text is missing.
+# Read third_party_notices.py. The file goes into the app and into the dist folder.
+notices = Path(workpath) / FILE_NAME
+try:
+    write_notices(
+        notices,
+        a.binaries + a.datas,
+        system=SYSTEM,
+        builtins=sys.builtin_module_names,
+        root=HERE.parent,
+        base_prefix=Path(sys.base_prefix),
+        stdlib=Path(sysconfig.get_paths()["stdlib"]),
+    )
+except NoticeError as e:
+    raise SystemExit(f"third_party_notices: {e}") from e
+a.datas += [(FILE_NAME, str(notices), "DATA")]
+Path(DISTPATH).mkdir(parents=True, exist_ok=True)
+shutil.copyfile(notices, Path(DISTPATH) / NOTICES_ASSET)
+print(f"third_party_notices: wrote {FILE_NAME} and {NOTICES_ASSET}")
 
 # Make sure that the excludes work, and that the bundle has all that the app needs.
 files = [dest.replace("\\", "/").lower() for dest, _source, _kind in a.binaries + a.datas]

@@ -18,7 +18,8 @@
 # Before you move a build job to a self-hosted runner, you MUST remove the pull_request
 # trigger. Read "Later: self-hosted runner" in packaging/README.md.
 #
-# The release job publishes the four files of both builds in a GitHub release
+# The release job publishes the six files of both builds in a GitHub release: each app,
+# its .sha256 file, and its file of third-party notices. The release is
 # "Pixheet v<version>". The notes of a new release come from CHANGELOG.md. The job runs
 # only when both builds pass:
 # - For a push to master. The version in pyproject.toml gives the tag v<version>.
@@ -118,6 +119,7 @@ jobs:
           path: |
             dist/Pixheet.exe
             dist/Pixheet.exe.sha256
+            dist/THIRD-PARTY-NOTICES-windows-x64.txt
           if-no-files-found: error
           retention-days: 30
 
@@ -191,6 +193,7 @@ jobs:
           path: |
             dist/Pixheet-linux-x86_64
             dist/Pixheet-linux-x86_64.sha256
+            dist/THIRD-PARTY-NOTICES-linux-x86_64.txt
           if-no-files-found: error
           retention-days: 30
 
@@ -333,7 +336,8 @@ jobs:
           TAG: ${{ steps.tag.outputs.tag }}
         run: |
           (cd dist && sha256sum -c Pixheet.exe.sha256 Pixheet-linux-x86_64.sha256)
-          files=(Pixheet.exe Pixheet.exe.sha256 Pixheet-linux-x86_64 Pixheet-linux-x86_64.sha256)
+          files=(Pixheet.exe Pixheet.exe.sha256 Pixheet-linux-x86_64 Pixheet-linux-x86_64.sha256
+            THIRD-PARTY-NOTICES-windows-x64.txt THIRD-PARTY-NOTICES-linux-x86_64.txt)
           release=false
           assets=""
           if view=$(gh release view "$TAG" --repo "$REPO" --json assets --jq '.assets[].name' 2>&1); then
