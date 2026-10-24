@@ -1374,6 +1374,75 @@ def test_main_adds_the_files_in_argv(monkeypatch):
     assert started == [[Path("a b.png"), Path("c.png")]]
 
 
+@pytest.mark.parametrize(
+    ("value", "hidden"), [("1", True), (" 1 ", True), ("0", False), ("", False), ("yes", False)]
+)
+def test_hidden_window_reads_the_variable(value, hidden):
+    assert gui.hidden_window({gui.HIDDEN_ENV: value}) is hidden
+    assert gui.hidden_window({}) is False
+
+
+class FakeWindow:
+    """Records the calls of hide_window."""
+
+    def __init__(self):
+        self.calls = []
+
+    def wm_geometry(self, value):
+        self.calls.append(("geometry", value))
+
+    def attributes(self, *args):
+        self.calls.append(("attributes", *args))
+
+
+@pytest.mark.parametrize(
+    ("platform", "calls", "locked"),
+    [
+        ("win32", [("geometry", "+-32000+-32000"), ("attributes", "-toolwindow", True)], True),
+        ("linux", [("geometry", "+-32000+-32000")], False),
+    ],
+)
+def test_hide_window_places_the_window_off_the_screen(monkeypatch, platform, calls, locked):
+    locks = []
+    monkeypatch.setattr(gui, "_lock_foreground", lambda lock: locks.append(lock) or True)
+    window = FakeWindow()
+    assert gui.hide_window(window, platform=platform) is locked
+    assert window.calls == calls
+    assert locks == ([True] if locked else [])
+
+
+def test_lock_foreground_does_nothing_outside_windows(monkeypatch):
+    monkeypatch.setattr(gui.sys, "platform", "linux")
+    assert gui._lock_foreground(True) is False
+
+
+@pytest.mark.parametrize("hidden", [True, False])
+def test_main_hides_the_window_in_the_hidden_mode(monkeypatch, hidden):
+    new_root().destroy()
+    monkeypatch.setenv(gui.HIDDEN_ENV, "1" if hidden else "0")
+    locks, places = [], []
+    monkeypatch.setattr(gui, "_lock_foreground", lambda lock: locks.append(lock) or True)
+    hide = gui.hide_window
+
+    def hide_window(root, platform=None):
+        # conftest.py moves each test window to +-32000+-32000. Start from a different
+        # place that is also off the screen, so that the test can see the move.
+        root.wm_geometry("+-20000+-20000")
+        result = hide(root, platform)
+        root.after(100, lambda: places.append((root.winfo_rootx(), root.winfo_rooty())))
+        return result
+
+    monkeypatch.setattr(gui, "hide_window", hide_window)
+    assert gui.main(["--smoke"]) == 0
+    if hidden:
+        [(x, y)] = places
+        assert x < -30000
+        assert y < -30000
+        assert locks == ([True, False] if sys.platform == "win32" else [])
+    else:
+        assert places == locks == []
+
+
 def sheet_size(path: Path) -> tuple[int, int]:
     """Return the number of columns and rows of the sheet in ``path``."""
     import openpyxl

@@ -222,6 +222,18 @@ def test_run_exe_returns_the_exit_code_and_the_output():
     assert "converted" in output
 
 
+def test_run_exe_starts_the_app_in_the_hidden_mode():
+    """Each run of the app keeps its window off the screen, also with more variables."""
+    gui = pytest.importorskip("pixheet.gui")
+    assert check_exe.HIDDEN_ENV == gui.HIDDEN_ENV
+    script = "import os; print(os.environ['PIXHEET_HIDDEN_WINDOW'], os.environ['PIXHEET_THEME'])"
+    code, output = check_exe.run_exe(
+        [sys.executable, "-c", script], timeout=60, env={check_exe.THEME_ENV: "dark"}
+    )
+    assert code == 0
+    assert output.split() == ["1", "dark"]
+
+
 # A one-file exe that shows an error dialog: a parent process that waits for a child
 # process that does not stop. The child keeps the output pipe open.
 HUNG_EXE = """

@@ -2536,6 +2536,56 @@ def _set_dpi_awareness() -> None:
         ctypes.windll.shcore.SetProcessDpiAwareness(2)  # per-monitor DPI aware
 
 
+HIDDEN_ENV = "PIXHEET_HIDDEN_WINDOW"
+"""The environment variable of the hidden mode. It is for the build checks only.
+
+With the value "1", the window opens off the screen and does not take the focus. Then
+``packaging/check_exe.py`` can start the built app many times, and no window comes up on
+the desktop of the person who runs the build. The app works as usual in the hidden mode.
+"""
+OFF_SCREEN = "+-32000+-32000"
+"""The position of a hidden window. It is far from each monitor."""
+LSFW_LOCK, LSFW_UNLOCK = 1, 2
+
+
+def hidden_window(environ: Mapping[str, str] | None = None) -> bool:
+    """Return True if the environment variable ``PIXHEET_HIDDEN_WINDOW`` is "1"."""
+    return (os.environ if environ is None else environ).get(HIDDEN_ENV, "").strip() == "1"
+
+
+def _lock_foreground(lock: bool) -> bool:
+    """On Windows, stop or allow the changes of the foreground window. Return True if done.
+
+    Tk makes its window the foreground window when the window shows for the first time.
+    While the lock is on, Windows refuses this change. The lock stops when the user
+    presses Alt or clicks a window, or when the app removes it.
+    """
+    if sys.platform != "win32":
+        return False
+    import ctypes
+
+    with contextlib.suppress(AttributeError, OSError):
+        user32 = ctypes.windll.user32
+        return bool(user32.LockSetForegroundWindow(LSFW_LOCK if lock else LSFW_UNLOCK))
+    return False
+
+
+def hide_window(root: tk.Tk, platform: str | None = None) -> bool:
+    """Prepare ``root`` for the hidden mode, before the window shows for the first time.
+
+    The window goes off the screen. The app keeps the transparency that it uses for the
+    theme. On Windows, the window also gets no taskbar button, and the app stops the
+    change of the foreground window. Return True if the app must remove that lock at the
+    end, with ``_lock_foreground(False)``.
+    """
+    root.wm_geometry(OFF_SCREEN)
+    if (platform or sys.platform) != "win32":
+        return False
+    with contextlib.suppress(tk.TclError):
+        root.attributes("-toolwindow", True)
+    return _lock_foreground(True)
+
+
 X11_DIALOGS = {
     "::tk::dialog::file::": "the file dialog (tkfbox.tcl)",
     "::tk::dialog::file::chooseDir::": "the folder dialog (choosedir.tcl)",
@@ -2599,6 +2649,23 @@ def smoke_test(app: App) -> list[str]:
     return problems
 
 
+def _run(root: tk.Tk, smoke: bool, files: list[Path]) -> list[str]:
+    """Make the app in ``root`` and run it until the window closes. Return the problems."""
+    # Load tkdnd into the plain tk.Tk root first, then the theme. The tests use this order.
+    dnd_type = enable_dnd(root)
+    settings = settings_path()
+    follower = follow_theme(root, settings)
+    app = App(root, dnd_type=dnd_type, follower=follower, settings=settings)
+    problems = smoke_test(app) if smoke else []
+    if files:
+        root.after_idle(app.add_paths, files)
+    if smoke and sys.stdout is not None:
+        print(f"pixheet-gui: drag and drop {'on' if app.dnd else 'off'}", flush=True)
+        print(f"pixheet-gui: theme {theme_name(root)}", flush=True)
+    root.mainloop()
+    return problems
+
+
 def main(argv: Sequence[str] | None = None) -> int:
     """Open the window. Convert the images and folders in ``argv``, if there are some.
 
@@ -2606,7 +2673,9 @@ def main(argv: Sequence[str] | None = None) -> int:
     1 if the app found a problem. See :func:`smoke_test`. The window uses the theme choice
     in the settings file. Without a choice, it follows the system light or dark mode. The
     environment variable ``PIXHEET_THEME`` can set "system", "light" or "dark" at the
-    start. It wins over the settings file.
+    start. It wins over the settings file. The environment variable
+    ``PIXHEET_HIDDEN_WINDOW=1`` keeps the window off the screen, for the build checks.
+    See :func:`hide_window`.
     """
     args = list(sys.argv[1:] if argv is None else argv)
     smoke = "--smoke" in args
@@ -2622,18 +2691,13 @@ def main(argv: Sequence[str] | None = None) -> int:
     except tk.TclError as e:
         _error(f"cannot open a window: {e}")
         return 1
-    # Load tkdnd into the plain tk.Tk root first, then the theme. The tests use this order.
-    dnd_type = enable_dnd(root)
-    settings = settings_path()
-    follower = follow_theme(root, settings)
-    app = App(root, dnd_type=dnd_type, follower=follower, settings=settings)
-    problems = smoke_test(app) if smoke else []
-    if files:
-        root.after_idle(app.add_paths, files)
-    if smoke and sys.stdout is not None:
-        print(f"pixheet-gui: drag and drop {'on' if app.dnd else 'off'}", flush=True)
-        print(f"pixheet-gui: theme {theme_name(root)}", flush=True)
-    root.mainloop()
+    # Tk shows the window at the first idle time. Thus hide it at once.
+    locked = hidden_window() and hide_window(root)
+    try:
+        problems = _run(root, smoke, files)
+    finally:
+        if locked:
+            _lock_foreground(False)
     for problem in problems:
         _error(problem.replace("\n", " "))
     return 1 if problems else 0

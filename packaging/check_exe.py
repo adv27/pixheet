@@ -24,6 +24,10 @@ A one-file app extracts itself to a folder ``_MEI...`` in that folder. After eac
 also after the script stops the app, the script deletes the folder. Thus a stopped app
 cannot leave a ``_MEI...`` folder in the temporary folder of the user.
 
+Each run of the app also gets ``PIXHEET_HIDDEN_WINDOW=1``. Then the window of the app
+opens off the screen and does not take the focus. Thus the check shows no window on the
+desktop of the person who runs the build.
+
 Run the script from the repository root:
 
     uv run python packaging/check_exe.py dist/Pixheet.exe
@@ -63,6 +67,8 @@ FORMATS_FOLDER = "formats ảnh"
 """The folder of the format images. The name has a space and Vietnamese letters."""
 THEME_ENV = "PIXHEET_THEME"
 """The environment variable that sets the theme of the app."""
+HIDDEN_ENV = "PIXHEET_HIDDEN_WINDOW"
+"""The environment variable that keeps the window of the app off the screen."""
 THEME_LINE = re.compile(r"^pixheet-gui: theme (\S+)\s*$", re.MULTILINE)
 """The line of ``--smoke`` that names the ttk theme of the window."""
 DND_LINE = re.compile(r"^pixheet-gui: drag and drop (on|off)\s*$", re.MULTILINE)
@@ -229,13 +235,14 @@ def run_exe(
     """Run ``command``, and return its exit code and its output (stdout and stderr).
 
     ``env`` adds environment variables. The command gets a new temporary folder in TEMP,
-    TMP and TMPDIR. If the command does not stop in ``timeout`` seconds, stop it and all
-    processes that it started. Then the exit code is None. At the end, delete the
-    temporary folder. Raise ``CleanupError`` if that is not possible.
+    TMP and TMPDIR, and ``PIXHEET_HIDDEN_WINDOW=1``. If the command does not stop in
+    ``timeout`` seconds, stop it and all processes that it started. Then the exit code is
+    None. At the end, delete the temporary folder. Raise ``CleanupError`` if that is not
+    possible.
     """
     temp = Path(tempfile.mkdtemp(prefix="pixheet-exe-"))
     try:
-        variables = dict.fromkeys(TEMP_VARIABLES, str(temp)) | (env or {})
+        variables = dict.fromkeys(TEMP_VARIABLES, str(temp)) | {HIDDEN_ENV: "1"} | (env or {})
         return run_process(command, timeout, {**os.environ, **variables})
     finally:
         remove_folder(temp)
