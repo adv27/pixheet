@@ -114,7 +114,11 @@ jobs:
   build-linux:
     name: Build Pixheet for Linux
     runs-on: ubuntu-latest
-    container: debian:11
+    # The digest pins the image, the same as the commit SHA of each action. This is the
+    # multi-platform index of debian:11 on 2026-10-24. Debian 11 gets no more updates, so
+    # the digest changes rarely. To get the current digest, run
+    # "docker buildx imagetools inspect debian:11".
+    container: debian:11@sha256:6f519a81440354a85eb592c5f32109ab80605f6b892455983a6f618bf87fabe9
     timeout-minutes: 45
     permissions:
       contents: read # check out the code

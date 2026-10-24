@@ -5,6 +5,7 @@ import ast
 import importlib.util
 import io
 import os
+import re
 import shutil
 import struct
 import subprocess
@@ -1293,7 +1294,9 @@ def test_release_waits_for_both_builds_and_publishes_four_files():
 def test_linux_build_runs_in_debian_11():
     text = (WORKFLOWS / "release.yml").read_text(encoding="utf-8")
     job = text[text.index("\n  build-linux:\n") : text.index("\n  release:\n")]
-    assert "    runs-on: ubuntu-latest\n    container: debian:11\n" in job
+    assert "    runs-on: ubuntu-latest\n" in job
+    # The image is pinned to a digest, the same as each action is pinned to a commit.
+    assert re.search(r"\n    container: debian:11@sha256:[0-9a-f]{64}\n", job)
     assert "archive.debian.org/debian bullseye main" in job
     assert "binutils" in job
     assert "xvfb" in job
