@@ -90,6 +90,9 @@ Run the tests, the lint, and the format check before you report a change as comp
   the value is new. Else the event never stops.
 - The GUI tests replace the dialogs of the app: `show_error`, `ask_files`, `ask_folder`
   and `ask_replace`. A real modal dialog stops the test.
+- Tests and checks must not show windows on the screen. `tests/conftest.py` moves the
+  test windows off the screen. The build checks use `PIXHEET_HIDDEN_WINDOW=1`. Take
+  screenshots only of windows off the screen, with `PrintWindow`.
 - `App` does not load the Sun Valley theme. Only `main()` loads it, so most window tests
   use the default ttk theme. A test that needs the theme calls `apply_theme()`.
 - The primary development OS is Windows. Keep paths and shell examples portable.
