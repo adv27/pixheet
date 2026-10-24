@@ -38,16 +38,11 @@ This is the first release of Pixheet.
   output name, each output gets a tag, for example `photo (png).xlsx`.
 - The desktop app has the Sun Valley theme, with the settings **System**, **Light**
   and **Dark**.
-- `Pixheet.exe` is the desktop app for Windows in one file. It does not need Python.
-- `Pixheet-linux-x86_64` is the desktop app for x86_64 Linux in one file. It needs glibc
-  2.27 or later and an X server.
-- Each app in the release has a `.sha256` file and a file of third-party notices. The
-  notices are also in the app.
+- `Pixheet.exe` for Windows and `Pixheet-linux-x86_64` for Linux are the desktop app in
+  one file.
 
 ### Known limits
 
-- The exe has no code signature. Windows SmartScreen can show "Windows protected your
-  PC". To start the app, click **More info**, then **Run anyway**.
 - On Linux, drag and drop needs libX11 1.7 or later and libxcb 1.14 or later. Ubuntu
   18.04, Debian 10 and RHEL 8 have an older libxcb. On these systems, use **Add
   files...** and **Add folder...**.
