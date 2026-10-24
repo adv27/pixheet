@@ -160,9 +160,9 @@ EXCLUDES = [
     "sysconfig",
     "_aix_support",
     # --- Pillow: modules that pixheet never uses ---
-    # Each one is imported only in a function that pixheet does not call, or is a plugin
-    # that only saves files. Keep PIL.ImageCms and PIL._imagingcms: Image.convert() uses
-    # them for LAB images, for example a LAB TIFF.
+    # Pillow imports each one only in a function that pixheet does not call, or it is a
+    # plugin that only saves files. Keep PIL.ImageCms and PIL._imagingcms:
+    # Image.convert() uses them for LAB images, for example a LAB TIFF.
     "PIL.ImageTk",  # Image to Tk PhotoImage; also removes PIL._imagingtk
     "PIL._imagingtk",
     "PIL.ImageQt",  # Qt conversion
@@ -373,7 +373,7 @@ common = dict(
     debug=False,
     bootloader_ignore_signals=False,
     # On Linux, strip makes the file about 3.8 MB smaller. Windows has no strip tool on
-    # PATH. A MinGW strip on PATH would run on MSVC binaries, which is not supported.
+    # PATH. A MinGW strip on PATH would run on MSVC binaries, and it does not support them.
     strip=not WINDOWS,
     # UPX makes the exe about 4.5 MB smaller. But each start is about 0.4 s slower, and
     # antivirus programs flag UPX-packed exes.
