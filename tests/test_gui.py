@@ -2342,7 +2342,9 @@ def test_nothing_is_cut_off_at_the_minimum_size(percent, themed, mode, tmp_path)
                 assert widget.winfo_height() >= widget.winfo_reqheight(), widget
             assert widget.winfo_x() + widget.winfo_width() <= parent.winfo_width(), widget
             assert widget.winfo_y() + widget.winfo_height() <= parent.winfo_height(), widget
-        if mode == "list":  # at least 3 rows of the list show
+        if mode == "list":  # the path line fits, and at least 3 rows of the list show
+            font = app._label_font()
+            assert font.measure(app.path_var.get()) <= app.path_label.winfo_width()
             rowheight = int(ttk.Style(root).lookup("Treeview", "rowheight") or 20)
             assert app.tree.winfo_height() >= 4 * rowheight, app.tree.winfo_height()
         app.worker = None
@@ -2583,14 +2585,18 @@ def test_the_app_asks_with_the_replace_dialog(tmp_path):
 def test_the_path_line_of_the_details_fits_the_window(harness, tmp_path):
     app = harness().app
     src = tmp_path / "Photos" / "2024" / "Da Lat" / "IMG_1073.jpg"
-    app._line_chars = 1_000
+    app._line_width = 100_000
     assert app._path_line(src, src.with_suffix(".xlsx")) == f"{src}{gui.ARROW}IMG_1073.xlsx"
     out = tmp_path / "out" / "IMG_1073.xlsx"
     assert app._path_line(src, out) == f"{src}{gui.ARROW}{out}"
     assert app._path_line(src, extra=" · Writing row 3 of 9") == f"{src} · Writing row 3 of 9"
-    app._line_chars = 60
-    line = app._path_line(src, out)
-    assert len(line) <= 60
-    assert line.endswith("IMG_1073.xlsx")
-    assert gui.middle_ellipsis("a/b/c/d", 5) in ("…/d", "a/…/d") or True
-    assert "…" in line
+    font = app._label_font()
+    for chars in (60, 90):
+        app._line_width = font.measure("x" * chars)
+        line = app._path_line(src, out)
+        assert font.measure(line) <= app._line_width, line
+        assert line.endswith("IMG_1073.xlsx")
+        assert "…" in line
+        line = app._path_line(src, extra=" · Writing row 3 of 9")
+        assert font.measure(line) <= app._line_width, line
+        assert line.endswith("IMG_1073.jpg · Writing row 3 of 9")

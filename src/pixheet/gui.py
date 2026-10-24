@@ -1060,10 +1060,11 @@ class App:
         # Rows 6 and 7: the details of the selected row in the list, on two lines: the
         # files, then the result. With one image, row 7 is the status of the image.
         self.path_var = tk.StringVar(root, value="")
-        self.path_label = ttk.Label(body, textvariable=self.path_var)
+        # A width of one character: a long text must not make the window wider.
+        self.path_label = ttk.Label(body, textvariable=self.path_var, width=1)
         self.path_label.grid(row=6, column=0, sticky="ew", pady=(4, 0))
-        self._line_chars = 100
-        """The number of characters that fit on one line of the details."""
+        self._line_width = 600
+        """The width of one line of the details, in pixels."""
         self.status_var = tk.StringVar(root, value="")
         self.status_label = ttk.Label(body, textvariable=self.status_var, justify="left")
         self.status_label.grid(row=7, column=0, sticky="ew")
@@ -1122,7 +1123,7 @@ class App:
             columns=("name", "folder", "status"),
             show="headings",
             selectmode="extended",
-            height=5,
+            height=4,
         )
         tree.heading("name", text="Name", anchor="w")
         tree.heading("folder", text="Folder", anchor="w")
@@ -1316,9 +1317,27 @@ class App:
 
         The size that the widgets need changes with the theme, the fonts, and the screen
         resolution. A smaller window cuts off a part of the options row. The size includes
-        the list and the note bar, so the list keeps some rows at the minimum size.
+        the list, the note bar and the buttons after a stopped run, so the list keeps some
+        rows at the minimum size.
         """
-        widgets = (self.list_frame, self.note, self.note_button, self.path_label, self.status_label)
+        samples = {
+            self.stop_button: "Convert 999",
+            self.retry_button: "Retry failed (99)",
+            self.folders_button: "Show folders (99)",
+        }
+        texts = {button: button.cget("text") for button in samples}
+        for button, text in samples.items():
+            button.configure(text=text)
+        widgets = (
+            self.list_frame,
+            self.note,
+            self.note_button,
+            self.path_label,
+            self.status_label,
+            *samples,
+            self.clear_button,
+            self.open_button,
+        )
         hidden = [widget for widget in widgets if not widget.winfo_manager()]
         for widget in hidden:
             widget.grid()
@@ -1326,20 +1345,22 @@ class App:
         width, height = self.root.winfo_reqwidth(), self.root.winfo_reqheight()
         for widget in hidden:
             widget.grid_remove()
+        for button, text in texts.items():
+            button.configure(text=text)
         self.root.minsize(max(MIN_WIDTH, width), max(MIN_HEIGHT, height))
+
+    def _label_font(self) -> Any:
+        name = ttk.Style(self.root).lookup("TLabel", "font") or "TkDefaultFont"
+        try:
+            return tkfont.nametofont(name, root=self.root)
+        except tk.TclError:
+            return tkfont.nametofont("TkDefaultFont", root=self.root)
 
     def _wrap_status(self, event: tk.Event) -> None:
         width = max(event.width - 32, 100)
         self.status_label.configure(wraplength=width)
-        name = ttk.Style(self.root).lookup("TLabel", "font") or "TkDefaultFont"
-        try:
-            font = tkfont.nametofont(name, root=self.root)
-        except tk.TclError:
-            font = tkfont.nametofont("TkDefaultFont", root=self.root)
-        sample = "abcdefghijklmnopqrstuvwxyz ABCDEFGHIJKLMNOPQRSTUVWXYZ 0123456789\\"
-        chars = int(width / (font.measure(sample) / len(sample)))
-        if chars != self._line_chars:
-            self._line_chars = chars
+        if width != self._line_width:
+            self._line_width = width
             if self.list_mode:
                 self._refresh_details()
 
@@ -2176,13 +2197,29 @@ class App:
         """Return line 1 of the details: the image and its output, on one line.
 
         The output shows as a name when it is in the folder of the image. A long path
-        gets "…" in the middle, so that the line fits the window.
+        gets "…" in the middle, so that the line fits the width of the window.
         """
-        budget = max(24, self._line_chars - len(extra))
-        source = str(src)
-        if dst is None:
+        target = None
+        if dst is not None:
+            target = dst.name if path_key(dst.parent) == path_key(src.parent) else str(dst)
+        font = self._label_font()
+        full = len(str(src)) + len(extra) + (len(ARROW) + len(target) if target else 0)
+        budget = full
+        while True:
+            line = self._fit_path_line(str(src), target, extra, budget)
+            width = font.measure(line)
+            if width <= self._line_width or budget <= 24:
+                return line
+            # Remove the characters that do not fit, and some more for wide letters.
+            over = int((width - self._line_width) / max(width / len(line), 1)) + 2
+            budget = max(24, min(budget, len(line)) - over)
+
+    @staticmethod
+    def _fit_path_line(source: str, target: str | None, extra: str, budget: int) -> str:
+        """Return the line with ``budget`` characters or fewer for the two paths."""
+        budget = max(24, budget - len(extra))
+        if target is None:
             return middle_ellipsis(source, budget) + extra
-        target = dst.name if path_key(dst.parent) == path_key(src.parent) else str(dst)
         if len(source) + len(ARROW) + len(target) > budget:
             target = middle_ellipsis(target, max(12, budget // 2 - len(ARROW)))
             source = middle_ellipsis(source, max(12, budget - len(ARROW) - len(target)))
