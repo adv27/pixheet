@@ -1293,6 +1293,154 @@ def test_context_menu_items_follow_the_selection(harness, tmp_path):
     assert clipboard == [str(bad)]
 
 
+def one_done_one_failed(h, tmp_path):
+    """Convert a.png and bad.png. bad.png is not an image, so its row fails."""
+    bad = tmp_path / "bad.png"
+    bad.write_text("not an image")
+    h.run(image(tmp_path / "a.png"), bad)
+    assert h.states() == ["done", "failed"]
+    return bad
+
+
+def test_select_failed_files_and_remove_converted_files(harness, tmp_path):
+    h = harness()
+    one_done_one_failed(h, tmp_path)
+    h.app.select_failed()
+    assert h.app.tree.selection() == (h.iid("bad.png"),)
+
+    h.app.remove_done()
+    assert [name for name, _status in h.rows()] == ["bad.png"]
+    assert h.states() == ["failed"]
+    assert (tmp_path / "a.xlsx").exists()  # the file stays, only the row goes
+
+    h.app.clear_list()
+    h.run(image(tmp_path / "c.png"))
+    h.app.select_failed()  # no failed rows: the selection is empty
+    assert h.app.tree.selection() == ()
+
+
+def test_retry_in_the_menu_converts_only_the_failed_rows(harness, tmp_path):
+    h = harness()
+    bad = one_done_one_failed(h, tmp_path)
+    image(bad)  # the user puts a real image in the place of the file
+    (tmp_path / "a.xlsx").write_bytes(b"old")
+    h.app._select_all()
+    h.app.retry_selected()
+    h.root.update()
+    h.wait()
+    assert h.states() == ["done", "done"]
+    assert (tmp_path / "bad.xlsx").exists()
+    assert (tmp_path / "a.xlsx").read_bytes() == b"old"  # a done row does not convert again
+    assert h.questions == []
+
+
+def test_open_error_is_shown(harness, tmp_path, monkeypatch):
+    def fail(path):
+        raise OSError("no association")
+
+    monkeypatch.setattr(gui, "open_path", fail)
+    h = harness()
+    h.run(image(tmp_path / "a.png"), image(tmp_path / "b.png"))
+    h.app.open_output()  # two done rows and no selection: nothing to open
+    assert h.errors == []
+
+    h.app.tree.selection_set(h.iid("a.png"))
+    h.app.open_output()
+    assert h.errors == ["Cannot open the file: no association"]
+    assert h.app._dialogs == 0
+
+
+def test_a_drop_while_the_window_closes_is_refused(harness, tmp_path, monkeypatch):
+    gate = gate_convert(monkeypatch)
+    h = harness()
+    h.drop(image(tmp_path / "a.png"))
+    h.root.update()
+    h.app.close()  # the window waits for the worker
+    assert h.drop(image(tmp_path / "b.png")) == "refuse_drop"
+    assert [name for name, _status in h.rows()] == ["a.png"]
+    gate.set()
+    h.pump(lambda: h.app.worker is None)
+    assert destroyed(h.root)
+    assert not (tmp_path / "b.xlsx").exists()
+
+
+def test_note_button_without_an_action_closes_the_note(harness):
+    h = harness()
+    h.app.set_note("Converted 1 file.")
+    h.app.run_note_action()
+    assert h.app.note_var.get() == ""
+    assert h.app.note.winfo_manager() == ""
+
+
+def test_double_click_opens_a_done_row(harness, tmp_path, monkeypatch):
+    opened = []
+    monkeypatch.setattr(gui, "open_path", opened.append)
+    h = harness()
+    one_done_one_failed(h, tmp_path)
+    # The list is not on the screen, so the test gives the row under the mouse.
+    under_mouse = {10: h.iid("a.png"), 30: h.iid("bad.png"), 300: ""}
+    monkeypatch.setattr(h.app.tree, "identify_row", under_mouse.get)
+
+    h.app._on_double_click(types.SimpleNamespace(y=30))  # a failed row: no file to open
+    assert h.app.tree.selection() == (h.iid("bad.png"),)
+    assert opened == []
+    h.app._on_double_click(types.SimpleNamespace(y=300))  # below the rows: no change
+    assert h.app.tree.selection() == (h.iid("bad.png"),)
+    h.app._on_double_click(types.SimpleNamespace(y=10))
+    assert h.app.tree.selection() == (h.iid("a.png"),)
+    assert opened == [tmp_path / "a.xlsx"]
+
+
+def test_right_click_and_the_menu_key_open_the_context_menu(harness, tmp_path, monkeypatch):
+    h = harness()
+    one_done_one_failed(h, tmp_path)
+    popups = []
+
+    def popup(menu, x, y):
+        popups.append(((x, y), menu.entrycget("Copy error", "state")))
+
+    monkeypatch.setattr(h.app, "_popup", popup)
+    under_mouse = {10: h.iid("a.png"), 30: h.iid("bad.png")}
+    monkeypatch.setattr(h.app.tree, "identify_row", under_mouse.get)
+
+    def click(y):
+        return h.app._on_right_click(types.SimpleNamespace(y=y, x_root=500, y_root=600 + y))
+
+    # A row outside the selection: the click selects it, and the menu fits that row.
+    assert click(30) == "break"
+    assert h.app.tree.selection() == (h.iid("bad.png"),)
+    # A row in the selection: the selection stays.
+    h.app._select_all()
+    assert click(10) == "break"
+    assert len(h.app.tree.selection()) == 2
+    assert popups == [((500, 630), "normal"), ((500, 610), "normal")]
+
+    # The menu key opens the menu below the focus row, or near the corner of the list.
+    popups.clear()
+    tree = h.app.tree
+    x, y = tree.winfo_rootx(), tree.winfo_rooty()
+    tree.focus(h.iid("bad.png"))
+    box = tree.bbox(h.iid("bad.png"))  # some systems give no box for a hidden list
+    below = (x + box[0] + 20, y + box[1] + box[3]) if box else (x + 20, y + 20)
+    assert h.app._on_menu_key() == "break"
+    tree.focus("")
+    assert h.app._on_menu_key() == "break"
+    assert popups == [(below, "normal"), ((x + 20, y + 20), "normal")]
+
+
+def test_popup_releases_the_grab_also_after_an_error():
+    calls = []
+
+    def tk_popup(x, y):
+        calls.append(("popup", x, y))
+        raise tk.TclError("cannot show the menu")
+
+    menu = types.SimpleNamespace(tk_popup=tk_popup, grab_release=lambda: calls.append("release"))
+    with pytest.raises(tk.TclError):
+        gui.App._popup(None, menu, 5, 6)
+    assert calls == [("popup", 5, 6), "release"]
+
+
 def test_the_list_follows_the_converting_row(harness, tmp_path, monkeypatch):
     gate = gate_convert(monkeypatch)
     h = harness()
