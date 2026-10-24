@@ -2246,13 +2246,16 @@ class App:
         else:
             self.convert_waiting()
 
-    def cancel(self) -> None:
-        """Stop the run. The current file stops at its next row. The other rows wait."""
+    def cancel(self, text: str = "Stopping.") -> None:
+        """Stop the run. The current file stops at its next row. The other rows wait.
+
+        ``text`` is the status line until the worker stops.
+        """
         if self.worker is None:
             return
         self.cancel_event.set()
         self.stop_button.state(["disabled"])
-        self._stopping_text = "Stopping."
+        self._stopping_text = text
         self._refresh_details()
 
     def convert_waiting(self) -> None:
@@ -2387,9 +2390,7 @@ class App:
         self.closing = True
         if self.worker is None:
             return  # a dialog is open; the window closes after the dialog
-        self.cancel()
-        self._stopping_text = "Stopping. The window closes when the current file stops."
-        self._refresh_details()
+        self.cancel("Stopping. The window closes when the current file stops.")
 
     def dispose(self) -> None:
         """Cancel the timers of the window."""
