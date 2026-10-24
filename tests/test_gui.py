@@ -1460,6 +1460,27 @@ def test_context_menu_items_follow_the_selection(harness, tmp_path):
     assert clipboard == [str(bad)]
 
 
+def test_the_context_menu_is_made_one_time(harness, tmp_path, monkeypatch):
+    h = harness()
+    h.run(image(tmp_path / "a.png"), image(tmp_path / "b.png"))
+    posted = []
+    monkeypatch.setattr(tk.Menu, "tk_popup", lambda menu, x, y, entry="": posted.append(menu))
+
+    def menus():
+        return [child for child in h.root.winfo_children() if isinstance(child, tk.Menu)]
+
+    before = len(menus())
+    commands = len(h.root.tk.call("info", "commands"))
+    event = types.SimpleNamespace(x_root=10, y_root=10, y=5)
+    for _ in range(20):
+        h.app._on_right_click(event)
+        h.app._on_menu_key()
+    assert len(menus()) == max(before, 1)
+    assert len(set(posted)) == 1
+    assert len(h.root.tk.call("info", "commands")) <= commands + 12  # one menu at most
+    assert posted[0].entrycget("Open", "state") in ("normal", "disabled")
+
+
 def one_done_one_failed(h, tmp_path):
     """Convert a.png and bad.png. bad.png is not an image, so its row fails."""
     bad = tmp_path / "bad.png"

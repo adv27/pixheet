@@ -1171,6 +1171,8 @@ class App:
         for key in ("<App>", "<Menu>"):  # the Menu key on Windows and on X11
             with contextlib.suppress(tk.TclError):
                 tree.bind(key, self._on_menu_key)
+        # One context menu for the life of the window. context_menu() fills it again.
+        self._context_menu = tk.Menu(self.root, tearoff=False)
         # A click, a scroll or a move of the selection stops the follow of the current row.
         for sequence in (
             "<Button-1>",
@@ -2552,7 +2554,11 @@ class App:
         rows = self._selected_rows()
         states = {row.state for row in rows}
         one_done = len(rows) == 1 and rows[0].state == DONE
-        menu = tk.Menu(self.root, tearoff=False)
+        # Fill the same menu each time. A new menu for each click stays in memory, with
+        # its Tcl commands. Do not destroy the menu after tk_popup: on X11, tk_popup
+        # returns while the menu is still open.
+        menu = self._context_menu
+        menu.delete(0, "end")
 
         def add(label: str, command: Callable[[], object], enabled: bool, key: str = "") -> None:
             menu.add_command(
