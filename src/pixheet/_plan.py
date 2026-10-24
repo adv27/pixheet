@@ -401,18 +401,15 @@ def folder_labels(folders: Sequence[Path]) -> tuple[str, dict[str, str]]:
     root = common_folder(list(unique.values()))
     if root is None:
         return "Folder", {key: str(folder) for key, folder in unique.items()}
+    drive = root == root.parent  # a drive or a share
     labels: dict[str, str] = {}
-    if root == root.parent:  # a drive or a share
-        where = str(root)
-        for key, folder in unique.items():
-            relative = os.path.relpath(folder, root)
+    for key, folder in unique.items():
+        relative = os.path.relpath(folder, root)
+        if drive:
             labels[key] = str(root) if relative == os.curdir else relative
-    else:
-        where = str(root.parent)
-        for key, folder in unique.items():
-            relative = os.path.relpath(folder, root)
-            labels[key] = root.name if relative == os.curdir else str(root.name / Path(relative))
-    return f"{FOLDER_IN}{where})", labels
+        else:
+            labels[key] = str(Path(root.name, relative))  # Path drops "."
+    return f"{FOLDER_IN}{root if drive else root.parent})", labels
 
 
 def end_ellipsis(text: str, limit: int) -> str:
