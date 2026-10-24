@@ -19,7 +19,8 @@
 # trigger. Read "Later: self-hosted runner" in packaging/README.md.
 #
 # The release job publishes the four files of both builds in a GitHub release
-# "Pixheet v<version>". It runs only when both builds pass:
+# "Pixheet v<version>". The notes of a new release come from CHANGELOG.md. The job runs
+# only when both builds pass:
 # - For a push to master. The version in pyproject.toml gives the tag v<version>.
 #   - When the tag does not exist, the job makes it at the commit of the push.
 #   - When the tag exists at the commit of the push, an earlier run made it. The job adds
@@ -221,6 +222,14 @@ jobs:
         with:
           persist-credentials: false
 
+      # The release notes are the section of the version in CHANGELOG.md, then the download
+      # steps. gh adds the list of the pull requests (--generate-notes). This step comes
+      # before the tag. Thus a missing section stops the job before it makes the tag.
+      - name: Write the release notes
+        env:
+          VERSION: ${{ needs.build-windows.outputs.version }}
+        run: python3 packaging/release_notes.py "$VERSION" > "$RUNNER_TEMP/notes.md"
+
       # For a push to master, release_plan.py compares the tag v<version> with the commit
       # of the push:
       # - No tag: the job makes the tag at the commit of the push, then publishes.
@@ -345,7 +354,8 @@ jobs:
           case "$action" in
             create)
               gh release create "$TAG" "${missing[@]}" --repo "$REPO" \
-                --verify-tag --title "Pixheet $TAG" --generate-notes
+                --verify-tag --title "Pixheet $TAG" \
+                --notes-file "$RUNNER_TEMP/notes.md" --generate-notes
               ;;
             upload)
               echo "The release $TAG exists. The job uploads: ${missing[*]}"

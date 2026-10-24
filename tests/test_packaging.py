@@ -40,6 +40,7 @@ trim_tcltk = load("trim_tcltk")
 linux_guards = load("linux_guards")
 release_version = load("release_version")
 release_plan = load("release_plan")
+release_notes = load("release_notes")
 
 
 def frames(path: Path) -> dict[int, bytes]:
@@ -1353,7 +1354,7 @@ def test_ci_uses_one_exact_uv_and_users_can_use_a_newer_uv():
     assert tuple(map(int, versions[0].split("."))) >= minimum
 
 
-@pytest.mark.parametrize("name", ["release_version", "release_plan"])
+@pytest.mark.parametrize("name", ["release_version", "release_plan", "release_notes"])
 def test_release_scripts_run_on_python_3_12(name):
     """ci.yml and the release job run the scripts with the Python 3.12 of the Ubuntu runner."""
     source = (PACKAGING / f"{name}.py").read_text(encoding="utf-8")
@@ -1444,3 +1445,105 @@ def test_release_runs_never_cancel_a_push():
     job = text[text.index("\n  release:\n") :]
     assert "      group: ${{ github.workflow }}-release\n" in job
     assert "      cancel-in-progress: false\n" in job
+
+
+CHANGELOG = """\
+# Changelog
+
+Text before the first version.
+
+## [0.2.0] - 2026-11-01
+
+### Added
+
+- Item two.
+
+## 0.1.0
+
+The first release.
+
+### Fixed
+
+- Item one.
+## 0.0.9
+"""
+
+
+def test_changelog_section_gives_the_text_of_one_version():
+    assert release_notes.changelog_section(CHANGELOG, "0.2.0") == "### Added\n\n- Item two.\n"
+    assert release_notes.changelog_section(CHANGELOG, "0.1.0") == (
+        "The first release.\n\n### Fixed\n\n- Item one.\n"
+    )
+
+
+def test_changelog_section_reads_a_file_without_a_final_line_end():
+    text = "# Changelog\n\n## 1.0.0\n\n- The last line.  "
+    assert release_notes.changelog_section(text, "1.0.0") == "- The last line.\n"
+
+
+@pytest.mark.parametrize(
+    ("version", "problem"),
+    [
+        ("0.3.0", "has no section '## 0.3.0'"),
+        ("0.1", "has no section '## 0.1'"),  # 0.1 is not 0.1.0
+        ("0.0.9", "is empty"),
+        ("", "is not correct"),
+    ],
+)
+def test_changelog_section_refuses_a_missing_or_empty_section(version, problem):
+    with pytest.raises(release_notes.NotesError, match=re.escape(problem)):
+        release_notes.changelog_section(CHANGELOG, version)
+
+
+def test_release_notes_add_the_downloads_of_the_version():
+    notes = release_notes.release_notes(CHANGELOG, "0.1.0")
+    assert notes.startswith("The first release.\n")
+    assert "\n\n## Downloads\n" in notes
+    assert "https://github.com/adv27/pixheet/blob/v0.1.0/README.md" in notes
+    for name in ("Pixheet.exe", "Pixheet-linux-x86_64.sha256", "chmod +x", "Run anyway"):
+        assert name in notes
+
+
+def test_unwrap_joins_the_lines_of_each_paragraph_and_item():
+    text = (
+        "### Added\n\nA long\nparagraph.\n\n- An item\n  with two lines.\n"
+        "- Next item:\n  - A sub-item\n    goes on.\n1. A step\n   goes on.\n\n"
+        "```console\n$ one\n$ two\n```\nText after.\n"
+    )
+    assert release_notes.unwrap(text) == (
+        "### Added\n\nA long paragraph.\n\n- An item with two lines.\n"
+        "- Next item:\n  - A sub-item goes on.\n1. A step goes on.\n\n"
+        "```console\n$ one\n$ two\n```\nText after.\n"
+    )
+
+
+def test_release_notes_command(tmp_path, capsys):
+    changelog = tmp_path / "CHANGELOG.md"
+    changelog.write_text(CHANGELOG, encoding="utf-8")
+    assert release_notes.main(["0.2.0", str(changelog)]) == 0
+    assert capsys.readouterr().out.startswith("### Added\n\n- Item two.\n\n## Downloads\n")
+    assert release_notes.main(["0.3.0", str(changelog)]) == 1
+    assert capsys.readouterr().out.startswith("::error::CHANGELOG.md has no section")
+
+
+def test_changelog_has_the_version_of_pyproject():
+    """Without the section, the release job stops after the merge."""
+    root = PACKAGING.parent
+    text = (root / "CHANGELOG.md").read_text(encoding="utf-8")
+    section = release_notes.changelog_section(
+        text, release_version.read_version(root / "pyproject.toml")
+    )
+    assert "### Added" in section or "### Fixed" in section or "### Changed" in section
+
+
+def test_workflows_use_the_release_notes():
+    ci = (WORKFLOWS / "ci.yml").read_text(encoding="utf-8")
+    job = ci[ci.index("\n  version:\n") :]
+    assert 'python3 packaging/release_notes.py "$version" > /dev/null' in job
+    text = (WORKFLOWS / "release.yml").read_text(encoding="utf-8")
+    job = text[text.index("\n  release:\n") :]
+    notes = 'python3 packaging/release_notes.py "$VERSION" > "$RUNNER_TEMP/notes.md"'
+    assert notes in job
+    # A missing section stops the job before it makes the tag.
+    assert job.index(notes) < job.index("release_plan.py tag")
+    assert '--notes-file "$RUNNER_TEMP/notes.md" --generate-notes' in job

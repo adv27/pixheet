@@ -120,3 +120,10 @@ jobs:
           git fetch --quiet --depth=1 --no-tags origin "$BASE_SHA"
           git show "$BASE_SHA:pyproject.toml" > "$RUNNER_TEMP/base-pyproject.toml"
           python3 packaging/release_version.py check-pr "$RUNNER_TEMP/base-pyproject.toml"
+
+      # The release job uses the section of the version in CHANGELOG.md as the release
+      # notes. Thus each version must have a section before the merge.
+      - name: Check that CHANGELOG.md has a section for the version
+        run: |
+          version=$(python3 packaging/release_version.py version)
+          python3 packaging/release_notes.py "$version" > /dev/null
