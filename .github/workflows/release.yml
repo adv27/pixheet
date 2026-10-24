@@ -20,8 +20,11 @@
 #
 # The release job publishes the four files of both builds in a GitHub release
 # "Pixheet v<version>". It runs only when both builds pass:
-# - For a push to master, when the tag v<version> of the version in pyproject.toml does not
-#   exist yet. The job makes the tag. When the tag exists, the job does nothing.
+# - For a push to master. The version in pyproject.toml gives the tag v<version>.
+#   - When the tag does not exist, the job makes it at the commit of the push.
+#   - When the tag exists at the commit of the push, an earlier run made it. The job adds
+#     the files that the release does not have.
+#   - When the tag exists at a different commit, the job does nothing.
 # - For a push of a tag "v<version>". The tag must agree with the version.
 # Only the release job can write to the repository. It never runs for a pull request.
 name: Release
@@ -187,12 +190,25 @@ jobs:
     permissions:
       contents: write # make the tag, create the release and upload the files
     # One release job at a time, for all refs. When two merges come quickly, the second job
-    # waits. Then it finds the tag of the first job and does nothing.
+    # waits. When the two merges have the same version, the second job finds the tag of the
+    # first job at a different commit, and does nothing.
     concurrency:
       group: ${{ github.workflow }}-release
       cancel-in-progress: false
     steps:
-      # For a push to master, the job makes the tag v<version> at the commit of the push.
+      # The job needs packaging/release_plan.py. The checkout keeps no token on the disk.
+      - name: Check out the repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      # For a push to master, release_plan.py compares the tag v<version> with the commit
+      # of the push:
+      # - No tag: the job makes the tag at the commit of the push, then publishes.
+      # - The tag is at the commit of the push: an earlier run of this job made the tag,
+      #   but it can have stopped before the release was complete. The job publishes.
+      # - The tag is at a different commit: that version has a release already. The job
+      #   does nothing. The artifacts of the build stay on the Actions page.
       # A tag that GITHUB_TOKEN makes does not start a new workflow run. This is correct,
       # because this job publishes the release itself. Do not use a different token to
       # start a run for the tag. Then the release job runs two times for one version.
@@ -234,19 +250,23 @@ jobs:
           }
 
           commit=$(tag_commit "$tag")
-          if [[ -n "$commit" ]]; then
-            echo "The tag $tag exists already, at $commit. The job does not publish a release."
+          action=$(python3 packaging/release_plan.py tag "$SHA" "$commit")
+          if [[ "$action" == skip ]]; then
+            echo "The tag $tag exists already, at a different commit $commit. That version has a release. The job does not publish."
             echo "publish=false" >> "$GITHUB_OUTPUT"
             exit 0
           fi
-          if gh api "repos/$REPO/git/refs" -f "ref=refs/tags/$tag" -f "sha=$SHA" > /dev/null; then
+          if [[ "$action" == publish ]]; then
+            echo "The tag $tag exists already, at $SHA. The job publishes the files that are missing."
+          elif gh api "repos/$REPO/git/refs" -f "ref=refs/tags/$tag" -f "sha=$SHA" > /dev/null; then
             echo "The job made the tag $tag at $SHA."
           else
             # A different job can make the same tag at the same time.
             commit=$(tag_commit "$tag")
-            if [[ "$commit" == "$SHA" ]]; then
+            action=$(python3 packaging/release_plan.py tag "$SHA" "$commit")
+            if [[ "$action" == publish ]]; then
               echo "The tag $tag exists already, at $SHA. The job continues."
-            elif [[ -n "$commit" ]]; then
+            elif [[ "$action" == skip ]]; then
               echo "::error::The tag $tag exists already, at a different commit $commit, not $SHA."
               exit 1
             else
@@ -272,28 +292,51 @@ jobs:
 
       # The job never replaces a file of a published release, because users can have
       # downloaded it already. A new build of the same commit can also give a different
-      # file, for example with a newer patch release of Python. To replace a file, delete
-      # it in the release by hand, then run again. A download drops the executable bit of
-      # the Linux file. The README tells the users to run chmod +x.
-      - name: Create the release, or add the files to it
+      # file, for example with a newer patch release of Python. Thus the job uploads only
+      # the files that the release does not have. When the release has a file but not its
+      # checksum file, or the opposite, the job stops. To replace a file, delete it in the
+      # release by hand, then run again. A download drops the executable bit of the Linux
+      # file. The README tells the users to run chmod +x.
+      - name: Create the release, or add the missing files to it
         if: steps.tag.outputs.publish == 'true'
-        working-directory: dist
         env:
           GH_TOKEN: ${{ github.token }}
           REPO: ${{ github.repository }}
           TAG: ${{ steps.tag.outputs.tag }}
         run: |
-          sha256sum -c Pixheet.exe.sha256 Pixheet-linux-x86_64.sha256
+          (cd dist && sha256sum -c Pixheet.exe.sha256 Pixheet-linux-x86_64.sha256)
           files=(Pixheet.exe Pixheet.exe.sha256 Pixheet-linux-x86_64 Pixheet-linux-x86_64.sha256)
-          if assets=$(gh release view "$TAG" --repo "$REPO" --json assets --jq '.assets[].name' 2> /dev/null); then
-            for name in "${files[@]}"; do
-              if printf '%s\n' "$assets" | grep -qxF "$name"; then
-                echo "::error::The release $TAG already has $name. The job does not replace it. Delete the file in the release by hand, then run the job again."
-                exit 1
-              fi
-            done
-            gh release upload "$TAG" "${files[@]}" --repo "$REPO"
-          else
-            gh release create "$TAG" "${files[@]}" --repo "$REPO" \
-              --verify-tag --title "Pixheet $TAG" --generate-notes
+          release=false
+          assets=""
+          if view=$(gh release view "$TAG" --repo "$REPO" --json assets --jq '.assets[].name' 2>&1); then
+            release=true
+            assets=$view
+          elif [[ "$view" != *"release not found"* ]]; then
+            echo "::error::gh cannot read the release $TAG: $view"
+            exit 1
           fi
+          if ! plan=$(printf '%s\n' "$assets" | python3 packaging/release_plan.py upload "$release" "${files[@]}"); then
+            printf '%s\n' "$plan"
+            exit 1
+          fi
+          mapfile -t lines <<< "$plan"
+          action=${lines[0]}
+          missing=("${lines[@]:1}")
+          cd dist
+          case "$action" in
+            create)
+              gh release create "$TAG" "${missing[@]}" --repo "$REPO" \
+                --verify-tag --title "Pixheet $TAG" --generate-notes
+              ;;
+            upload)
+              echo "The release $TAG exists. The job uploads: ${missing[*]}"
+              gh release upload "$TAG" "${missing[@]}" --repo "$REPO"
+              ;;
+            done)
+              echo "The release $TAG has all files. The job has nothing to do."
+              ;;
+            *)
+              echo "::error::release_plan.py gave the unknown action $action."
+              exit 1
+              ;;
+          esac

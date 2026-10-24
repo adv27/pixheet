@@ -1,5 +1,5 @@
 """Tests of the scripts in packaging/: the icon, the version resource, the spec, the Tcl and
-Tk trim, the exe check, the release version, and the runner hook."""
+Tk trim, the exe check, the release version, the release plan, and the runner hook."""
 
 import ast
 import importlib.util
@@ -38,6 +38,7 @@ check_exe = load("check_exe")
 trim_tcltk = load("trim_tcltk")
 linux_guards = load("linux_guards")
 release_version = load("release_version")
+release_plan = load("release_plan")
 
 
 def frames(path: Path) -> dict[int, bytes]:
@@ -1269,8 +1270,9 @@ def test_release_waits_for_both_builds_and_publishes_four_files():
     assert "    needs: [build-windows, build-linux]\n" in text
     assert "VERSION: ${{ needs.build-windows.outputs.version }}" in text
     assert f"files=({' '.join(RELEASE_FILES)})" in text
-    assert 'gh release upload "$TAG" "${files[@]}"' in text
-    assert 'gh release create "$TAG" "${files[@]}"' in text
+    assert 'release_plan.py upload "$release" "${files[@]}"' in text
+    assert 'gh release upload "$TAG" "${missing[@]}"' in text
+    assert 'gh release create "$TAG" "${missing[@]}"' in text
     assert "sha256sum -c Pixheet.exe.sha256 Pixheet-linux-x86_64.sha256" in text
     for name in ("Pixheet-windows-x64", "Pixheet-linux-x86_64"):
         assert f"          name: {name}\n" in text  # upload and download
@@ -1300,7 +1302,84 @@ def test_ci_tests_on_windows_and_linux():
     assert text.count("flags: ${{ runner.os }}") == 2
 
 
-def test_release_version_script_runs_on_python_3_12():
-    """ci.yml runs the script with the Python 3.12 of the Ubuntu runner."""
-    source = (PACKAGING / "release_version.py").read_text(encoding="utf-8")
+@pytest.mark.parametrize("name", ["release_version", "release_plan"])
+def test_release_scripts_run_on_python_3_12(name):
+    """ci.yml and the release job run the scripts with the Python 3.12 of the Ubuntu runner."""
+    source = (PACKAGING / f"{name}.py").read_text(encoding="utf-8")
     ast.parse(source, feature_version=(3, 12))
+
+
+SHA = "a" * 40
+
+
+@pytest.mark.parametrize(
+    ("tag_commit", "action"),
+    [(None, "create"), ("", "create"), (SHA, "publish"), ("b" * 40, "skip")],
+)
+def test_tag_action(tag_commit, action):
+    assert release_plan.tag_action(tag_commit, SHA) == action
+
+
+def test_upload_plan_creates_a_missing_release_with_all_files():
+    assert release_plan.upload_plan(False, [], RELEASE_FILES) == ("create", list(RELEASE_FILES))
+
+
+def test_upload_plan_adds_only_the_missing_pairs():
+    # An earlier run uploaded the Windows pair, then stopped.
+    existing = ["Pixheet.exe", "Pixheet.exe.sha256", "notes.txt"]
+    assert release_plan.upload_plan(True, existing, RELEASE_FILES) == (
+        "upload",
+        ["Pixheet-linux-x86_64", "Pixheet-linux-x86_64.sha256"],
+    )
+
+
+def test_upload_plan_uploads_all_files_to_an_empty_release():
+    assert release_plan.upload_plan(True, [], RELEASE_FILES) == ("upload", list(RELEASE_FILES))
+
+
+def test_upload_plan_does_nothing_for_a_complete_release():
+    existing = [*reversed(RELEASE_FILES), "notes.txt"]
+    assert release_plan.upload_plan(True, existing, RELEASE_FILES) == ("done", [])
+
+
+@pytest.mark.parametrize("present", ["Pixheet.exe", "Pixheet-linux-x86_64.sha256"])
+def test_upload_plan_stops_for_half_a_pair(present):
+    """A new build can differ, so a new checksum file must not go next to an old file."""
+    with pytest.raises(release_plan.PlanError, match=f"The release has {present}, but not"):
+        release_plan.upload_plan(True, [present], RELEASE_FILES)
+
+
+def test_release_plan_tag_command(capsys):
+    assert release_plan.main(["tag", SHA, ""]) == 0
+    assert release_plan.main(["tag", SHA]) == 0
+    assert release_plan.main(["tag", SHA, SHA]) == 0
+    assert release_plan.main(["tag", SHA, "b" * 40]) == 0
+    assert capsys.readouterr().out.split() == ["create", "create", "publish", "skip"]
+
+
+@pytest.mark.parametrize(
+    ("release", "assets", "code", "out"),
+    [
+        ("false", "", 0, ["create", *RELEASE_FILES]),
+        ("true", "Pixheet.exe\nPixheet.exe.sha256\n", 0, ["upload", *RELEASE_FILES[2:]]),
+        ("true", "\n".join(RELEASE_FILES) + "\n", 0, ["done"]),
+        ("true", "Pixheet.exe\n", 1, ["::error::The release has Pixheet.exe, but not"]),
+    ],
+)
+def test_release_plan_upload_command(monkeypatch, capsys, release, assets, code, out):
+    monkeypatch.setattr(sys, "stdin", io.StringIO(assets))
+    assert release_plan.main(["upload", release, *RELEASE_FILES]) == code
+    lines = capsys.readouterr().out.splitlines()
+    if code:
+        assert lines[0].startswith(out[0])
+    else:
+        assert lines == out
+
+
+def test_release_job_uses_the_release_plan():
+    text = (WORKFLOWS / "release.yml").read_text(encoding="utf-8")
+    job = text[text.index("\n  release:\n") :]
+    assert 'python3 packaging/release_plan.py tag "$SHA" "$commit"' in job
+    assert "persist-credentials: false" in job
+    # The decision comes before the downloads, so that "skip" downloads nothing.
+    assert job.index("release_plan.py tag") < job.index("Download the Windows app")

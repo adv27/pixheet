@@ -18,6 +18,7 @@ This folder holds the build of the desktop app in one file: `Pixheet.exe` for Wi
 | `build.ps1` | Builds the exe on Windows and tests it. |
 | `build.sh` | Builds the Linux app and tests it. Run it on Debian 11. |
 | `release_version.py` | Reads the version from `pyproject.toml` for the release job. It also stops a pull request that changes the version to a version with a tag. |
+| `release_plan.py` | Decides the steps of the release job from the tag and the release on GitHub: make the tag, publish the missing files, or do nothing. |
 | `check_exe.py` | Makes sure that a built app starts, and that it converts test images of 11 formats and modes correctly. It works on Windows and on Linux. |
 | `runner_job_started.ps1` | The job-started hook for a later self-hosted runner. It refuses each job that is not a trusted build. Read [Later: self-hosted runner](#later-self-hosted-runner). |
 
@@ -239,8 +240,16 @@ job gives. If the tag `v<version>` does not exist yet, the job makes the tag at 
 commit of the push. Then it publishes `Pixheet.exe`, `Pixheet.exe.sha256`,
 `Pixheet-linux-x86_64` and `Pixheet-linux-x86_64.sha256` in the GitHub release
 "Pixheet v<version>", with generated release notes. The job waits for both build jobs.
-When one build fails, the job does not run. If the tag exists,
-the job does nothing. The artifact of the build stays on the Actions page.
+When one build fails, the job does not run.
+
+When the tag exists, `release_plan.py` compares the commit of the tag with the commit of
+the push:
+
+- The tag is at the commit of the push. An earlier run of the job made the tag, and then
+  it stopped, for example for a network problem. The job creates the release if it does
+  not exist. Then it uploads the files that the release does not have.
+- The tag is at a different commit. That version has a release already. The job does
+  nothing. The artifact of the build stays on the Actions page.
 
 These rules apply to the release job:
 
@@ -248,8 +257,9 @@ These rules apply to the release job:
 - It is the only job that can write to the repository.
 - It never runs for a pull request, or for a manual start on a branch that is not
   `master`.
-- Only one release job runs at a time. When two merges come quickly, the second job
-  finds the tag of the first job and does nothing.
+- Only one release job runs at a time. When two merges with the same version come
+  quickly, the second job finds the tag of the first job at a different commit and does
+  nothing.
 - A tag that the job makes with `GITHUB_TOKEN` does not start a new workflow run. This
   is correct, because the job publishes the release itself.
 
@@ -264,8 +274,9 @@ the release job publishes the exe of the tag. The tag must agree with the versio
 The release job never replaces a file of a published release, because users can have
 downloaded the file already. A new build of the same commit can also give a different
 exe. For example, each job installs the newest patch release of Python 3.15. When the
-job runs again for a tag, for example after a re-run, it fails if the
-release already has one of the four files. To replace a file, delete it
+job runs again for a tag, for example after a re-run, it uploads only the files that the
+release does not have. It stops when the release has a file but not its `.sha256` file,
+or the opposite, because the new checksum can be different. To replace a file, delete it
 in the release on GitHub, and then run the job again.
 
 You can also protect the releases in the settings of the repository:
