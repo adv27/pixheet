@@ -1718,12 +1718,25 @@ class App:
     def _current_outputs(self, rows: Sequence[Row]) -> list[Row]:
         """Return copies of ``rows`` with outputs for the current "Save to" folder.
 
-        The outputs of the other rows in the list stay with those rows.
+        A row keeps its output when the output is in that folder already. Thus a tag such
+        as "photo (png).xlsx" stays. The other rows get new outputs. The outputs of the
+        other rows in the list stay with those rows.
         """
         ids = {row.id for row in rows}
         taken = {output_key(row.dst) for row in self.rows.values() if row.id not in ids}
-        outputs = assign_outputs([row.src for row in rows], self.out_dir, taken)
-        return [replace(row, dst=dst) for row, dst in zip(rows, outputs, strict=True)]
+        result = list(rows)
+        move: list[int] = []
+        for index, row in enumerate(rows):
+            folder = self.out_dir or row.src.parent
+            key = output_key(row.dst)
+            if path_key(row.dst.parent) == path_key(folder) and key not in taken:
+                taken.add(key)
+            else:
+                move.append(index)
+        outputs = assign_outputs([rows[i].src for i in move], self.out_dir, taken)
+        for index, dst in zip(move, outputs, strict=True):
+            result[index] = replace(rows[index], dst=dst)
+        return result
 
     def _waiting_rows(self) -> list[Row]:
         """Return the rows that wait, when no run is active. A new run takes them too.

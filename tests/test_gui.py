@@ -828,6 +828,29 @@ def test_two_types_in_one_folder_give_two_outputs(harness, tmp_path):
     assert not (tmp_path / "photo.xlsx").exists()
 
 
+def test_retry_keeps_the_tag_of_an_output(harness, tmp_path):
+    h = harness()
+    png = tmp_path / "photo.png"
+    png.write_text("not an image")
+    h.run(png, image(tmp_path / "photo.jpg"))
+    assert h.states() == ["failed", "done"]
+
+    image(png)  # the user fixes the file
+    h.app.retry_button.invoke()
+    h.wait()
+    assert h.states() == ["done", "done"]
+    assert sorted(p.name for p in tmp_path.glob("*.xlsx")) == [
+        "photo (jpg).xlsx",
+        "photo (png).xlsx",
+    ]
+
+    out = tmp_path / "out"
+    out.mkdir()
+    h.app.set_out_dir(out)
+    h.run(png)  # another "Save to": a new output
+    assert sorted(p.name for p in out.iterdir()) == ["photo.xlsx"]
+
+
 def test_folder_drop_without_and_with_subfolders(harness, tmp_path):
     h = harness()
     beach = tmp_path / "Beach"
