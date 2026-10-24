@@ -162,7 +162,7 @@ To build Pixheet.exe from a checkout, run this command in PowerShell:
 > powershell -ExecutionPolicy Bypass -File packaging\build.ps1
 ```
 
-The script builds `dist\Pixheet.exe`, about 13.8 MB, and tests it. Add `-OneDir` to
+The script builds `dist\Pixheet.exe`, about 13.9 MB, and tests it. Add `-OneDir` to
 build the folder `dist\Pixheet\`. The folder starts faster, because the exe does not
 extract itself each time. [packaging/README.md](packaging/README.md) gives more data
 about the build and the CI.
@@ -236,7 +236,7 @@ run this command:
 $ bash packaging/build.sh
 ```
 
-The script builds `dist/Pixheet-linux-x86_64`, about 19.3 MB, and tests it. The build
+The script builds `dist/Pixheet-linux-x86_64`, about 19.4 MB, and tests it. The build
 stops on a system with a libX11 older than 1.7, because then tkdnd stops the app. It
 also stops when the app would need a glibc newer than 2.27.
 [packaging/README.md](packaging/README.md) tells why.

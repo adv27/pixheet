@@ -212,10 +212,10 @@ After an update of python-build-standalone, do these steps:
 
 ## The size of the exe
 
-The one-file exe is about 13.8 MB. Without the changes below, it is about
-19.6 MB. The Linux file is about 19.3 MB (`build.sh` shows 18.4 MB). On Linux, `strip`
+The one-file exe is about 13.9 MB. Without the changes below, it is about
+19.6 MB. The Linux file is about 19.4 MB (`build.sh` shows 18.5 MB). On Linux, `strip`
 removes the debug symbols of the libraries and saves about 3.8 MB, and the trim saves
-about 0.6 MB. `build.ps1` shows 13.2 MB, because it counts 1 MB as 1,048,576 bytes. The
+about 0.6 MB. `build.ps1` shows 13.3 MB, because it counts 1 MB as 1,048,576 bytes. The
 Sun Valley theme adds about 55 KB. The spec
 keeps all the features. It makes these changes. Each number is the saving of one change
 alone:
