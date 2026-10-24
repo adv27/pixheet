@@ -75,8 +75,10 @@ The test session does not disturb the user of the computer:
   screen, for example in the smoke test `python -m pixheet.gui --smoke`.
 - An autouse fixture in `tests/conftest.py` makes a test fail when it writes the system
   clipboard.
-- pytest keeps its temporary folders in `%TEMP%\pytest-of-<user>`, for the last 3 runs.
-  The suite leaves nothing else in `%TEMP%`.
+- pytest keeps the folders of the last 3 runs in `%TEMP%\pytest-of-<user>`. A run that
+  stops early, for example after the 60 s timeout or a kill, keeps its folder for up to
+  3 days. Delete `%TEMP%\pytest-of-<user>` when no test run is active. The suite leaves
+  nothing else in `%TEMP%`.
 
 Set `PIXHEET_TEST_SHOW_WINDOWS=1` to see the test windows, for example to debug a test.
 Then the windows show on the screen, also the window of a new process, and the session
