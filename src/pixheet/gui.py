@@ -264,6 +264,19 @@ def _describe(error: BaseException) -> str:
     return str(error) or type(error).__name__
 
 
+def as_sentence(text: str) -> str:
+    """Return ``text`` with an upper-case first letter and a final period.
+
+    The reasons of errors are in lower case, because the app also shows them after a
+    colon, for example "Failed: the app cannot read this file as an image".
+    """
+    text = text.strip()
+    if not text:
+        return text
+    text = text[0].upper() + text[1:]
+    return text if text.endswith((".", "!", "?")) else f"{text}."
+
+
 def run_queue(
     jobs: JobQueue,
     options: Options,
@@ -2409,7 +2422,7 @@ class App:
             case "done":
                 return (summary(row.dst, row.result) if row.result else str(row.dst)), False
             case "failed":
-                detail = failure_detail(row.kind, row.error, row.failed_output)
+                detail = as_sentence(failure_detail(row.kind, row.error, row.failed_output))
                 return f"The app did not convert {row.src.name}.\n{detail}", True
             case "stopped":
                 return "The app did not write the current file.", False

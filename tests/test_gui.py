@@ -481,6 +481,21 @@ def test_one_file_shows_its_progress_and_stop(harness, tmp_path, monkeypatch):
     assert h.app.save_box.instate(["!disabled", "readonly"])
 
 
+@pytest.mark.parametrize(
+    ("error", "kind", "reason"),
+    [
+        ("disk full", "other", "Disk full."),
+        ("Out of memory!", "other", "Out of memory!"),
+        (gui.NOT_AN_IMAGE, "image", "The app cannot read this file as an image."),
+    ],
+)
+def test_the_reason_of_one_failed_file_is_a_sentence(harness, tmp_path, error, kind, reason):
+    app = harness().app
+    src = tmp_path / "a.png"
+    row = gui.Row(1, src, src.with_suffix(".xlsx"), state="failed", error=error, kind=kind)
+    assert app._zone_details(row) == (f"The app did not convert a.png.\n{reason}", True)
+
+
 def test_one_file_that_fails_shows_the_error_in_red_without_a_dialog(harness, tmp_path):
     h = harness()
     bad = tmp_path / "IMG_2041.jpg"
@@ -490,7 +505,9 @@ def test_one_file_that_fails_shows_the_error_in_red_without_a_dialog(harness, tm
 
     assert h.errors == []  # no message box
     assert h.app.title_var.get() == "Converted 0 of 1 file. 1 failed."
-    assert h.app.status_var.get() == f"The app did not convert IMG_2041.jpg.\n{gui.NOT_AN_IMAGE}"
+    assert h.app.status_var.get() == (
+        "The app did not convert IMG_2041.jpg.\nThe app cannot read this file as an image."
+    )
     assert "\\\\" not in h.app.status_var.get()
     assert str(h.app.status_label.cget("foreground")) == gui.ROW_COLORS["light"]["failed"]
     assert h.app.retry_button.cget("text") == "Retry failed (1)"
