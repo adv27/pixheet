@@ -6,7 +6,8 @@ license text is missing. The spec puts the file in the app, and copies it to the
 folder for the release. The texts come from these sources:
 
 - Pixheet: the file LICENSE of the repository.
-- Python: the file LICENSE.txt of the Python of the build (python-build-standalone).
+- Python: the file LICENSE.txt of the Python of the build (python-build-standalone), then
+  the licenses of the software in Python that is in the app. Read :data:`PYTHON_PARTS`.
 - Pillow, sv-ttk, tkinterdnd2 and PyInstaller: the license files of the installed
   distributions. The file of Pillow also has the licenses of the libraries in its wheel.
 - The files in packaging/notices/: fixed texts for the parts that come without a license
@@ -63,6 +64,36 @@ FIXED = {
     "tkdnd": "tkdnd",
 }
 """The fixed texts: the name of the file in packaging/notices/ (without .txt), and a title."""
+
+PYTHON_PARTS = {
+    # From the section "Licenses and Acknowledgements for Incorporated Software" of
+    # Doc/license.rst of CPython v3.15.1, without the Sphinx markup. The section is the
+    # same in v3.15.0. The value is a title, and the module with the code. None is the
+    # code in the interpreter itself: python315.dll or libpython3.15.so.
+    "python-mersenne-twister": ("Mersenne Twister", "_random"),
+    "python-uu-codec": ("UUencode and UUdecode functions", None),  # base_library.zip
+    "python-siphash24": ("SipHash24", None),
+    "python-dtoa": ("strtod and dtoa", None),
+    "python-cfuhash": ("cfuhash", None),
+    "python-mimalloc": ("mimalloc", None),
+    "python-gus": ("Global Unbounded Sequences (GUS)", None),
+    "python-zstd": ("Zstandard bindings", "_zstd"),
+    "python-unicode": ("Unicode Character Database", None),
+    # The other sections are not here. The app does not have their code, or FIXED has the
+    # texts of their libraries, for example OpenSSL and zlib. On Windows and with glibc,
+    # Python does not compile the getaddrinfo code of the section "Sockets".
+}
+"""The licenses of the software in Python: the name of the file in packaging/notices/
+(without .txt), a title, and the module that must be in the app, or None."""
+
+PYTHON_PARTS_INTRO = """\
+Software in Python
+==================
+
+Python includes software of other projects. The texts below come from the section
+"Licenses and Acknowledgements for Incorporated Software" of the license page of the
+Python documentation. They are only the parts that are in the app."""
+"""The heading of the licenses of :data:`PYTHON_PARTS`, after LICENSE.txt of Python."""
 
 MODULE_LIBRARIES = {
     "_bz2": ("bzip2",),
@@ -281,6 +312,11 @@ def collect(
             users.setdefault(library, []).append(module)
 
     app = "Pixheet.exe" if system == "Windows" else "The Linux app"
+    python_parts = [
+        f"{title}\n{'-' * len(title)}\n\n{fixed_text(key).strip()}"
+        for key, (title, module) in PYTHON_PARTS.items()
+        if module is None or module in modules
+    ]
 
     def about(text: str, key: str) -> str:
         """Add the files and the modules of the part ``key`` to ``text``."""
@@ -299,7 +335,7 @@ def collect(
         Notice(
             "Python",
             about("The Python interpreter and its standard library.", "python"),
-            python_text,
+            "\n\n\n".join([python_text.rstrip(), PYTHON_PARTS_INTRO, *python_parts]),
         ),
         Notice(
             "PyInstaller",

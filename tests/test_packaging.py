@@ -1777,6 +1777,49 @@ def test_linux_notices_have_the_static_libraries_and_the_debian_packages():
     )
 
 
+def python_notice(bundle, system, builtins):
+    notices = collect_notices(bundle, system, builtins)
+    return next(n for n in notices if n.title == "Python").text
+
+
+def heading(title):
+    return f"\n\n\n{title}\n{'-' * len(title)}\n\n"
+
+
+def test_python_notice_has_the_licenses_of_the_software_in_python():
+    """python315.dll and libpython3.15.so include code of other projects."""
+    text = python_notice(WINDOWS_BUNDLE, "Windows", (*WINDOWS_BUILTINS, "_random"))
+    assert text.startswith("License of Python.\n\n\nSoftware in Python\n==================\n")
+    for title in (
+        "Mersenne Twister",
+        "UUencode and UUdecode functions",
+        "SipHash24",
+        "strtod and dtoa",
+        "cfuhash",
+        "mimalloc",
+        "Global Unbounded Sequences (GUS)",
+        "Unicode Character Database",
+    ):
+        assert heading(title) in text, title
+    assert "Copyright (C) 1997 - 2002, Makoto Matsumoto and Takuji Nishimura" in text
+    assert "Copyright (c) 2018-2021 Microsoft Corporation, Daan Leijen" in text
+    assert "UNICODE LICENSE V3" in text
+    # The text is plain, without the markup of the Python documentation.
+    assert "`" not in text
+    assert ":mod:" not in text
+    assert "::" not in text
+
+
+def test_python_notice_has_only_the_parts_of_the_modules_in_the_app():
+    windows = python_notice(WINDOWS_BUNDLE, "Windows", WINDOWS_BUILTINS)
+    assert heading("Mersenne Twister") not in windows  # no _random
+    assert heading("Zstandard bindings") not in windows  # no _zstd
+    assert heading("mimalloc") in windows  # in the interpreter itself
+    linux = python_notice(LINUX_BUNDLE, "Linux", LINUX_BUILTINS)
+    assert heading("Zstandard bindings") in linux
+    assert "Copyright (c) 2020-present, Ma Lin and contributors." in linux
+
+
 @pytest.mark.parametrize(
     ("system", "bundle"), [("Windows", WINDOWS_BUNDLE), ("Linux", LINUX_BUNDLE)]
 )
@@ -1899,7 +1942,9 @@ def test_distribution_license_stops_for_a_missing_distribution():
 
 def test_each_fixed_text_has_a_file_and_each_file_is_used():
     names = {path.stem for path in third_party_notices.NOTICES.glob("*")}
-    assert names == set(third_party_notices.FIXED)
+    fixed, parts = set(third_party_notices.FIXED), set(third_party_notices.PYTHON_PARTS)
+    assert not fixed & parts
+    assert names == fixed | parts
     tables = (third_party_notices.MODULE_LIBRARIES, third_party_notices.LINUX_MODULE_LIBRARIES)
     used = {library for table in tables for value in table.values() for library in value}
     assert used <= set(third_party_notices.FIXED)

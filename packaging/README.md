@@ -12,7 +12,7 @@ This folder holds the build of the desktop app in one file: `Pixheet.exe` for Wi
 | `trim_tcltk.py` | Removes unused files from the Tcl and Tk library: in `tcl90.dll` and `tcl9tk90.dll` on Windows, from the data files on Linux. The spec runs it. |
 | `linux_guards.py` | On Linux, reads each library of the bundle with `objdump -T`. It stops the build for a glibc newer than 2.27 or a libX11 older than 1.7. The spec runs it. |
 | `third_party_notices.py` | Writes `THIRD-PARTY-NOTICES.txt`, the license texts of the third-party parts of the app. The spec runs it. Read [Third-party notices](#third-party-notices). |
-| `notices/` | The fixed license texts of the parts that come without a license file. |
+| `notices/` | The fixed license texts of the parts that come without a license file, and of the software in Python. |
 | `version_info.py` | Reads the version resource of the exe from `pyproject.toml` and `LICENSE`. |
 | `pixheet.ico` | The icon of the exe and of the window on Windows, in 7 sizes from 16 to 256 pixels. |
 | `pixheet.png` | The icon of the window on Linux, 128 pixels. |
@@ -198,13 +198,17 @@ The build stops when a file of the bundle has no owner in `OWNERS`, or when a li
 is missing. The texts come from these sources:
 
 - Pixheet: the file `LICENSE` of the repository.
-- Python: the file `LICENSE.txt` of the Python of the build.
+- Python: the file `LICENSE.txt` of the Python of the build, then the licenses of the
+  software in Python. `LICENSE.txt` does not have these licenses.
 - Pillow, sv-ttk, tkinterdnd2 and PyInstaller: the license files of the installed
   distributions.
 - `packaging/notices/`: the fixed texts. The texts of the libraries in Python come from
   `python/licenses/` in the full archives of python-build-standalone 20261021. The texts
   of Tcl and Tk are their `license.terms`. libtommath and tkdnd have the license files of
-  their repositories.
+  their repositories. The files `python-*.txt` come from the section "Licenses and
+  Acknowledgements for Incorporated Software" of `Doc/license.rst` of CPython 3.15.1.
+  `PYTHON_PARTS` in `third_party_notices.py` lists them, with the module that has the
+  code. The other sections are for code that is not in the app.
 - On Linux: the file `/usr/share/doc/<package>/copyright` of the Debian package of each
   system library in the bundle. Thus the build needs `dpkg`. Debian 11 has these files.
 
@@ -214,6 +218,8 @@ After an update of python-build-standalone, do these steps:
 2. Compare `python/licenses/` of the archive with the files in `packaging/notices/`.
 3. Compare `PYTHON.json` of the archive with `MODULE_LIBRARIES` in
    `third_party_notices.py`.
+4. For a new version of CPython, compare the section "Licenses and Acknowledgements for
+   Incorporated Software" of its `Doc/license.rst` with the files `python-*.txt`.
 
 ## The size of the exe
 
