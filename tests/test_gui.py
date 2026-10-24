@@ -1761,6 +1761,22 @@ def test_clear_list_goes_back_to_the_zone(harness, tmp_path, monkeypatch):
     assert (tmp_path / "a.xlsx").exists()
 
 
+def test_clear_list_hides_the_failed_only_toggle(harness, tmp_path):
+    h = harness()
+    bad = tmp_path / "b.png"
+    bad.write_text("not an image")
+    h.run(image(tmp_path / "a.png"), bad)
+    app = h.app
+    assert app.failed_only_button.winfo_manager() == "grid"
+    assert app.eta_label.winfo_manager() == ""
+
+    app.clear_list()
+    assert app.zone.winfo_manager() == "grid"
+    assert app.failed_only_button.winfo_manager() == ""
+    assert app.eta_label.winfo_manager() == "grid"
+    assert not app.failed_only_var.get()
+
+
 def test_keys_of_the_list(harness, tmp_path, monkeypatch):
     opened = []
     monkeypatch.setattr(gui, "open_path", opened.append)

@@ -2383,7 +2383,7 @@ class App:
         self.jobs_by_id.clear()
         self.done_ids.clear()
         self.done_folders.clear()
-        self.failed_only_var.set(False)
+        self._set_failed_only(False)  # without failed rows, it hides the toggle
         self.set_note("")
         self.title_var.set("")
         self.progress_var.set(0.0)
