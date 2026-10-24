@@ -80,6 +80,7 @@ from pixheet._plan import (
     failure_kind,
     folder_labels,
     middle_ellipsis,
+    output_key,
     path_key,
     path_problem,
     progress_text,
@@ -1637,7 +1638,7 @@ class App:
                 fresh.append(path)
             elif row.state in FINISHED_STATES:
                 again.append(row)
-        taken = {path_key(row.dst) for row in self.rows.values()}
+        taken = {output_key(row.dst) for row in self.rows.values()}
         outputs = assign_outputs(fresh, self.out_dir, taken)
         new_rows = [Row(self._next_id(), src, dst) for src, dst in zip(fresh, outputs, strict=True)]
         decision = self._decide(new_rows + again)
@@ -1737,7 +1738,7 @@ class App:
         self.save_var.set(values[1] if folder is not None else values[0])
         targets = [row for row in self.rows.values() if row.state in (WAITING, FAILED, STOPPED)]
         ids = {row.id for row in targets}
-        taken = {path_key(row.dst) for row in self.rows.values() if row.id not in ids}
+        taken = {output_key(row.dst) for row in self.rows.values() if row.id not in ids}
         outputs = assign_outputs([row.src for row in targets], folder, taken)
         for row, dst in zip(targets, outputs, strict=True):
             if dst != row.dst:
@@ -1851,7 +1852,7 @@ class App:
             return
         if ask:
             ids = {row.id for row in rows}
-            taken = {path_key(row.dst) for row in self.rows.values() if row.id not in ids}
+            taken = {output_key(row.dst) for row in self.rows.values() if row.id not in ids}
             outputs = assign_outputs([row.src for row in rows], self.out_dir, taken)
             rows = [replace(row, dst=dst) for row, dst in zip(rows, outputs, strict=True)]
         decision = self._decide(rows, ask=ask)

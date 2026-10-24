@@ -1,6 +1,7 @@
 """Tests of the Tk-free plan of a batch: pixheet._plan."""
 
 import errno
+import posixpath
 import sys
 import threading
 import time
@@ -417,6 +418,30 @@ def test_outputs_collide_without_regard_to_case_on_windows():
         Path(r"E:\out\Photo (b).xlsx"),
         Path(r"E:\out\photo (c).xlsx"),
     ]
+
+
+@pytest.mark.parametrize("posix", [False, True])
+def test_outputs_that_differ_only_in_case_get_a_tag(tmp_path, monkeypatch, posix):
+    # A disk can ignore the case on all systems, for example APFS, exFAT or a share.
+    if posix:
+        monkeypatch.setattr("os.path.normcase", posixpath.normcase)
+    one = [tmp_path / "Photo.png", tmp_path / "photo.jpg"]
+    assert names(assign_outputs(one)) == ["Photo (png).xlsx", "photo (jpg).xlsx"]
+    out = tmp_path / "out"
+    two = [tmp_path / "a" / "Photo.PNG", tmp_path / "b" / "photo.png"]
+    assert names(assign_outputs(two, out)) == ["Photo (a).xlsx", "photo (b).xlsx"]
+    taken = [path_key(out / "PHOTO.xlsx")]
+    tag = tmp_path.name
+    assert names(assign_outputs([tmp_path / "photo.png"], out, taken)) == [f"photo ({tag}).xlsx"]
+    if posix:
+        # The folder tags differ only in case: a number keeps the outputs apart.
+        three = [tmp_path / "A" / "x.png", tmp_path / "a" / "x.png"]
+        assert names(assign_outputs(three, out)) == ["x (A).xlsx", "x (a 2).xlsx"]
+
+
+def test_sources_that_differ_only_in_case_stay_two_images_off_windows(tmp_path, monkeypatch):
+    monkeypatch.setattr("os.path.normcase", posixpath.normcase)
+    assert path_key(tmp_path / "Photo.png") != path_key(tmp_path / "photo.png")
 
 
 @windows

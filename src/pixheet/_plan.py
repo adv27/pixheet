@@ -88,6 +88,17 @@ def path_key(path: Path | str) -> str:
     return os.path.normcase(absolute(path))
 
 
+def output_key(path: Path | str) -> str:
+    """Return the key of an output path. The case of the letters has no effect on any system.
+
+    A disk can ignore the case on Linux and macOS too, for example APFS, exFAT or a
+    share. There, "Photo.xlsx" and "photo.xlsx" are one file. Thus two outputs whose
+    names differ only in case get a tag. On a disk that sees the case, the tag is not
+    necessary, but it does no harm.
+    """
+    return path_key(path).casefold()
+
+
 _DIGITS = re.compile(r"([0-9]+)")
 
 
@@ -263,13 +274,16 @@ def assign_outputs(
     folder name when the output goes to another folder, else the type. An output is never
     the key of a source in this call, so the app does not write over an input.
 
+    The case of the letters has no effect on a collision, on all systems. See
+    :func:`output_key`. The keys in ``taken`` can come from :func:`path_key`.
+
     The result does not depend on the order of ``sources``.
     """
     wanted = [(out_dir or src.parent) / f"{src.stem}.xlsx" for src in sources]
     groups: dict[str, list[int]] = {}
     for index, dst in enumerate(wanted):
-        groups.setdefault(path_key(dst), []).append(index)
-    used = set(taken) | {path_key(src) for src in sources}
+        groups.setdefault(output_key(dst), []).append(index)
+    used = {key.casefold() for key in taken} | {output_key(src) for src in sources}
     result = list(wanted)
     colliding: list[tuple[str, list[int]]] = []
     for key, members in groups.items():
@@ -296,10 +310,10 @@ def assign_outputs(
             folder = wanted[index].parent
             candidate = folder / f"{src.stem} ({tag}).xlsx"
             number = 2
-            while path_key(candidate) in used:
+            while output_key(candidate) in used:
                 candidate = folder / f"{src.stem} ({tag} {number}).xlsx"
                 number += 1
-            used.add(path_key(candidate))
+            used.add(output_key(candidate))
             result[index] = candidate
     return result
 
