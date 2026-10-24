@@ -8,6 +8,8 @@ import pytest
 from images import SAMPLES
 from PIL import Image
 
+from pixheet.gui import OFF_SCREEN, _lock_foreground
+
 try:
     import tkinter
 except ImportError:  # a Python without Tk: the GUI tests skip
@@ -26,7 +28,7 @@ def _hide_window(window) -> None:
     function does not change it.
     """
     with contextlib.suppress(tkinter.TclError):
-        window.wm_geometry("+-32000+-32000")
+        window.wm_geometry(OFF_SCREEN)
     if sys.platform == "win32" and isinstance(window, tkinter.Tk):
         with contextlib.suppress(tkinter.TclError):
             window.attributes("-toolwindow", True)
@@ -48,17 +50,6 @@ if tkinter is not None and not SHOW_WINDOWS:
     _hide_new_windows(tkinter.Tk)
     _hide_new_windows(tkinter.Toplevel)
 
-LSFW_LOCK, LSFW_UNLOCK = 1, 2
-
-
-def _lock_foreground(action: int) -> bool:
-    """Call LockSetForegroundWindow with ``action``. Return False outside Windows."""
-    if sys.platform != "win32" or SHOW_WINDOWS:
-        return False
-    import ctypes
-
-    return bool(ctypes.windll.user32.LockSetForegroundWindow(action))
-
 
 @pytest.fixture(scope="session", autouse=True)
 def foreground_lock():
@@ -73,10 +64,10 @@ def foreground_lock():
     the lock again, in renew_foreground_lock. Windows also removes the lock when this
     process stops, also after a crash. PIXHEET_TEST_SHOW_WINDOWS=1 turns off the lock.
     """
-    locked = _lock_foreground(LSFW_LOCK)
+    locked = not SHOW_WINDOWS and _lock_foreground(True)
     yield locked
     if locked:
-        _lock_foreground(LSFW_UNLOCK)
+        _lock_foreground(False)
 
 
 @pytest.fixture(autouse=True)
@@ -86,7 +77,7 @@ def renew_foreground_lock(foreground_lock):
     While this process holds the lock, the call fails and changes nothing.
     """
     if foreground_lock:
-        _lock_foreground(LSFW_LOCK)
+        _lock_foreground(True)
 
 
 @pytest.fixture(autouse=True)
