@@ -43,7 +43,8 @@ jobs:
           sudo apt-get install -y xvfb xauth
 
       # uv reads the uv version from pyproject.toml and the Python version from
-      # .python-version.
+      # .python-version. uv installs python-build-standalone, not the Python of the runner
+      # image, because pyproject.toml sets python-preference = "only-managed".
       - name: Install uv
         uses: astral-sh/setup-uv@18d369b23da25a81e9458561248e1aafff6a70fa # v10.3.1
 

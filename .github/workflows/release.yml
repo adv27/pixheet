@@ -62,8 +62,10 @@ jobs:
           persist-credentials: false
 
       # uv reads the uv version from pyproject.toml and the Python version from
-      # .python-version. This workflow publishes releases. Thus it does not use the GitHub
-      # Actions cache, because a file from the cache can go into the app.
+      # .python-version. pyproject.toml sets python-preference = "only-managed". Thus uv
+      # installs python-build-standalone and does not use the Python of the runner image.
+      # This workflow publishes releases. Thus it does not use the GitHub Actions cache,
+      # because a file from the cache can go into the app.
       - name: Install uv
         uses: astral-sh/setup-uv@18d369b23da25a81e9458561248e1aafff6a70fa # v10.3.1
         with:
@@ -147,8 +149,9 @@ jobs:
         run: git config --global --add safe.directory "$GITHUB_WORKSPACE"
 
       # uv installs the Python of .python-version from python-build-standalone, the same
-      # Python as on Windows. The job does not use the GitHub Actions cache, for the same
-      # reason as the Windows job.
+      # Python build as on Windows (python-preference = "only-managed" in pyproject.toml).
+      # The job does not use the GitHub Actions cache, for the same reason as the Windows
+      # job.
       - name: Install uv
         uses: astral-sh/setup-uv@18d369b23da25a81e9458561248e1aafff6a70fa # v10.3.1
         with:

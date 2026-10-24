@@ -49,6 +49,15 @@ from trim_tcltk import trim_binaries, trim_datas  # noqa: E402
 
 NAME = "Pixheet"
 
+# Write the Python and the Tcl of the build to the log. The release log then shows which
+# Python build went into the app. A Tcl interpreter without Tk opens no window.
+import tkinter  # noqa: E402
+
+print(
+    f"pixheet.spec: Python {sys.version.split()[0]} from {sys.base_prefix}, "
+    f"Tcl {tkinter.Tcl().eval('info patchlevel')}"
+)
+
 if WINDOWS:
     # PyInstaller.utils.win32 needs pefile, which only Windows has.
     from PyInstaller.utils.win32.versioninfo import (

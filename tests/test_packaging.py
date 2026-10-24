@@ -1314,6 +1314,20 @@ def test_ci_tests_on_windows_and_linux():
     assert text.count("flags: ${{ runner.os }}") == 2
 
 
+def test_all_jobs_use_only_the_python_of_uv():
+    """Without only-managed, uv takes the Python of the Windows runner image for the exe."""
+    with (PACKAGING.parent / "pyproject.toml").open("rb") as f:
+        assert tomllib.load(f)["tool"]["uv"]["python-preference"] == "only-managed"
+    for name in ("ci.yml", "release.yml"):
+        text = (WORKFLOWS / name).read_text(encoding="utf-8")
+        assert "UV_PYTHON_PREFERENCE" not in text, name  # it would replace the setting
+        assert "actions/setup-python" not in text, name
+    # The release log shows which Python went into the app.
+    assert "pixheet.spec: Python {sys.version.split()[0]} from {sys.base_prefix}" in (
+        SPEC.read_text(encoding="utf-8")
+    )
+
+
 @pytest.mark.parametrize("name", ["release_version", "release_plan"])
 def test_release_scripts_run_on_python_3_12(name):
     """ci.yml and the release job run the scripts with the Python 3.12 of the Ubuntu runner."""
