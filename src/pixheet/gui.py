@@ -1257,8 +1257,11 @@ class App:
         self._line_width = 600
         """The width of one line of the details, in pixels."""
         self.status_var = tk.StringVar(root, value="")
-        self.status_label = ttk.Label(body, textvariable=self.status_var, justify="left")
+        # A width of one character, as the path line. See _set_status_wrap.
+        self.status_label = ttk.Label(body, textvariable=self.status_var, justify="left", width=1)
         self.status_label.grid(row=7, column=0, sticky="ew")
+        self._status_wrap = 0
+        """The wraplength of the status line, in pixels. 0 is no wrap."""
         body.bind("<Configure>", self._wrap_status, add="+")
 
         # Row 8: the buttons.
@@ -1600,11 +1603,24 @@ class App:
 
     def _wrap_status(self, event: tk.Event) -> None:
         width = max(event.width - 2 * BODY_PADDING, 100)
-        self.status_label.configure(wraplength=width)
         if width != self._line_width:
             self._line_width = width
             if self.list_mode:
                 self._refresh_details()
+        self._set_status_wrap()
+
+    def _set_status_wrap(self) -> None:
+        """Let Tk wrap the status line of one image, but not the details lines of the list.
+
+        In the list, the app fits the details on two lines itself. Tk must not wrap these
+        lines again. On X11, Tk can wrap a line before the width that "font measure" gives,
+        for example in a path with Vietnamese letters. Then the details got a third line.
+        The width of one character keeps a long line from making the window wider.
+        """
+        wrap = 0 if self.list_mode else self._line_width
+        if wrap != self._status_wrap:
+            self._status_wrap = wrap
+            self.status_label.configure(wraplength=wrap)
 
     def _wrap_note(self, event: tk.Event) -> None:
         extra = self.note_button.winfo_reqwidth() if self.note_button.winfo_manager() else 0
@@ -2686,11 +2702,11 @@ class App:
         """Return the two lines of the details of ``row``, and True for a failed row."""
         path = self._path_line(row.src, row.dst)
         if row.state == DONE and row.result is not None:
-            return path, result_text(row.result), False
+            return path, self._fit_text(result_text(row.result)), False
         if row.state == FAILED:
             return path, self._fit_lines(lambda limit: self._failed_text(row, limit)), True
         if row.state == CONVERTING:
-            return path, self._current_text, False
+            return path, self._fit_text(self._current_text), False
         return path, "", False
 
     @staticmethod
@@ -2725,6 +2741,10 @@ class App:
                 return f"{first}\n{second}" if second else first
         return f"{first}\n{fit_text(font, width, rest, end_ellipsis)}"
 
+    def _fit_text(self, text: str) -> str:
+        """Return ``text`` on two lines at most of the details. See :meth:`_fit_lines`."""
+        return self._fit_lines(lambda _limit: text)
+
     def _zone_details(self, row: Row | None) -> tuple[str, bool]:
         if row is None:
             return ("" if self.dnd else NO_DND_TEXT), False
@@ -2750,7 +2770,7 @@ class App:
         failed = False
         path = text = ""
         if self._stopping_text:
-            text = self._stopping_text
+            text = self._fit_text(self._stopping_text) if self.list_mode else self._stopping_text
         elif not self.list_mode:
             text, failed = self._zone_details(next(iter(self.rows.values()), None))
         else:
@@ -2763,6 +2783,7 @@ class App:
             elif current is not None:
                 path = self._path_line(current.src, extra=f"{SEP}{self._current_text.rstrip('.')}")
         self.path_var.set(path)
+        self._set_status_wrap()
         self.status_var.set(text)
         for label, value in ((self.path_label, path), (self.status_label, text)):
             if value:

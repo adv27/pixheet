@@ -3542,6 +3542,7 @@ def test_the_reason_of_a_failed_row_has_two_lines_at_most(themed, tmp_path):
         app._refresh_all()
         root.update()
         font = app._label_font()
+        one = status_height(app, "Failed")
         for row in rows:
             app.tree.selection_set(str(row.id))
             app._on_select()
@@ -3550,11 +3551,64 @@ def test_the_reason_of_a_failed_row_has_two_lines_at_most(themed, tmp_path):
             lines = text.split("\n")
             assert len(lines) <= 2, text
             assert all(font.measure(line) <= app._line_width for line in lines), text
-            assert app.status_label.winfo_reqheight() <= 2 * font.metrics("linespace") + 4
+            # Three lines are taller than two lines and the padding, with any font.
+            assert app.status_label.winfo_reqheight() <= 2 * one
             assert text.startswith("Failed: ")
             assert "\\\\" not in text
             if row.kind in ("missing", "write"):
                 assert text.endswith("click Retry failed."), text  # the advice stays
+        app.dispose()
+    finally:
+        root.destroy()
+
+
+def status_height(app, text):
+    """Return the height in pixels that the status line asks for with ``text``."""
+    app.status_var.set(text)
+    app.root.update_idletasks()
+    return app.status_label.winfo_reqheight()
+
+
+class NarrowFont:
+    """A font that gives 3/4 of the width of each text. The real font needs more width."""
+
+    def __init__(self, font):
+        self.font = font
+
+    def measure(self, text):
+        return self.font.measure(text) * 3 // 4
+
+
+@pytest.mark.parametrize("themed", [True, False])
+def test_tk_does_not_wrap_the_lines_of_the_details_again(themed, monkeypatch, tmp_path):
+    # On X11, Tk can wrap a line before the width that "font measure" gives. A font that
+    # gives too small widths makes the same problem on each system.
+    src = tmp_path / "Chuyến đi Đà Lạt" / "IMG_1123.png"
+    error = "Disk full. " * 40
+    row = gui.Row(1, src, src.with_suffix(".xlsx"), state="failed", kind="other", error=error)
+    root, app = show_at_the_minimum_size(themed)
+    try:
+        one = status_height(app, "Failed")
+        # With one image, Tk wraps the status line to the width of the window.
+        app._insert_row(row)
+        app._refresh_all()
+        root.update()
+        assert not app.list_mode
+        assert app.status_label.winfo_reqheight() > 2 * one
+        # In the list, the app fits the lines. Tk must not wrap them again.
+        app._insert_row(replace(row, id=2))
+        app._refresh_all()
+        root.update()
+        real = app._label_font()
+        monkeypatch.setattr(app, "_label_font", lambda: NarrowFont(real))
+        app.tree.selection_set("1")
+        app._on_select()
+        root.update()
+        lines = app.status_var.get().split("\n")
+        assert len(lines) == 2
+        assert real.measure(lines[0]) > app._line_width  # too long for the real font
+        assert app.status_label.winfo_reqheight() <= 2 * one
+        assert app.status_label.winfo_reqwidth() <= app._line_width  # the window stays
         app.dispose()
     finally:
         root.destroy()
