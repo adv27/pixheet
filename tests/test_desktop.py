@@ -263,25 +263,40 @@ def test_latest_value_reads_once_at_first_then_on_a_worker_thread():
 # --- Drag and drop -------------------------------------------------------------------
 
 
-def test_x11_supports_tkdnd_needs_libx11_1_7():
-    new = types.SimpleNamespace(XSetIOErrorExitHandler=object())
-    old = types.SimpleNamespace()
+def fake_libraries(x11=True, xcb=True):
+    """Return a fake ctypes.CDLL for libX11 and libxcb, and the list of the names it loads.
+
+    ``x11`` and ``xcb`` are True for a new version, False for an old one, and None for a
+    library that is not on the system.
+    """
+    exports = {
+        "libX11.so.6": {"XSetIOErrorExitHandler": object()} if x11 else {},
+        "libxcb.so.1": {"xcb_total_read": object()} if xcb else {},
+    }
+    found = {"libX11.so.6": x11 is not None, "libxcb.so.1": xcb is not None}
     names = []
 
     def load(library):
         names.append(library)
-        return new
+        if not found[library]:
+            raise OSError(f"{library}: cannot open shared object file")
+        return types.SimpleNamespace(**exports[library])
 
+    return load, names
+
+
+def test_x11_supports_tkdnd_needs_libx11_1_7_and_libxcb_1_14():
+    load, names = fake_libraries()
     assert _desktop.x11_supports_tkdnd(load)
-    assert names == ["libX11.so.6"]
-    assert not _desktop.x11_supports_tkdnd(lambda library: old)
+    assert names == ["libX11.so.6", "libxcb.so.1"]
+    assert not _desktop.x11_supports_tkdnd(fake_libraries(x11=False)[0])
+    # Ubuntu 18.04, Debian 10 and RHEL 8 have libX11 1.7 from the app, but libxcb 1.13.
+    assert not _desktop.x11_supports_tkdnd(fake_libraries(xcb=False)[0])
 
 
-def test_x11_supports_tkdnd_without_libx11():
-    def load(library):
-        raise OSError(f"{library}: cannot open shared object file")
-
-    assert not _desktop.x11_supports_tkdnd(load)
+@pytest.mark.parametrize(("x11", "xcb"), [(None, True), (True, None)])
+def test_x11_supports_tkdnd_without_a_library(x11, xcb):
+    assert not _desktop.x11_supports_tkdnd(fake_libraries(x11, xcb)[0])
 
 
 @pytest.mark.skipif(not sys.platform.startswith("linux"), reason="needs libX11")
@@ -290,11 +305,12 @@ def test_x11_supports_tkdnd_with_the_real_libx11():
 
 
 def test_dnd_allowed():
-    old = lambda library: types.SimpleNamespace()  # noqa: E731
+    old, _names = fake_libraries(x11=False, xcb=False)
     assert _desktop.dnd_allowed("win32", {}, old)
     assert not _desktop.dnd_allowed("win32", {"PIXHEET_DND": "0"}, old)
     assert _desktop.dnd_allowed("win32", {"PIXHEET_DND": "1"}, old)
     assert not _desktop.dnd_allowed("linux", {}, old)
-    new = lambda library: types.SimpleNamespace(XSetIOErrorExitHandler=1)  # noqa: E731
+    assert not _desktop.dnd_allowed("linux", {}, fake_libraries(xcb=False)[0])
+    new, _names = fake_libraries()
     assert _desktop.dnd_allowed("linux", {}, new)
     assert not _desktop.dnd_allowed("linux", {"PIXHEET_DND": " 0 "}, new)

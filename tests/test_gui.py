@@ -2590,7 +2590,7 @@ def test_real_tkdnd_registers_the_drop_zone():
     if not has_tkinterdnd2():
         pytest.skip("tkinterdnd2 is not installed")
     if not _desktop.dnd_allowed():
-        pytest.skip("tkdnd cannot load here, for example with libX11 older than 1.7")
+        pytest.skip("tkdnd cannot load here, for example with an old libX11 or libxcb")
     new_root().destroy()
     result = run_python("-c", REGISTER_DROP)
     assert result.returncode == 0, result.stderr

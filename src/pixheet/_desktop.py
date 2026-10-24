@@ -380,23 +380,32 @@ def settings_path(
 
 
 def x11_supports_tkdnd(load: Callable[[str], object] | None = None) -> bool:
-    """Return True when the shared libX11 of the system is version 1.7 or later.
+    """Return True when the shared libX11 and libxcb of the system can load tkdnd.
 
     The Tk of the uv Python (python-build-standalone) has its own static copy of Xlib.
-    tkdnd uses the shared libX11. With a libX11 older than 1.7, the load of tkdnd stops
-    the process with SIGABRT, and Python cannot catch that. Only libX11 1.7 and later
-    have the function XSetIOErrorExitHandler. ``load`` opens a shared library. The
-    tests replace it. The function does not raise.
+    tkdnd uses the shared libX11, and libX11 uses the shared libxcb. With a library that
+    is too old, the load of tkdnd stops the process with SIGABRT, and Python cannot
+    catch that. The function makes sure of the two versions:
+
+    - libX11 1.7 or later. Only these versions have the function XSetIOErrorExitHandler.
+    - libxcb 1.14 or later. Only these versions have the function xcb_total_read. The
+      built app has its own libX11 1.7, but it uses the libxcb of the system. Ubuntu
+      18.04, Debian 10 and RHEL 8 have libxcb 1.13.
+
+    ``load`` opens a shared library. The tests replace it. The function does not raise.
     """
     try:
         if load is None:
             import ctypes
 
             load = ctypes.CDLL
-        library = load("libX11.so.6")
+        x11 = load("libX11.so.6")
+        if not hasattr(x11, "XSetIOErrorExitHandler"):
+            return False
+        xcb = load("libxcb.so.1")
     except OSError:
         return False
-    return hasattr(library, "XSetIOErrorExitHandler")
+    return hasattr(xcb, "xcb_total_read")
 
 
 def dnd_allowed(
@@ -407,8 +416,8 @@ def dnd_allowed(
     """Return True when the app can try to load tkdnd.
 
     The value 0 in the environment variable ``PIXHEET_DND`` turns off drag and drop on
-    all systems. On Linux, tkdnd also needs libX11 1.7 or later, see
-    :func:`x11_supports_tkdnd`.
+    all systems. On Linux, tkdnd also needs libX11 1.7 or later and libxcb 1.14 or
+    later, see :func:`x11_supports_tkdnd`.
     """
     environ = os.environ if environ is None else environ
     if environ.get(DND_ENV, "").strip() == "0":
