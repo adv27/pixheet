@@ -368,6 +368,14 @@ def _set_if_changed(var: tk.Variable, value: object) -> None:
         var.set(value)
 
 
+def _show_if(widget: tk.Widget, visible: object) -> None:
+    """Show ``widget`` in its grid cell, or hide it. A hidden widget keeps its grid options."""
+    if visible:
+        widget.grid()
+    else:
+        widget.grid_remove()
+
+
 def summary(dst: Path, result: ConvertResult) -> str:
     """Return the status line for one converted file."""
     w, h = result.size
@@ -2691,20 +2699,14 @@ class App:
             self.retry_button.grid()
         else:
             self.retry_button.grid_remove()
-        if self.list_mode and not running:
-            self.clear_button.grid()
-        else:
-            self.clear_button.grid_remove()
+        _show_if(self.clear_button, self.list_mode and not running)
         folders = len(self.done_folders)
         if self.list_mode and folders >= 2:
             self.folders_button.configure(text=f"Show folders ({folders:,})")
             self.folders_button.grid()
         else:
             self.folders_button.grid_remove()
-        if self.list_mode and folders == 1:
-            self.folder_open_button.grid()
-        else:
-            self.folder_open_button.grid_remove()
+        _show_if(self.folder_open_button, self.list_mode and folders == 1)
         target = self._open_target()
         state = ["!disabled"] if target is not None else ["disabled"]
         self.show_button.state(state)
@@ -2717,11 +2719,8 @@ class App:
             show, open_ = target is not None, True
         else:
             show = open_ = not running and tally.done > 0
-        for button, visible in ((self.show_button, show), (self.open_button, open_)):
-            if visible:
-                button.grid()
-            else:
-                button.grid_remove()
+        _show_if(self.show_button, show)
+        _show_if(self.open_button, open_)
         self._fit_min_width()
 
     def _path_line(self, src: Path, dst: Path | None = None, extra: str = "") -> str:
@@ -2843,11 +2842,8 @@ class App:
         _set_if_changed(self.path_var, path)
         self._set_status_wrap()
         _set_if_changed(self.status_var, text)
-        for label, value in ((self.path_label, path), (self.status_label, text)):
-            if value:
-                label.grid()
-            else:
-                label.grid_remove()
+        _show_if(self.path_label, path)
+        _show_if(self.status_label, text)
         if failed != self._status_failed:
             self._status_failed = failed
             colors = ROW_COLORS[self.mode()]
