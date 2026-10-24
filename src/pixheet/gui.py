@@ -1448,10 +1448,7 @@ class App:
         self.open_button = ttk.Button(bar, text="Open", command=self.open_output)
         self.open_button.grid(row=0, column=7, padx=(6, 0))
         self.open_button.bind("<Return>", lambda event: self.open_button.invoke())
-        for button in (self.stop_button, self.retry_button, self.clear_button):
-            button.grid_remove()
-        self.folders_button.grid_remove()
-        self.folder_open_button.grid_remove()
+        # _refresh_buttons() shows or hides each button of the bar before the first draw.
 
     def _build_theme_toggle(self, header: ttk.Frame, sun_valley: bool) -> None:
         """Make the System, Light and Dark toggle at the right of the header row.
