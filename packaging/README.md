@@ -21,7 +21,7 @@ This folder holds the build of the desktop app in one file: `Pixheet.exe` for Wi
 | `build.sh` | Builds the Linux app and tests it. Run it on Debian 11. |
 | `release_version.py` | Reads the version from `pyproject.toml` for the release job. It also stops a pull request that changes the version to a version with a tag. |
 | `release_notes.py` | Prints the release notes of a version: its section of `CHANGELOG.md`, then the download steps. The release job uses the output. The job "Check the version tag" of `ci.yml` runs it for each pull request. |
-| `release_plan.py` | Decides the steps of the release job from the tag and the release on GitHub: make the tag, publish the missing files, or do nothing. |
+| `release_plan.py` | Decides the steps of the release job from the tag and the release on GitHub: make the tag, publish the missing files, or do nothing. It stops the job when a person must repair the tag or the release. |
 | `check_exe.py` | Makes sure that a built app starts, and that it converts test images of 11 formats and modes correctly. It works on Windows and on Linux. |
 | `runner_job_started.ps1` | The job-started hook for a later self-hosted runner. It refuses each job that is not a trusted build. Read [Later: self-hosted runner](#later-self-hosted-runner). |
 
