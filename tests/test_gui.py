@@ -109,9 +109,7 @@ def test_the_worker_sends_about_four_progress_messages_each_second():
     assert throttle(2, 10)
 
 
-def test_image_suffixes_match_the_file_dialog_types():
-    patterns = gui.IMAGE_TYPES[0][1].split()
-    assert {pattern.removeprefix("*") for pattern in patterns} == IMAGE_SUFFIXES
+def test_the_file_dialog_on_windows_uses_the_file_types():
     assert gui.image_types("win32") == gui.IMAGE_TYPES
 
 

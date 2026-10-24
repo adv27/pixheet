@@ -25,11 +25,16 @@ from PIL import UnidentifiedImageError
 
 from pixheet.core import ConvertResult
 
-IMAGE_SUFFIXES = frozenset({
+IMAGE_SUFFIX_ORDER = (
     ".png", ".jpg", ".jpeg", ".gif", ".bmp", ".tif", ".tiff", ".webp",
     ".avif", ".ico", ".ppm", ".pgm", ".pbm", ".pnm", ".tga", ".psd",
-})  # fmt: skip
-"""The suffixes of the files that the app adds from a drop. Lower case, with the dot."""
+)  # fmt: skip
+"""The suffixes of the files that the app adds from a drop, in the order of the file dialog.
+
+Lower case, with the dot.
+"""
+IMAGE_SUFFIXES = frozenset(IMAGE_SUFFIX_ORDER)
+"""The suffixes of :data:`IMAGE_SUFFIX_ORDER` as a set."""
 
 QUIET_NAMES = frozenset({"desktop.ini", "thumbs.db", ".ds_store"})
 """Files in a dropped folder that the note about files that are not images does not name."""

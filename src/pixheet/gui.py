@@ -56,6 +56,7 @@ from pixheet._plan import (
     FAILED,
     FINISHED_STATES,
     FOLDER_IN,
+    IMAGE_SUFFIX_ORDER,
     NOT_AN_IMAGE,
     SEP,
     SKIPPED,
@@ -150,14 +151,7 @@ CANCELLED_TEXT = "The app did not add the dropped images."
 NOT_STARTED_TEXT = "The app did not start the run."
 NEXT_TO_IMAGE = "Next to each image"
 CHOOSE_FOLDER = "Choose a folder..."
-IMAGE_TYPES = [
-    (
-        "Images",
-        "*.png *.jpg *.jpeg *.gif *.bmp *.tif *.tiff *.webp *.avif *.ico "
-        "*.ppm *.pgm *.pbm *.pnm *.tga *.psd",
-    ),
-    ("All files", "*.*"),
-]
+IMAGE_TYPES = [("Images", " ".join(f"*{s}" for s in IMAGE_SUFFIX_ORDER)), ("All files", "*.*")]
 """The file types of the file dialog on Windows."""
 BACKGROUNDS = ("white", "black", "none")
 
