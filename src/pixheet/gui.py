@@ -25,7 +25,7 @@ import queue
 import sys
 import threading
 import time
-from collections.abc import Callable, Iterable, Iterator, Mapping, Sequence
+from collections.abc import Callable, Collection, Iterable, Iterator, Mapping, Sequence
 from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Any
@@ -110,6 +110,7 @@ NO_DND_TEXT = "Drag and drop is not available. Use Add files or Add folder."
 FOLDER_HINT = "A folder adds only the images directly in it."
 DIALOG_DROP_TEXT = "Close the dialog first. The app did not add the dropped files."
 CANCELLED_TEXT = "The app did not add the dropped images."
+NOT_STARTED_TEXT = "The app did not start the run."
 NEXT_TO_IMAGE = "Next to each image"
 CHOOSE_FOLDER = "Choose a folder..."
 IMAGE_TYPES = [
@@ -1641,7 +1642,8 @@ class App:
         taken = {output_key(row.dst) for row in self.rows.values()}
         outputs = assign_outputs(fresh, self.out_dir, taken)
         new_rows = [Row(self._next_id(), src, dst) for src, dst in zip(fresh, outputs, strict=True)]
-        decision = self._decide(new_rows + again)
+        earlier = self._waiting_rows()
+        decision = self._decide([*earlier, *new_rows, *again])
         if decision is None:
             return None
         options = self._run_options()
@@ -1649,27 +1651,29 @@ class App:
             return None
         if self.failed_only:
             self._set_failed_only(False)
-        queued: list[Row] = []
+        queued = self._apply(earlier, decision)
         for row in new_rows:
             new = decision(row)
             self._insert_row(new)
             queued.append(new)
-        for row in again:
-            if row.id not in self.rows:  # the user removed it in the meantime
-                continue
-            new = decision(self.rows[row.id])
-            self._update_row(new, to_end=True)
-            queued.append(new)
+        queued += self._apply(again, decision, to_end=True)
         self._refresh_list()
         self._enqueue(queued, options)
         return len(queued)
 
-    def _decide(self, rows: Sequence[Row], *, ask: bool = True) -> Callable[[Row], Row] | None:
+    def _decide(
+        self,
+        rows: Sequence[Row],
+        *,
+        replace_ids: Collection[int] = (),
+        cancel_note: str = CANCELLED_TEXT,
+    ) -> Callable[[Row], Row] | None:
         """Find the rows that cannot run, and ask about the outputs that exist.
 
         Return a function that gives the new state of each row. Return None when the
-        user clicked Cancel. A row whose output path is too long fails at once. Without
-        ``ask``, the app replaces the outputs that exist.
+        user clicked Cancel, and show ``cancel_note``. A row whose output path is too long
+        fails at once. For the rows in ``replace_ids``, the app replaces the outputs that
+        exist without a question.
         """
         problems: dict[int, str] = {}
         for row in rows:
@@ -1678,9 +1682,11 @@ class App:
                 problem = "The output file is the input file."
             if problem is not None:
                 problems[row.id] = problem
-        existing = []
-        if ask:
-            existing = [row for row in rows if row.id not in problems and row.dst.exists()]
+        existing = [
+            row
+            for row in rows
+            if row.id not in problems and row.id not in replace_ids and row.dst.exists()
+        ]
         skip: set[int] = set()
         if existing:
             question = ReplaceQuestion(
@@ -1690,7 +1696,7 @@ class App:
             if self._close_if_asked() or self.closing:
                 return None
             if answer == "cancel":
-                self.set_note(CANCELLED_TEXT)
+                self.set_note(cancel_note)
                 return None
             if answer == "skip":
                 skip = {row.id for row in existing}
@@ -1704,6 +1710,35 @@ class App:
             return replace(fresh, state=WAITING)
 
         return decide
+
+    def _waiting_rows(self) -> list[Row]:
+        """Return the rows that wait, when no run is active. A new run takes them too.
+
+        These rows are left from a run that the user stopped. Their outputs can have
+        changed with "Save to", and new files can exist. Thus the app checks them with
+        :meth:`_decide` again before the new run.
+        """
+        if self.running:
+            return []
+        return [row for row in self.rows.values() if row.state == WAITING]
+
+    def _apply(
+        self, rows: Iterable[Row], decision: Callable[[Row], Row], *, to_end: bool = False
+    ) -> list[Row]:
+        """Give each row of ``rows`` its new state from ``decision``. Return the new rows.
+
+        A row keeps the output of ``rows``. The function ignores a row that the user
+        removed in the meantime.
+        """
+        result = []
+        for row in rows:
+            current = self.rows.get(row.id)
+            if current is None:
+                continue
+            new = decision(replace(current, dst=row.dst))
+            self._update_row(new, to_end=to_end)
+            result.append(new)
+        return result
 
     # "Save to"
 
@@ -1750,15 +1785,11 @@ class App:
     def _enqueue(self, rows: Sequence[Row], options: Options) -> None:
         """Put the waiting rows of ``rows`` into the queue. Start a run if none is active.
 
-        A new run also takes the rows that wait from an earlier run that the user
-        stopped. A drop during a run adds its rows to that run.
+        A drop during a run adds its rows to that run. The caller checks each row with
+        :meth:`_decide` first. For a new run, ``rows`` must include the rows that wait
+        from an earlier run. See :meth:`_waiting_rows`.
         """
         if not self.running:
-            ids = {row.id for row in rows}
-            earlier = [
-                row for row in self.rows.values() if row.state == WAITING and row.id not in ids
-            ]
-            rows = [*earlier, *rows]
             self.options = options
             self.run_ids = set()
             self.run_tally = Tally()
@@ -1822,10 +1853,16 @@ class App:
         """Start a run with the rows that wait, for example after Stop."""
         if self.running or self.closing or self._dialogs:
             return
-        rows = [row for row in self.rows.values() if row.state == WAITING]
+        rows = self._waiting_rows()
+        if not rows:
+            return
+        decision = self._decide(rows, cancel_note=NOT_STARTED_TEXT)
+        if decision is None:
+            return
         options = self._run_options()
-        if rows and options is not None:
-            self._enqueue(rows, options)
+        if options is None:
+            return
+        self._enqueue(self._apply(rows, decision), options)
 
     def skip_current(self) -> None:
         """Stop the file that converts now. The queue continues with the next file."""
@@ -1855,7 +1892,12 @@ class App:
             taken = {output_key(row.dst) for row in self.rows.values() if row.id not in ids}
             outputs = assign_outputs([row.src for row in rows], self.out_dir, taken)
             rows = [replace(row, dst=dst) for row, dst in zip(rows, outputs, strict=True)]
-        decision = self._decide(rows, ask=ask)
+        earlier = self._waiting_rows()
+        decision = self._decide(
+            [*earlier, *rows],
+            replace_ids=() if ask else {row.id for row in rows},
+            cancel_note=NOT_STARTED_TEXT,
+        )
         if decision is None:
             return
         options = self._run_options()
@@ -1863,14 +1905,7 @@ class App:
             return
         if self.failed_only:
             self._set_failed_only(False)
-        queued = []
-        for row in rows:
-            if row.id not in self.rows:
-                continue
-            new = decision(row)
-            self._update_row(new)
-            queued.append(new)
-        self._enqueue(queued, options)
+        self._enqueue([*self._apply(earlier, decision), *self._apply(rows, decision)], options)
 
     def retry_selected(self) -> None:
         self.retry([row for row in self._selected_rows() if row.state in (FAILED, STOPPED)])

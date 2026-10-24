@@ -938,6 +938,88 @@ def test_a_change_of_save_to_gives_new_outputs_to_waiting_rows(harness, tmp_path
     assert [row.dst for row in h.app.rows.values()] == [out / "a.xlsx", out / "b.xlsx"]
 
 
+def stop_after_the_first(h, tmp_path, monkeypatch):
+    """Drop a.png and b.png, and stop the run in a.png. Then b.png waits."""
+    gate = gate_convert(monkeypatch)
+    h.drop(image(tmp_path / "a.png"), image(tmp_path / "b.png"))
+    h.root.update()
+    h.pump(converting(h))
+    h.app.stop_button.invoke()
+    gate.set()
+    h.wait()
+    assert h.states() == ["stopped", "waiting"]
+
+
+def save_to_a_folder_with_b(h, tmp_path):
+    """Set "Save to" to a folder that holds a b.xlsx of the user. Return that file."""
+    out = tmp_path / "out"
+    out.mkdir()
+    (out / "b.xlsx").write_bytes(b"precious")
+    h.app.set_out_dir(out)
+    return out / "b.xlsx"
+
+
+def test_convert_waiting_asks_about_outputs_that_exist(harness, tmp_path, monkeypatch):
+    h = harness(answer="skip")
+    stop_after_the_first(h, tmp_path, monkeypatch)
+    precious = save_to_a_folder_with_b(h, tmp_path)
+
+    assert h.app.stop_button.cget("text") == "Convert 1"
+    h.app.stop_button.invoke()
+    h.wait()
+    assert [q.existing for q in h.questions] == [[precious]]
+    assert precious.read_bytes() == b"precious"
+    assert h.states() == ["stopped", "skipped"]
+
+
+def test_convert_waiting_cancel_starts_no_run(harness, tmp_path, monkeypatch):
+    h = harness(answer="cancel")
+    stop_after_the_first(h, tmp_path, monkeypatch)
+    precious = save_to_a_folder_with_b(h, tmp_path)
+
+    h.app.convert_waiting()
+    assert h.app.worker is None
+    assert h.app.note_var.get() == gui.NOT_STARTED_TEXT
+    assert h.states() == ["stopped", "waiting"]
+    assert precious.read_bytes() == b"precious"
+
+
+def test_a_drop_after_stop_asks_about_the_rows_that_wait(harness, tmp_path, monkeypatch):
+    h = harness(answer="skip")
+    stop_after_the_first(h, tmp_path, monkeypatch)
+    precious = save_to_a_folder_with_b(h, tmp_path)
+
+    h.run(image(tmp_path / "c.png"))
+    [question] = h.questions
+    assert question.existing == [precious]
+    assert question.other_count == 1
+    assert precious.read_bytes() == b"precious"
+    assert h.states() == ["stopped", "skipped", "done"]
+    assert (precious.parent / "c.xlsx").exists()
+
+
+def test_retry_after_stop_asks_about_the_rows_that_wait(harness, tmp_path, monkeypatch):
+    h = harness(answer="skip")
+    stop_after_the_first(h, tmp_path, monkeypatch)
+    precious = save_to_a_folder_with_b(h, tmp_path)
+
+    h.app.retry_button.invoke()  # Retry failed (1): a.png, and the run takes b.png too
+    h.wait()
+    assert [q.existing for q in h.questions] == [[precious]]
+    assert precious.read_bytes() == b"precious"
+    assert h.states() == ["done", "skipped"]
+
+
+def test_convert_waiting_checks_the_new_output_paths(harness, tmp_path, monkeypatch):
+    h = harness()
+    stop_after_the_first(h, tmp_path, monkeypatch)
+    h.app.set_out_dir(tmp_path.joinpath(*["x" * 200] * 21))  # too long on all systems
+
+    h.app.convert_waiting()
+    h.wait()
+    assert h.rows()[1] == ("b.png", "✕ Failed: path too long")
+
+
 def test_clear_list_goes_back_to_the_zone(harness, tmp_path, monkeypatch):
     gate = gate_convert(monkeypatch)
     h = harness()
