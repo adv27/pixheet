@@ -43,10 +43,12 @@ The script does these steps:
    images of 11 formats and modes, for example AVIF, WebP, a CMYK JPEG with an ICC
    profile, and a LAB TIFF. Each sheet must be the same, byte for byte, as the sheet of
    `pixheet.convert` in Python. If the exe does not stop in 120 seconds, `check_exe.py`
-   stops it and all processes that it started. Each run of the exe gets its own
-   temporary folder in `TEMP` and `TMP`, and `check_exe.py` deletes it after the run.
-   Thus a stopped exe cannot leave a `_MEI...` folder in `%TEMP%`.
+   stops it and all processes that it started.
 4. It writes `dist\Pixheet.exe.sha256`.
+
+`check_exe.py` gives each run of the exe its own temporary folder in `TEMP` and `TMP`,
+and it deletes the folder after the run. Thus a stopped exe cannot leave a `_MEI...`
+folder in `%TEMP%`.
 
 The script sets `PYINSTALLER_CONFIG_DIR` to `build\pyinstaller-config`. With `--clean`,
 PyInstaller deletes its cache folder, so the build does not touch the cache folder that
@@ -79,6 +81,7 @@ With `--smoke`, the app opens the window and closes it when it has nothing to do
 you give image paths, the app converts them first. The exit code is 1 when the app
 finds a problem. A built app must also have the window icon, drag and drop, and the
 Sun Valley theme of sv-ttk. The app also prints the name of its ttk theme.
+
 `check_exe.py` runs the smoke test with `PIXHEET_THEME=light` and with
 `PIXHEET_THEME=dark`. The name must be `sun-valley-light` or `sun-valley-dark`, not the
 name of a standard Tk theme.
@@ -139,12 +142,12 @@ PyInstaller copies the shared libraries of the build host into the app, for exam
 
 - **glibc.** The app runs only on a system with the newest glibc version that a library
   of the bundle needs. Pillow already needs glibc 2.27. On Debian 11 (glibc 2.31), the
-  libraries of the host need 2.26 or less, so the app needs glibc 2.27: Ubuntu 18.04,
-  Debian 10, RHEL 8 and later. On Ubuntu 22.04, the app would need glibc 2.35. On the
-  `ubuntu-latest` runner (Ubuntu 24.04), it would need glibc 2.39.
+  libraries of the host need glibc 2.26 or less. Thus the app needs glibc 2.27: Ubuntu
+  18.04, Debian 10, RHEL 8 and later. On Ubuntu 22.04, the app would need glibc 2.35. On
+  the `ubuntu-latest` runner (Ubuntu 24.04), it would need glibc 2.39.
 - **libX11.** The Tk of the uv Python (python-build-standalone) has its own static copy of
   Xlib. tkdnd uses the shared `libX11.so.6`. With a libX11 older than 1.7, the load of
-  tkdnd stops the app with SIGABRT ("[xcb] Extra reply data still left in queue"), and
+  tkdnd stops the app with SIGABRT ("[xcb] Extra reply data still left in queue").
   Python cannot catch that. Debian 11 has libX11 1.7.2. Ubuntu 20.04 and RHEL 8 have
   1.6, so they are not good build hosts. Only libX11 1.7 and later export the function
   `XSetIOErrorExitHandler`.
@@ -165,12 +168,14 @@ app has its own libX11 1.7.2, but it uses the libxcb of the system. Ubuntu 18.04
 10 and RHEL 8 have libxcb 1.13. Thus the built app runs there without drag and drop.
 
 Debian 11 is past its LTS. Its packages are on `archive.debian.org`, and they get no
-more security updates. If the archive goes away, change the container of the job
-`build-linux` in `release.yml` to a newer system with libX11 1.7, for example
-`ubuntu:22.04`, and change `GLIBC_MAX` in `linux_guards.py` to the new floor.
+more security updates. If the archive goes away, do these steps:
 
-To test a build on a host with an older libX11, for example WSL with Ubuntu 20.04, put a
-folder with the `libX11.so.6` (and its `libxcb.so.1`) of Debian 11 first in
+1. Change the container of the job `build-linux` in `release.yml` to a newer system with
+   libX11 1.7, for example `ubuntu:22.04`.
+2. Change `GLIBC_MAX` in `linux_guards.py` to the new floor.
+
+You can test a build on a host with an older libX11, for example WSL with Ubuntu 20.04.
+Copy `libX11.so.6` and `libxcb.so.1` of Debian 11 to a folder. Put that folder first in
 `LD_LIBRARY_PATH`. PyInstaller then copies that libX11.
 
 ### Fonts and other limits on Linux
@@ -212,13 +217,15 @@ After an update of python-build-standalone, do these steps:
 
 ## The size of the exe
 
-The one-file exe is about 13.9 MB. Without the changes below, it is about
-19.6 MB. The Linux file is about 19.4 MB (`build.sh` shows 18.5 MB). On Linux, `strip`
-removes the debug symbols of the libraries and saves about 3.8 MB, and the trim saves
-about 0.6 MB. `build.ps1` shows 13.3 MB, because it counts 1 MB as 1,048,576 bytes. The
-Sun Valley theme adds about 55 KB. The spec
-keeps all the features. It makes these changes. Each number is the saving of one change
-alone:
+The one-file exe is about 13.9 MB. Without the changes below, it is about 19.6 MB.
+`build.ps1` shows 13.3 MB, because it counts 1 MB as 1,048,576 bytes. The Sun Valley
+theme adds about 55 KB.
+
+The Linux file is about 19.4 MB (`build.sh` shows 18.5 MB). On Linux, `strip` removes
+the debug symbols of the libraries and saves about 3.8 MB. The trim saves about 0.6 MB.
+
+The spec keeps all the features. It makes the changes in this table. Each number is the
+saving of one change alone:
 
 | Change | Saves | Why it is safe |
 |---|---|---|
@@ -238,8 +245,10 @@ The spec also stops the build in these conditions:
 
 - A module in `UNWANTED_MODULES` or a file in `UNWANTED_FILES` is in the bundle. A new
   hook or a new import can bring back an excluded module.
-- A module in `REQUIRED_MODULES` or a file in `REQUIRED_FILES` is not in the bundle,
-  for example `PIL._avif`, the tkdnd DLL, or the Tcl and PNG files of sv-ttk.
+- A module in `REQUIRED_MODULES` or a file in `REQUIRED_FILES` is not in the bundle.
+  Examples are `PIL._avif`, the tkdnd DLL, and the Tcl and PNG files of sv-ttk.
+- `third_party_notices.py` finds a file of the bundle without an owner, or a license
+  text is missing.
 - `trim_tcltk.py` cannot read a Tcl or Tk DLL, or the DLL is not a PE file. A code
   signature also stops the build.
 - `trim_tcltk.py` does not find a correct zip archive after the PE image of a DLL.
@@ -248,8 +257,8 @@ The spec also stops the build in these conditions:
   `libX11.so.6` older than 1.7.
 
 On Linux, the trim removes data files. It keeps the Tcl scripts of the file dialog and
-of the message box (`tkfbox.tcl`, `msgbox.tcl` and others), because Tk on X11 makes
-these dialogs with Tcl. The smoke test of the built app makes sure that Tk finds them.
+of the message box, for example `tkfbox.tcl` and `msgbox.tcl`. Tk on X11 makes these
+dialogs with Tcl. The smoke test of the built app makes sure that Tk finds them.
 
 ### Maintenance rule
 
@@ -343,8 +352,8 @@ These rules apply to the release job:
 - It is the only job that can write to the repository.
 - It never runs for a pull request, or for a manual start on a branch that is not
   `master`.
-- Only one release job runs at a time. When two merges with the same version come
-  quickly, the second job finds the tag of the first job at a different commit and does
+- Only one release job runs at a time. Two quick merges can have the same version. Then
+  the second job finds the tag of the first job at a different commit, and it does
   nothing.
 - A tag that the job makes with `GITHUB_TOKEN` does not start a new workflow run. This
   is correct, because the job publishes the release itself.

@@ -219,7 +219,8 @@ Debian 10, RHEL 8, and later versions.
 
 Download `Pixheet-linux-x86_64` and `Pixheet-linux-x86_64.sha256` from the
 [Releases](https://github.com/adv27/pixheet/releases) page. The release also has
-`THIRD-PARTY-NOTICES-linux-x86_64.txt`. Do not use the artifacts on the Actions page. They are for tests only, as [Windows app](#windows-app) tells.
+`THIRD-PARTY-NOTICES-linux-x86_64.txt`. Do not use the artifacts on the Actions page.
+They are for tests only, as [Windows app](#windows-app) tells.
 
 Then run these commands in the download folder. A download does not keep the
 permission to run the file, so `chmod +x` adds it:
