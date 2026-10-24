@@ -584,7 +584,7 @@ def test_spec_checks_the_linux_bundle_before_the_trim():
 
 
 def test_build_script_makes_a_reproducible_build():
-    """PYTHONHASHSEED and SOURCE_DATE_EPOCH are set for PyInstaller, but not for the check."""
+    """build.ps1 sets PYTHONHASHSEED and SOURCE_DATE_EPOCH for PyInstaller, not for the check."""
     text = (PACKAGING / "build.ps1").read_text(encoding="utf-8")
     build = text.index("pyinstaller --noconfirm --clean")
     seed = text.index("$env:PYTHONHASHSEED = '0'")
@@ -597,7 +597,7 @@ def test_build_script_makes_a_reproducible_build():
 
 
 def test_linux_build_script_makes_a_reproducible_build():
-    """The variables are set only for the PyInstaller command, not for the check."""
+    """build.sh sets the variables only for the PyInstaller command, not for the check."""
     text = (PACKAGING / "build.sh").read_text(encoding="utf-8")
     assert text.startswith("#!/usr/bin/env bash\n")
     assert "\nset -euo pipefail\n" in text
@@ -1299,7 +1299,7 @@ def test_linux_build_runs_in_debian_11():
     text = (WORKFLOWS / "release.yml").read_text(encoding="utf-8")
     job = text[text.index("\n  build-linux:\n") : text.index("\n  release:\n")]
     assert "    runs-on: ubuntu-latest\n" in job
-    # The image is pinned to a digest, the same as each action is pinned to a commit.
+    # The job pins the image to a digest, the same as the workflows pin each action.
     assert re.search(r"\n    container: debian:11@sha256:[0-9a-f]{64}\n", job)
     assert "archive.debian.org/debian bullseye main" in job
     assert "binutils" in job
