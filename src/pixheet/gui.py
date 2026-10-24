@@ -113,6 +113,8 @@ FOLLOW_ABOVE = 3
 """The maximum number of rows above the converting row when the list follows it."""
 STATUS_WIDTH = 220
 """The width of the Status column at 100 % scale, in pixels."""
+STATUS_PADDING = 12
+"""The space at the two sides of the text in a cell, at 100 % scale, in pixels."""
 ARROW = " → "
 
 DROP_TEXT = "Drop images or folders here"
@@ -779,6 +781,18 @@ def end_ellipsis(text: str, limit: int) -> str:
     if len(text) <= limit:
         return text
     return text[: max(limit - 1, 0)].rstrip() + ELLIPSIS
+
+
+def middle_cut(text: str, limit: int) -> str:
+    """Shorten ``text`` to ``limit`` characters or fewer. Put "…" in the middle.
+
+    The end keeps a little more than the start, for example the type and ".xlsx".
+    """
+    if len(text) <= limit:
+        return text
+    keep = max(limit - 1, 0)
+    tail = (keep + 1) // 2
+    return f"{text[: keep - tail].rstrip()}{ELLIPSIS}{text[len(text) - tail :]}"
 
 
 def fit_text(
@@ -1554,9 +1568,29 @@ class App:
     def _render(self, row: Row) -> None:
         self.tree.item(
             str(row.id),
-            values=(row.src.name, self.labels.get(path_key(row.src.parent), ""), status_text(row)),
+            values=(
+                row.src.name,
+                self.labels.get(path_key(row.src.parent), ""),
+                self._status_cell(row, status_text(row)),
+            ),
             tags=(STATE_TAGS[row.state],),
         )
+
+    def _status_cell(self, row: Row, text: str) -> str:
+        """Return ``text``, the status of ``row``, shortened to fit the Status cell.
+
+        A cell cuts a long text without "…". A waiting row with a tagged output gets "…"
+        in the middle of the output name, so that the end, for example "png).xlsx", tells
+        two rows apart. The details line shows the full name.
+        """
+        font = style_font(self.root, "Treeview")
+        room = int(self.tree.column("status", "width")) - round(STATUS_PADDING * self._scale)
+        if font.measure(text) <= room:
+            return text
+        prefix = f"Waiting{SEP}as "
+        if row.state == WAITING and text == f"{prefix}{row.dst.name}":
+            return fit_text(font, room, row.dst.name, middle_cut, prefix=prefix)
+        return fit_text(font, room, text, end_ellipsis)
 
     def _count(self, row: Row, old: str | None, new: str | None) -> None:
         """Count a change of the state of ``row`` in the tallies and the done folders."""
@@ -1601,7 +1635,7 @@ class App:
         iid = str(new.id)
         status = status_text(new)
         if status != status_text(old):
-            self.tree.set(iid, "status", status)
+            self.tree.set(iid, "status", self._status_cell(new, status))
         tag = STATE_TAGS[new.state]
         if tag != STATE_TAGS[old.state]:
             self.tree.item(iid, tags=(tag,))

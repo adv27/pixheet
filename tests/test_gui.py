@@ -10,6 +10,7 @@ import threading
 import time
 import types
 import zipfile
+from dataclasses import replace
 from pathlib import Path
 
 import pytest
@@ -982,6 +983,45 @@ def test_progress_writes_only_a_status_cell_that_changes(harness, monkeypatch, t
     assert all(set(w[2]) == {"tags"} for w in tags)  # the name and the folder stay
     assert h.states() == [gui.DONE, gui.DONE]
     assert app.tree.item(iid, "values")[0] == row.src.name
+
+
+@pytest.mark.parametrize("themed", [True, False])
+def test_a_long_status_fits_its_cell_with_an_ellipsis(themed, tmp_path):
+    if themed:
+        pytest.importorskip("sv_ttk")
+    root = new_root()
+    try:
+        if themed:
+            gui.apply_theme(root, "light")
+        app = gui.App(root, dnd_type=None)
+        out = tmp_path / "Out"
+        rows = []
+        for i, suffix in enumerate((".png", ".jpg"), start=1):
+            src = tmp_path / "Hội An tháng Mười" / f"photo{suffix}"
+            name = f"photo (Hội An tháng Mười, {suffix[1:]}).xlsx"
+            rows.append(gui.Row(i, src, out / name))
+        rows.append(gui.Row(3, tmp_path / "b" / "c.png", out / "c (b, png).xlsx"))
+        for row in rows:
+            app._insert_row(row)
+        font = gui.style_font(root, "Treeview")
+        room = int(app.tree.column("status", "width"))
+        cells = [app.tree.set(str(row.id), "status") for row in rows]
+        for cell in cells[:2]:
+            assert font.measure(cell) < room, cell
+            assert cell.startswith("Waiting · as photo (")
+            assert "…" in cell
+        assert cells[0].endswith("png).xlsx")  # the end tells the two rows apart
+        assert cells[1].endswith("jpg).xlsx")
+        assert cells[2] == "Waiting · as c (b, png).xlsx"  # a short name stays
+        # A long reason of a failed row, after a change of the state.
+        failed = replace(rows[2], state="failed", error="x" * 60, kind="other")
+        app._update_row(failed)
+        cell = app.tree.set("3", "status")
+        assert font.measure(cell) < room, cell
+        assert cell.startswith("✕ Failed: xxx")
+        app.dispose()
+    finally:
+        root.destroy()
 
 
 def test_the_bar_moves_only_by_one_percent_or_more(harness, monkeypatch, tmp_path):
