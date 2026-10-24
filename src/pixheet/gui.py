@@ -963,25 +963,22 @@ class ReplaceDialog:
         buttons = ttk.Frame(body, padding=(0, 16, 0, 0))
         buttons.pack(fill="x")
         self.buttons: dict[str, ttk.Button] = {}
-        self.buttons["cancel"] = ttk.Button(
-            buttons, text="Cancel", command=lambda: self.close("cancel")
-        )
-        self.buttons["cancel"].pack(side="right")
-        if question.skip_label is not None:
-            self.buttons["skip"] = ttk.Button(
-                buttons,
-                text=question.skip_label,
-                style="Accent.TButton",
-                command=lambda: self.close("skip"),
+        # From the right to the left: the answer, the text, the style and the gap at the right.
+        # The style "" is the default style of a button.
+        for answer, text, style, gap in (
+            ("cancel", "Cancel", "", 0),
+            ("skip", question.skip_label, "Accent.TButton", 8),
+            ("replace", question.replace_label, "", 8),
+        ):
+            if text is None:
+                continue
+            button = ttk.Button(
+                buttons, text=text, style=style, command=functools.partial(self.close, answer)
             )
-            self.buttons["skip"].pack(side="right", padx=(0, 8))
-        self.buttons["replace"] = ttk.Button(
-            buttons, text=question.replace_label, command=lambda: self.close("replace")
-        )
-        self.buttons["replace"].pack(side="right", padx=(0, 8))
-        self.focus = self.buttons.get("skip", self.buttons["cancel"])
-        for button in self.buttons.values():
+            button.pack(side="right", padx=(0, gap))
             button.bind("<Return>", lambda event: event.widget.invoke())
+            self.buttons[answer] = button
+        self.focus = self.buttons.get("skip", self.buttons["cancel"])
         top.bind("<Escape>", lambda event: self.close("cancel"))
         top.protocol("WM_DELETE_WINDOW", lambda: self.close("cancel"))
         top.bind("<Map>", self._on_map, add="+")
