@@ -18,7 +18,8 @@ Excel 16 on Windows) and readable by any .xlsx reader.
 ## Install
 
 Pixheet needs Python 3.15 or newer and depends only on [Pillow](https://python-pillow.org/).
-It is not on PyPI yet; install it from a checkout with [uv](https://docs.astral.sh/uv/):
+It is not on PyPI yet; install it from a checkout with [uv](https://docs.astral.sh/uv/)
+0.13.1 or later:
 
 ```console
 $ uv tool install .        # puts `pixheet` on your PATH

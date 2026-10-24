@@ -62,6 +62,11 @@ SHA256. For the PyInstaller step only, the script sets these two variables:
   exe. The script uses the time of the last commit. When you set `SOURCE_DATE_EPOCH`
   before you start the script, the script uses your value.
 
+uv uses only a Python that it installs itself (python-build-standalone), because
+`pyproject.toml` sets `python-preference = "only-managed"`. This is also true when the
+computer has a different Python 3.15. Thus CI, the release builds and a local build all
+use python-build-standalone, not the Python of the system or of the runner image.
+
 Add `-OneDir` to build the folder `dist\Pixheet\` in place of one file. To run
 PyInstaller without the script, use these commands:
 
@@ -390,6 +395,17 @@ these linters:
 > uvx --from actionlint-py actionlint
 ```
 
+The job `build-linux` pins its container image by digest, the same as an action:
+`debian:11@sha256:6f519a81...`. No tool updates the digest. To get the current digest,
+run `docker buildx imagetools inspect debian:11`. Debian 11 gets no more updates, so the
+digest changes rarely.
+
+The three `setup-uv` steps install one exact uv version, 0.13.1, with the `version`
+input. One step is in `ci.yml`, and one step is in each build job of `release.yml`. To
+change the uv of CI, change the three steps together. A test in `tests/test_packaging.py`
+makes sure that they agree. `pyproject.toml` accepts uv 0.13.1 or later
+(`required-version`), so a newer uv on your computer also works.
+
 ## Safety rule for the public repository
 
 The repository is public. A pull request from a fork can contain any code, and also
@@ -419,7 +435,10 @@ A pull request from a fork must never run code on it. To move the job, do these 
    runner with `ACTIONS_RUNNER_HOOK_JOB_STARTED`. Give the runner account only read
    access to the hook.
 4. Add steps that delete the workspace before and after the job. Keep the uv cache and
-   Python in `RUNNER_TEMP`. Then no file from an earlier job goes into a release.
+   Python in `RUNNER_TEMP`. Then no file from an earlier job goes into a release. By
+   default, uv puts its Python in the uv folder of the runner account, and that folder
+   stays from job to job. Thus set `UV_CACHE_DIR` and `UV_PYTHON_INSTALL_DIR` to folders
+   in `RUNNER_TEMP`.
 5. Keep the release job on a GitHub-hosted runner. Then the token that can write never
    goes to your computer.
 6. In **Settings > Actions > General**, require approval for the workflows of all
