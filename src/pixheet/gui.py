@@ -2626,7 +2626,7 @@ def _set_dpi_awareness() -> None:
 
 
 HIDDEN_ENV = "PIXHEET_HIDDEN_WINDOW"
-"""The environment variable of the hidden mode. It is for the build checks only.
+"""The environment variable of the hidden mode. It is for the build checks and the tests.
 
 With the value "1", the window opens off the screen and does not take the focus. Then
 ``packaging/check_exe.py`` can start the built app many times, and no window comes up on
@@ -2763,8 +2763,8 @@ def main(argv: Sequence[str] | None = None) -> int:
     in the settings file. Without a choice, it follows the system light or dark mode. The
     environment variable ``PIXHEET_THEME`` can set "system", "light" or "dark" at the
     start. It wins over the settings file. The environment variable
-    ``PIXHEET_HIDDEN_WINDOW=1`` keeps the window off the screen, for the build checks.
-    See :func:`hide_window`.
+    ``PIXHEET_HIDDEN_WINDOW=1`` keeps the window off the screen, for the build checks and
+    the tests. See :func:`hide_window`.
     """
     args = list(sys.argv[1:] if argv is None else argv)
     smoke = "--smoke" in args
