@@ -3038,15 +3038,8 @@ class App:
     def open_output(self) -> None:
         """Open the .xlsx file of the selected done row, or of the only done row."""
         row = self._open_target()
-        if row is None:
-            return
-        try:
-            open_path(row.dst)
-        except OSError as e:
-            self._modal(
-                self.show_error, TITLE, f"Cannot open the file: {_describe(e)}", parent=self.root
-            )
-            self._close_if_asked()
+        if row is not None:
+            self._show(lambda: open_path(row.dst), "file")
 
     def show_output(self) -> None:
         """Show the .xlsx file of the selected done row in its folder."""
@@ -3062,13 +3055,16 @@ class App:
             folder = next(iter(self.done_folders.values()))[0]
         self._show(lambda: open_path(folder))
 
-    def _show(self, action: Callable[[], None]) -> None:
+    def _show(self, action: Callable[[], None], what: str = "folder") -> None:
+        """Run ``action``, which opens a file or a folder. Show an error in a dialog.
+
+        ``what`` is the word in the error: "file" or "folder".
+        """
         try:
             action()
         except OSError as e:
-            self._modal(
-                self.show_error, TITLE, f"Cannot open the folder: {_describe(e)}", parent=self.root
-            )
+            text = f"Cannot open the {what}: {_describe(e)}"
+            self._modal(self.show_error, TITLE, text, parent=self.root)
             self._close_if_asked()
 
     def _fill_folders_menu(self) -> None:
