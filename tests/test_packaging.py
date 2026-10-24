@@ -1359,6 +1359,22 @@ def test_ci_uses_one_exact_uv_and_users_can_use_a_newer_uv():
     assert tuple(map(int, versions[0].split("."))) >= minimum
 
 
+def test_the_packaging_readme_names_the_uv_and_the_python_of_ci():
+    """The uv of CI selects the Python build of the apps, and the notices are for that build."""
+    text = (WORKFLOWS / "ci.yml").read_text(encoding="utf-8")
+    uv = re.search(r'          version: "(\d+\.\d+\.\d+)"\n', text).group(1)
+    readme = " ".join((PACKAGING / "README.md").read_text(encoding="utf-8").split())
+    assert f"install one exact uv version, {uv}, with" in readme
+    sentence = rf"uv {re.escape(uv)},? (?:which )?installs CPython (\S+) from "
+    found = re.findall(sentence + r"python-build-standalone (\d+)", readme)
+    assert len(found) == 2, found
+    assert len(set(found)) == 1, found
+    pbs = found[0][1]
+    assert f"python-build-standalone {pbs}" in (PACKAGING / "third_party_notices.py").read_text(
+        encoding="utf-8"
+    )
+
+
 @pytest.mark.parametrize("name", ["release_version", "release_plan", "release_notes"])
 def test_release_scripts_run_on_python_3_12(name):
     """ci.yml and the release job run the scripts with the Python 3.12 of the Ubuntu runner."""

@@ -71,15 +71,16 @@ jobs:
           persist-credentials: false
 
       # The version input gives one exact uv version, the same in all jobs and in ci.yml.
-      # uv reads the Python version from .python-version. pyproject.toml sets
-      # python-preference = "only-managed". Thus uv installs python-build-standalone and
-      # does not use the Python of the runner image.
+      # The uv version selects the Python build: read "Pinned actions" in
+      # packaging/README.md. uv reads the Python version from .python-version.
+      # pyproject.toml sets python-preference = "only-managed". Thus uv installs
+      # python-build-standalone and does not use the Python of the runner image.
       # This workflow publishes releases. Thus it does not use the GitHub Actions cache,
       # because a file from the cache can go into the app.
       - name: Install uv
         uses: astral-sh/setup-uv@18d369b23da25a81e9458561248e1aafff6a70fa # v10.3.1
         with:
-          version: "0.13.1"
+          version: "0.13.5"
           enable-cache: false
 
       # The build group includes pefile. Thus the test that compares the PE checksum with
@@ -171,7 +172,7 @@ jobs:
       - name: Install uv
         uses: astral-sh/setup-uv@18d369b23da25a81e9458561248e1aafff6a70fa # v10.3.1
         with:
-          version: "0.13.1"
+          version: "0.13.5"
           enable-cache: false
 
       - name: Install the dependencies
@@ -323,11 +324,11 @@ jobs:
 
       # The job never replaces a file of a published release, because users can have
       # downloaded it already. A new build of the same commit can also give a different
-      # file, for example with a newer patch release of Python. Thus the job uploads only
-      # the files that the release does not have. When the release has a file but not its
-      # checksum file, or the opposite, the job stops. To replace a file, delete it in the
-      # release by hand, then run again. A download drops the executable bit of the Linux
-      # file. The README tells the users to run chmod +x.
+      # file, for example after a change of the uv version, which selects the Python build.
+      # Thus the job uploads only the files that the release does not have. When the
+      # release has a file but not its checksum file, or the opposite, the job stops. To
+      # replace a file, delete it in the release by hand, then run again. A download drops
+      # the executable bit of the Linux file. The README tells the users to run chmod +x.
       # gh release create makes a draft, uploads the files, and then publishes the draft.
       # A job that stops during the upload, for example after a cancel or at the time
       # limit, leaves the draft. Users cannot see a draft. Thus for a draft, the job

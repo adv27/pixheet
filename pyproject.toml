@@ -55,7 +55,9 @@ build = ["pyinstaller>=6.22.3", "pyinstaller-hooks-contrib>=2026.8"]
 required-version = ">=0.13.1"
 # Use only a Python that uv installs (python-build-standalone), also when the computer has
 # a different Python 3.15. Then the CI jobs, the release builds and a local build all use
-# the same Python build on Windows and on Linux.
+# python-build-standalone on Windows and on Linux. The uv version of CI selects the Python
+# build. A local build can use a different patch release. Read "Pinned actions" in
+# packaging/README.md.
 python-preference = "only-managed"
 
 [build-system]

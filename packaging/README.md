@@ -69,6 +69,11 @@ uv uses only a Python that it installs itself (python-build-standalone), because
 computer has a different Python 3.15. Thus CI, the release builds and a local build all
 use python-build-standalone, not the Python of the system or of the runner image.
 
+The uv version selects the release of python-build-standalone. CI and the release builds
+use uv 0.13.5, which installs CPython 3.15.1 from python-build-standalone 20261021. A
+local build uses the newest Python 3.15 that uv installed on your computer. This can be a
+different patch release. Read "Pinned actions".
+
 Add `-OneDir` to build the folder `dist\Pixheet\` in place of one file. To run
 PyInstaller without the script, use these commands:
 
@@ -212,7 +217,8 @@ is missing. The texts come from these sources:
 - On Linux: the file `/usr/share/doc/<package>/copyright` of the Debian package of each
   system library in the bundle. Thus the build needs `dpkg`. Debian 11 has these files.
 
-After an update of python-build-standalone, do these steps:
+After an update of python-build-standalone, for example after a change of the uv version
+in the workflows, do these steps:
 
 1. Get the full archive of the new release for Windows and for Linux.
 2. Compare `python/licenses/` of the archive with the files in `packaging/notices/`.
@@ -387,9 +393,9 @@ the release job publishes the apps of the tag. The tag must agree with the versi
 
 The release job never replaces a file of a published release, because users can have
 downloaded the file already. A new build of the same commit can also give a different
-exe. For example, each job installs the newest patch release of Python 3.15. When the
-job runs again for a tag, for example after a re-run, it uploads only the files that the
-release does not have. It stops when the release has a file but not its `.sha256` file,
+exe, for example after a change of the uv version in the workflows. When the job runs
+again for a tag, for example after a re-run, it uploads only the files that the release
+does not have. It stops when the release has a file but not its `.sha256` file,
 or the opposite, because the new checksum can be different. To replace a file, delete it
 in the release on GitHub, and then run the job again.
 
@@ -420,11 +426,17 @@ The job `build-linux` pins its container image by digest, the same as an action:
 run `docker buildx imagetools inspect debian:11`. Debian 11 gets no more updates, so the
 digest changes rarely.
 
-The three `setup-uv` steps install one exact uv version, 0.13.1, with the `version`
+The three `setup-uv` steps install one exact uv version, 0.13.5, with the `version`
 input. One step is in `ci.yml`, and one step is in each build job of `release.yml`. To
 change the uv of CI, change the three steps together. A test in `tests/test_packaging.py`
 makes sure that they agree. `pyproject.toml` accepts uv 0.13.1 or later
 (`required-version`), so a newer uv on your computer also works.
+
+The uv version also selects the release of python-build-standalone, and thus the Python
+in the apps. uv 0.13.5 installs CPython 3.15.1 from python-build-standalone 20261021. To
+see the Python of a uv version, run `uv python list --only-downloads`. After a change of
+the uv version, do the steps in "Third-party notices", because the new Python can have
+different licenses.
 
 ## Safety rule for the public repository
 
