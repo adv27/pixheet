@@ -71,6 +71,7 @@ from pixheet._plan import (
     Started,
     Stopped,
     Tally,
+    absolute,
     apply_message,
     assign_outputs,
     drop_note,
@@ -1581,6 +1582,8 @@ class App:
         if self._dialogs:
             self.set_note(DIALOG_DROP_TEXT)
             return
+        # A path from the command line can be relative. The rows keep the full path.
+        paths = [absolute(path) for path in paths]
         with self._watch_cursor():
             if include:
                 known = {path_key(row.src) for row in self.rows.values()}

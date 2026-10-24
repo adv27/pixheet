@@ -961,6 +961,25 @@ def test_the_question_does_not_count_rows_that_fail_at_once(harness, tmp_path, m
     assert h.states() == ["done", "failed"]
 
 
+def test_relative_paths_from_the_command_line(harness, tmp_path, monkeypatch):
+    folder = tmp_path / "Photos"
+    image(folder / "photo.png")
+    image(folder / "sub" / "photo.png")
+    monkeypatch.chdir(folder)
+    h = harness()
+    out = tmp_path / "out"
+    out.mkdir()
+    h.app.set_out_dir(out)
+
+    h.app.add_paths([Path("photo.png"), Path("sub", "photo.png")])
+    h.wait()
+    assert [row.src for row in h.app.rows.values()] == [
+        folder / "photo.png",
+        folder / "sub" / "photo.png",
+    ]
+    assert sorted(p.name for p in out.iterdir()) == ["photo (Photos).xlsx", "photo (sub).xlsx"]
+
+
 def test_save_to_one_folder_with_collisions(harness, tmp_path, monkeypatch):
     gate = gate_convert(monkeypatch)
     h = harness()

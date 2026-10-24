@@ -320,6 +320,15 @@ def test_rule_a_two_folders_and_one_save_to_folder_tag_both(tmp_path):
     assert assign_outputs(sources, out) == [out / "photo (b).xlsx", out / "photo (c).xlsx"]
 
 
+def test_a_relative_source_gets_the_name_of_its_folder(tmp_path, monkeypatch):
+    folder = tmp_path / "Photos"
+    folder.mkdir()
+    monkeypatch.chdir(folder)
+    out = tmp_path / "out"
+    sources = [Path("photo.png"), Path("sub", "photo.png")]
+    assert assign_outputs(sources, out) == [out / "photo (Photos).xlsx", out / "photo (sub).xlsx"]
+
+
 def test_rule_b_only_the_new_source_gets_a_tag(tmp_path):
     out = tmp_path / "out"
     first = assign_outputs([tmp_path / "b" / "photo.png"], out)

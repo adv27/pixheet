@@ -247,7 +247,11 @@ def _quiet(path: Path) -> bool:
 
 
 def _folder_tag(folder: Path) -> str:
-    """Return the name of ``folder`` for a tag. A drive gives its letter, a share its name."""
+    """Return the name of ``folder`` for a tag. A drive gives its letter, a share its name.
+
+    A relative folder, for example ".", gives the name of the folder that it points to.
+    """
+    folder = absolute(folder)
     if folder.name:
         return folder.name
     drive = folder.drive.rstrip(":\\/")
