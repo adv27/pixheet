@@ -213,7 +213,8 @@ is missing. The texts come from these sources:
   their repositories. The files `python-*.txt` come from the section "Licenses and
   Acknowledgements for Incorporated Software" of `Doc/license.rst` of CPython 3.15.1.
   `PYTHON_PARTS` in `third_party_notices.py` lists them, with the module that has the
-  code. The other sections are for code that is not in the app.
+  code. The other sections are for code that is not in the app, or for a library whose
+  text is in `packaging/notices/`, for example OpenSSL and zlib.
 - On Linux: the file `/usr/share/doc/<package>/copyright` of the Debian package of each
   system library in the bundle. Thus the build needs `dpkg`. Debian 11 has these files.
 
