@@ -1,0 +1,6 @@
+# Shell scripts run on Linux. A CRLF line end breaks them.
+*.sh text eol=lf
+
+# The license texts go into the apps byte for byte. A test checks that they have LF line
+# ends, so a checkout on Windows must not change them to CRLF.
+packaging/notices/*.txt text eol=lf

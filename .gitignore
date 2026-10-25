@@ -4,12 +4,17 @@ __pycache__/
 .venv/
 build/
 dist/
+*.spec
+# The spec of the Windows app is a source file.
+!packaging/*.spec
 *.egg-info/
 
 # Tools
 .pytest_cache/
 .ruff_cache/
-.coverage
+.coverage*
+coverage.xml
+junit.xml
 htmlcov/
 
 # Local sample images and outputs: never commit them

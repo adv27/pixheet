@@ -2,6 +2,7 @@
 
 import os
 import time
+from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 from typing import IO
@@ -50,6 +51,7 @@ def convert(
     max_side: int = DEFAULT_MAX_SIDE,
     background: str | RGB | None = DEFAULT_BACKGROUND,
     compact: bool = False,
+    progress: Callable[[int, int], object] | None = None,
 ) -> ConvertResult:
     """Convert an image into an .xlsx spreadsheet where every cell is one pixel.
 
@@ -65,6 +67,13 @@ def convert(
             the alpha channel without compositing.
         compact: Leave out the optional ``r="A1"`` cell references. Smaller and
             faster, but only verified in Excel and openpyxl.
+        progress: A function that gets ``(rows_done, rows_total)`` while ``convert``
+            writes the sheet. It runs on the calling thread. The first call is
+            ``(0, rows_total)``, then one call comes after each row, and the last call is
+            ``(rows_total, rows_total)``. An exception from this function stops the
+            conversion and goes to the caller. When ``dst`` is a path, an existing
+            file there does not change. When ``dst`` is a stream, the stream then
+            holds an incomplete file. Discard it.
 
     The image is shrunk, keeping its aspect ratio, to the largest size that fits
     ``max_side``, the sheet grid and 63,999 distinct colors (Excel's cell-format limit).
@@ -73,7 +82,7 @@ def convert(
     if _same_file(src, dst):
         raise ValueError(f"the output {os.fspath(dst)!r} is the input image; choose another path")
     original_size, image = fitted(src, max_side, background)
-    colors = _write(image, dst, compact)
+    colors = _write(image, dst, compact, progress)
     w, h = image.size
     return ConvertResult(
         original_size=original_size,
@@ -106,21 +115,28 @@ def _same_file(src: Source, dst: Destination) -> bool:
         return False
 
 
-def _write(im: Image.Image, dst: Destination, compact: bool) -> int:
+def _write(
+    im: Image.Image,
+    dst: Destination,
+    compact: bool,
+    progress: Callable[[int, int], object] | None,
+) -> int:
     if not isinstance(dst, (str, os.PathLike)):
-        return write_xlsx(im, dst, compact=compact)
+        return write_xlsx(im, dst, compact=compact, progress=progress)
     path = Path(dst)
     # Write next to the target, then rename over it. The name has a fixed length so a
     # long but valid target name cannot push it past the file-name limit.
     tmp = path.with_name(f".pixheet-{os.urandom(8).hex()}.tmp")
     try:
         with tmp.open("xb") as f:
-            colors = write_xlsx(im, f, compact=compact)
+            colors = write_xlsx(im, f, compact=compact, progress=progress)
         tmp.replace(path)
     except BaseException as e:
         tmp.unlink(missing_ok=True)
         if isinstance(e, OSError) and e.filename == str(tmp):
-            # Report the target, not the hidden temp file.
+            # Report the target, not the hidden temp file. The cause keeps the error of the
+            # step. The error of the rename also has the target as filename2. The app uses
+            # it to find an output that another app has open.
             raise type(e)(e.errno, e.strerror, str(path)) from e
         raise
     return colors
