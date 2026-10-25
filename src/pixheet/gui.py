@@ -898,7 +898,11 @@ def fit_text(
     return line(_last_fit(1, len(text) - 1, lambda limit: font.measure(line(limit)) <= width, 1))
 
 
-class _ListTree(ttk.Treeview):
+# Without Tk, the module must still import, so that main() can tell the user.
+_TreeviewBase: Any = ttk.Treeview if tk is not None else object
+
+
+class _ListTree(_TreeviewBase):
     """The Treeview of the list. It keeps its selection in a cache.
 
     The views read the selection after each poll during a run. selection() asks Tk for

@@ -6,6 +6,7 @@ import os
 import re
 import subprocess
 import sys
+import textwrap
 import threading
 import time
 import types
@@ -292,6 +293,30 @@ def test_main_without_tkinter(monkeypatch, capsys):
     monkeypatch.setattr(gui, "tk", None)
     assert gui.main([]) == 1
     assert "tkinter is not available" in capsys.readouterr().err
+
+
+def test_the_module_imports_on_a_python_without_tk():
+    # A new interpreter that cannot import tkinter: the module must import, and main()
+    # must give its message. A NameError at import hides the message.
+    code = textwrap.dedent(
+        """
+        import importlib.abc, sys
+
+        class NoTk(importlib.abc.MetaPathFinder):
+            def find_spec(self, name, path=None, target=None):
+                if name.split(".")[0] in ("tkinter", "_tkinter"):
+                    raise ImportError(name)
+
+        sys.meta_path.insert(0, NoTk())
+        import pixheet.gui
+        sys.exit(pixheet.gui.main([]))
+        """
+    )
+    result = subprocess.run(
+        [sys.executable, "-c", code], capture_output=True, text=True, timeout=60, check=False
+    )
+    assert result.returncode == 1, result.stderr
+    assert "tkinter is not available" in result.stderr
 
 
 @pytest.mark.parametrize("error", [ImportError, RuntimeError])
