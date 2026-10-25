@@ -12,6 +12,7 @@ The functions do not use Tk. Thus the tests can call them without a window.
 """
 
 import errno
+import functools
 import os
 import re
 import sys
@@ -95,6 +96,19 @@ def path_key(path: Path | str) -> str:
     return os.path.normcase(absolute(path))
 
 
+@functools.lru_cache(maxsize=1024)
+def _real_folder(folder: str) -> str:
+    """Return ``folder`` with its links resolved: symbolic links, junctions, mapped drives.
+
+    The result comes from a cache. Many rows have the same folder, and a network share is
+    slow to read.
+    """
+    try:
+        return os.path.realpath(folder)
+    except OSError, ValueError:
+        return folder
+
+
 def output_key(path: Path | str) -> str:
     """Return the key of an output path. The case of the letters has no effect on any system.
 
@@ -102,8 +116,14 @@ def output_key(path: Path | str) -> str:
     share. There, "Photo.xlsx" and "photo.xlsx" are one file. Thus two outputs whose
     names differ only in case get a tag. On a disk that sees the case, the tag is not
     necessary, but it does no harm.
+
+    Two folder paths can name one folder through a link, for example /alias and /photos
+    when /alias links to /photos. The key uses the real folder, so the outputs in such
+    folders collide too.
     """
-    return path_key(path).casefold()
+    path = absolute(path)
+    real = Path(_real_folder(str(path.parent))) / path.name
+    return os.path.normcase(real).casefold()
 
 
 _DIGITS = re.compile(r"([0-9]+)")
@@ -294,7 +314,9 @@ def assign_outputs(
     groups: dict[str, list[int]] = {}
     for index, dst in enumerate(wanted):
         groups.setdefault(output_key(dst), []).append(index)
-    used = {key.casefold() for key in taken} | {output_key(src) for src in sources}
+    # A key in taken can come from path_key, without the real folder. Use both forms.
+    used = {key.casefold() for key in taken} | {output_key(key) for key in taken}
+    used |= {output_key(src) for src in sources}
     result = list(wanted)
     colliding: list[tuple[str, list[int]]] = []
     for key, members in groups.items():

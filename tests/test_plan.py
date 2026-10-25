@@ -12,6 +12,7 @@ from pathlib import Path
 import pytest
 from PIL import UnidentifiedImageError
 
+from pixheet import _plan
 from pixheet._plan import (
     CONVERTING,
     DONE,
@@ -47,6 +48,7 @@ from pixheet._plan import (
     is_image,
     middle_ellipsis,
     natural_key,
+    output_key,
     path_key,
     path_problem,
     progress_text,
@@ -448,6 +450,36 @@ def test_outputs_that_differ_only_in_case_get_a_tag(tmp_path, monkeypatch, posix
         # The folder tags differ only in case: a number keeps the outputs apart.
         three = [tmp_path / "A" / "x.png", tmp_path / "a" / "x.png"]
         assert names(assign_outputs(three, out)) == ["x (A).xlsx", "x (a 2).xlsx"]
+
+
+def test_outputs_in_one_folder_through_a_link_get_tags(tmp_path, monkeypatch):
+    # /alias links to /photos: photo.png and photo.jpg write into one real folder.
+    photos, alias = tmp_path / "photos", tmp_path / "alias"
+    real = {str(alias): str(photos)}
+    monkeypatch.setattr(_plan, "_real_folder", lambda folder: real.get(folder, folder))
+    outputs = assign_outputs([photos / "photo.png", alias / "photo.jpg"])
+    assert len({output_key(dst) for dst in outputs}) == 2
+    assert "photo.xlsx" not in names(outputs)
+    # The output of another row in the real folder is taken through the link too.
+    taken = [output_key(photos / "photo.xlsx")]
+    assert names(assign_outputs([alias / "photo.png"], taken=taken)) != ["photo.xlsx"]
+
+
+def test_outputs_through_a_real_symbolic_link_get_tags(tmp_path):
+    photos, alias = tmp_path / "photos", tmp_path / "alias"
+    photos.mkdir()
+    try:
+        alias.symlink_to(photos, target_is_directory=True)
+    except OSError:
+        if sys.platform != "win32":
+            raise
+        # Windows: a normal account cannot make a symbolic link, but a junction works.
+        import _winapi
+
+        _winapi.CreateJunction(str(photos), str(alias))
+    outputs = assign_outputs([photos / "photo.png", alias / "photo.jpg"])
+    assert len({output_key(dst) for dst in outputs}) == 2
+    assert output_key(alias / "x.xlsx") == output_key(photos / "x.xlsx")
 
 
 def test_sources_that_differ_only_in_case_stay_two_images_off_windows(tmp_path, monkeypatch):
