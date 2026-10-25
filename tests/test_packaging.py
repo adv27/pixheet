@@ -2,6 +2,7 @@
 Tk trim, the exe check, the release version, the release plan, and the runner hook."""
 
 import ast
+import fnmatch
 import importlib.util
 import io
 import json
@@ -518,12 +519,25 @@ def test_spec_guards_the_excludes():
     assert {"ssl", "_hashlib", "multiprocessing", "numpy", "tkinter.test", "test"} <= unwanted
     assert unwanted.isdisjoint(spec_value("REQUIRED_MODULES"))
     windows = set(spec_value("UNWANTED_FILES_WINDOWS"))
-    assert windows == {"libcrypto-3-x64.dll", "libssl-3-x64.dll"}
+    assert windows == {"libcrypto-3-x64.dll", "libssl-3-x64.dll", *spec_value("UCRT_FILES")}
     assert set(spec_value("UNWANTED_FILES_LINUX")) == {"libcrypto.so*", "libssl.so*"}
     assert "tkinterdnd2/tkdnd/win-x64-*/libtkdnd*.dll" in spec_value("REQUIRED_FILES_WINDOWS")
     linux = spec_value("REQUIRED_FILES_LINUX")
     assert "tkinterdnd2/tkdnd/linux-x64-*/lib*tkdnd*.so" in linux
     assert "libx11.so.6" in linux
+
+
+def test_spec_removes_the_universal_c_runtime_on_windows():
+    """A GitHub Windows runner lets PyInstaller collect the UCRT. Windows 10 has it."""
+    patterns = spec_value("UCRT_FILES")
+    names = ["api-ms-win-core-file-l1-1-0.dll", "api-ms-win-crt-heap-l1-1-0.dll", "ucrtbase.dll"]
+    for name in names:
+        assert any(fnmatch.fnmatchcase(name, p) for p in patterns), name
+    for name in ["python315.dll", "vcruntime140.dll", "tcl90.dll", "_tkinter.pyd"]:
+        assert not any(fnmatch.fnmatchcase(name, p) for p in patterns), name
+    text = (PACKAGING / "pixheet.spec").read_text(encoding="utf-8")
+    # The files go before the notices are written, so they need no license owner.
+    assert text.index("for p in UCRT_FILES)") < text.index("write_notices(")
 
 
 def test_spec_patterns_of_files_are_in_lower_case():

@@ -203,8 +203,19 @@ UNWANTED_MODULES = [
     "PIL.ImageQt",
     "PIL.ImageShow",
 ]
+# The Universal C Runtime: ucrtbase.dll and about 40 api-ms-win-*.dll files. A build
+# machine with the redistributable runtime of the Windows SDK, for example a GitHub
+# Windows runner, lets PyInstaller collect these files. Windows 10 and 11 have this runtime
+# as a part of the system, and the app supports only these versions. The spec removes the
+# files, so that each build machine makes the same bundle.
+UCRT_FILES = ["api-ms-win-*.dll", "ucrtbase.dll"]
 # The build stops if the name of a file in the bundle agrees with one of these patterns.
-UNWANTED_FILES_WINDOWS = ["libcrypto-3-x64.dll", "libssl-3-x64.dll"]
+UNWANTED_FILES_WINDOWS = [
+    "libcrypto-3-x64.dll",
+    "libssl-3-x64.dll",
+    "api-ms-win-*.dll",
+    "ucrtbase.dll",
+]
 UNWANTED_FILES_LINUX = ["libcrypto.so*", "libssl.so*"]
 
 # The build stops if one of these modules is not in the bundle. The image formats need
@@ -300,6 +311,13 @@ if len(tkdnd) != 1 or not next(iter(tkdnd)).startswith(TKDND_FOLDER):
     raise SystemExit(
         f"Expected one {TKDND_FOLDER} tkdnd folder in the bundle. Found: {sorted(tkdnd)}"
     )
+
+if WINDOWS:
+    a.binaries = [
+        entry
+        for entry in a.binaries
+        if not any(fnmatch.fnmatchcase(Path(entry[0]).name.lower(), p) for p in UCRT_FILES)
+    ]
 
 # Write the license texts of all parts of the bundle, before the trim changes the sources.
 # The build stops when a file of the bundle has no known owner, or when a text is missing.
