@@ -98,8 +98,8 @@ with all CPUs.
 | All 5 in one process | 1.654 s | 1.275 s | 0.990 s (1.3x) | 0.523 s (2.4x) | 0.442 s (2.9x) |
 
 The start of the Python command takes about 70 ms. The start of the Rust binary takes
-less than 5 ms. The binary is 3.4 MB (3.8 MB with `turbo`) and needs only the C library
-of the system.
+less than 5 ms. The binary is 3.4 MB (3.8 MB with `turbo`). On Linux, it needs only
+`libc`, `libm` and `libgcc_s`. libjpeg-turbo is in the binary.
 
 ### Stages
 
