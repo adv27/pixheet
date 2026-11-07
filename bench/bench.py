@@ -41,7 +41,7 @@ def stages(path: Path, out: Path, max_side: int, background, compact: bool) -> d
         fitted = fit(upright, max_side)
         times["fit"] = time.perf_counter() - t
         t = time.perf_counter()
-        _write(fitted, out, compact)
+        _write(fitted, out, compact, None)
         times["write"] = time.perf_counter() - t
     return times
 
