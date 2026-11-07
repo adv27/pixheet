@@ -125,6 +125,9 @@ The exit criteria of phase 1:
 
 ### Phase 2: speed
 
+[PROFILE.md](PROFILE.md) gives the profile, the changes that are done, and the
+ideas that remain.
+
 Do these steps one at a time. Measure each step with `bench_cli.py` and `--stages`.
 
 1. Put the exact Pillow arithmetic of the resize in SIMD (SSE4.1 and AVX2, and NEON for
