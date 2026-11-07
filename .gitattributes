@@ -1,6 +1,6 @@
-# Shell scripts run on Linux. A CRLF line end breaks them.
+# Shell scripts run on Linux and macOS. A CRLF line end breaks them.
 *.sh text eol=lf
 
-# The license texts go into the apps byte for byte. A test checks that they have LF line
-# ends, so a checkout on Windows must not change them to CRLF.
-packaging/notices/*.txt text eol=lf
+# The golden fixtures are binary images and a table of digests. A checkout on Windows
+# must not change their line ends.
+crates/pixheet-core/tests/fixtures/** -text
