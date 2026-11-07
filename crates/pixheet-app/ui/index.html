@@ -1,0 +1,121 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Pixheet</title>
+  <link rel="stylesheet" href="style.css">
+  <script src="app.js" defer></script>
+</head>
+<body>
+  <header class="header">
+    <div class="options" role="group" aria-label="Options">
+      <label>Maximum side:
+        <input id="max-side" type="number" min="0" step="1" value="1000" inputmode="numeric">
+      </label>
+      <label>Background:
+        <input id="background" list="backgrounds" value="white" spellcheck="false" autocomplete="off">
+        <datalist id="backgrounds">
+          <option value="white"></option>
+          <option value="black"></option>
+          <option value="none"></option>
+        </datalist>
+      </label>
+      <label class="check"><input id="compact" type="checkbox"> Compact file</label>
+      <label>Save to: <select id="save-to"></select></label>
+    </div>
+    <div class="theme" role="radiogroup" aria-label="Theme" hidden>
+      <button type="button" role="radio" data-theme="system" aria-checked="true">System</button>
+      <button type="button" role="radio" data-theme="light" aria-checked="false">Light</button>
+      <button type="button" role="radio" data-theme="dark" aria-checked="false">Dark</button>
+    </div>
+  </header>
+
+  <main class="area">
+    <section id="zone" class="zone" aria-label="Drop zone">
+      <div id="zone-empty" class="zone-empty">
+        <p class="drop-text">Drop images or folders here</p>
+        <p class="muted">or</p>
+        <div class="row-buttons">
+          <button type="button" class="accent" data-action="add-files">Add files...</button>
+          <button type="button" data-action="add-folder">Add folder...</button>
+        </div>
+        <p class="muted hint">A folder adds only the images directly in it.</p>
+      </div>
+      <div id="zone-single" class="zone-single" hidden>
+        <p id="single-name" class="single-name"></p>
+        <p id="single-status" class="muted"></p>
+      </div>
+    </section>
+
+    <section id="list" class="list" aria-label="Images" hidden>
+      <div class="list-head">
+        <strong id="count-line" class="count-line"></strong>
+        <button type="button" data-action="add-files">Add files...</button>
+        <button type="button" data-action="add-folder">Add folder...</button>
+      </div>
+      <div id="table-wrap" class="table-wrap" tabindex="-1">
+        <table id="rows" aria-label="Images" aria-multiselectable="true">
+          <thead>
+            <tr><th class="col-name">Name</th><th class="col-folder" id="folder-heading">Folder</th><th class="col-status">Status</th></tr>
+          </thead>
+          <tbody></tbody>
+        </table>
+      </div>
+    </section>
+  </main>
+
+  <div id="note" class="note" role="status" hidden>
+    <span id="note-text"></span>
+    <button type="button" id="note-action" hidden></button>
+    <button type="button" id="note-close" class="tool" aria-label="Close the note">&#x2715;</button>
+  </div>
+
+  <section class="progress-line">
+    <span id="progress-text" class="progress-text"></span>
+    <span id="eta" class="muted"></span>
+    <button type="button" id="failed-only" class="toggle" aria-pressed="false" hidden></button>
+  </section>
+  <progress id="bar" max="1" value="0" aria-label="Progress"></progress>
+
+  <section class="details" aria-live="polite">
+    <div id="path-line" class="path-line" hidden></div>
+    <div id="status-line" class="status-line" hidden></div>
+  </section>
+
+  <footer class="buttons">
+    <button type="button" id="left" hidden></button>
+    <button type="button" id="retry" hidden></button>
+    <button type="button" id="clear" hidden>Clear list</button>
+    <button type="button" id="folders-menu" aria-haspopup="menu" hidden></button>
+    <button type="button" id="folder-open" hidden>Show folder</button>
+    <span class="spacer"></span>
+    <button type="button" id="show" hidden>Show in folder</button>
+    <button type="button" id="open" hidden>Open</button>
+  </footer>
+
+  <dialog id="question" aria-labelledby="question-heading">
+    <form method="dialog">
+      <h2 id="question-heading"></h2>
+      <p id="question-text"></p>
+      <ul id="question-files" class="question-files"></ul>
+      <div class="dialog-buttons">
+        <button type="submit" value="replace" id="question-replace"></button>
+        <button type="submit" value="skip" id="question-skip"></button>
+        <button type="submit" value="cancel" id="question-cancel">Cancel</button>
+      </div>
+    </form>
+  </dialog>
+
+  <dialog id="error" aria-labelledby="error-heading">
+    <form method="dialog">
+      <h2 id="error-heading">Pixheet</h2>
+      <p id="error-text"></p>
+      <div class="dialog-buttons"><button type="submit" class="accent" autofocus>OK</button></div>
+    </form>
+  </dialog>
+
+  <div id="menu" class="menu" role="menu" hidden></div>
+  <div id="drag-overlay" class="drag-overlay" aria-hidden="true"></div>
+</body>
+</html>
