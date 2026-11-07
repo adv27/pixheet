@@ -23,8 +23,8 @@ the same pixels and the same sheet XML.
 
 ### Added
 
-- The command `pixheet` in Rust, with the options of version 0.1.0. It is about 4 times
-  faster on photos, and it starts in less than 5 ms.
+- The command `pixheet` in Rust, with the options of version 0.1.0. It is 3 to 5 times
+  faster, and it starts in less than 5 ms.
 - A new desktop app (Tauri 2) for Windows, Linux and macOS. Each image gets a card with
   a preview of the sheet. A sidebar holds the settings: the size, the background, the
   output folder, the policy for existing files, subfolders, and the theme.
