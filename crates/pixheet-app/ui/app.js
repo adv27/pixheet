@@ -17,6 +17,8 @@ let summary = null;
 let settings = null;
 let selection = new Set();
 let anchor = null;
+/** The card with the keyboard focus. Arrow keys move from it; a range starts at `anchor`. */
+let focused = null;
 let toastTimer = null;
 
 const THEMES = ["system", "light", "dark"];
@@ -135,6 +137,7 @@ function focusCard(id) {
   if (!entry) return;
   for (const { li } of cards.values()) li.tabIndex = -1;
   entry.li.tabIndex = 0;
+  focused = id;
   entry.li.focus({ preventScroll: true });
   entry.li.scrollIntoView({ block: "nearest" });
 }
@@ -182,7 +185,8 @@ function onKey(event) {
   const target = event.target;
   if (target.matches("input, textarea")) return;
   const ids = selected();
-  const current = anchor != null && cards.has(anchor) ? anchor : ids[ids.length - 1];
+  // Shift+arrow keeps the anchor and moves the focus, so the range grows from the anchor.
+  const current = [focused, anchor, ids[ids.length - 1]].find((id) => id != null && cards.has(id));
   const index = current == null ? -1 : order.indexOf(current);
   const step = { ArrowRight: 1, ArrowLeft: -1, ArrowDown: columns(), ArrowUp: -columns() }[event.key];
   if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "o") {
