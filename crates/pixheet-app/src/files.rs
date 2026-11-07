@@ -1,7 +1,8 @@
 //! Files: find the images of a drop, sort them, and give each image an output path.
 
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::path::{Component, Path, PathBuf};
+use std::sync::{Mutex, OnceLock};
 
 /// The suffixes of the images that the app adds from a drop, lower case, without the dot.
 pub const IMAGE_SUFFIXES: &[&str] = &[
@@ -55,6 +56,35 @@ pub fn key(path: &Path) -> String {
         text.replace('/', "\\")
     } else {
         text
+    }
+}
+
+/// The real path of `folder`: links, junctions and mapped drives resolved. A cache keeps
+/// the result, because many images share a folder, and a share is slow to read. A folder
+/// that does not exist yet stays as it is, and the cache does not keep it.
+fn real_folder(folder: &Path) -> PathBuf {
+    static CACHE: OnceLock<Mutex<HashMap<PathBuf, PathBuf>>> = OnceLock::new();
+    let cache = CACHE.get_or_init(Default::default);
+    if let Some(real) = cache.lock().unwrap_or_else(|e| e.into_inner()).get(folder) {
+        return real.clone();
+    }
+    match folder.canonicalize() {
+        Ok(real) => {
+            let mut map = cache.lock().unwrap_or_else(|e| e.into_inner());
+            map.insert(folder.to_path_buf(), real.clone());
+            real
+        }
+        Err(_) => folder.to_path_buf(),
+    }
+}
+
+/// The key of an output path. Two folders that are one folder through a link give one
+/// key, so two images cannot write the same file. The case of the letters has no effect.
+pub fn output_key(path: &Path) -> String {
+    let full = absolute(path);
+    match (full.parent(), full.file_name()) {
+        (Some(parent), Some(name)) => key(&real_folder(parent).join(name)),
+        _ => key(&full),
     }
 }
 
@@ -206,9 +236,10 @@ pub enum Plan {
 
 /// Give `src` an output in `out_dir` (or next to the image) that no other row uses.
 ///
-/// `taken` holds the keys of the outputs of the other rows. Two images that want one
-/// output get numbers: "photo.xlsx", then "photo (2).xlsx". A file on the disk counts as
-/// taken unless the policy is Replace. The caller adds the key of the result to `taken`.
+/// `taken` holds the [`output_key`] of the outputs of the other rows. Two images that want
+/// one output get numbers: "photo.xlsx", then "photo (2).xlsx". A file on the disk counts
+/// as taken unless the policy is Replace. The caller adds the output key of the result to
+/// `taken`.
 pub fn plan_output(
     src: &Path,
     out_dir: Option<&Path>,
@@ -224,7 +255,7 @@ pub fn plan_output(
         .to_string_lossy()
         .into_owned();
     let plain = folder.join(format!("{stem}.xlsx"));
-    let free = |path: &Path| !taken.contains(&key(path));
+    let free = |path: &Path| !taken.contains(&output_key(path));
     if free(&plain) {
         match (plain.exists(), existing) {
             (false, _) | (true, Existing::Replace) => return Plan::Write(plain),
@@ -333,13 +364,34 @@ mod tests {
             let Plan::Write(path) = plan else {
                 panic!("{plan:?}")
             };
-            taken.insert(key(&path));
+            taken.insert(output_key(&path));
             path.file_name().unwrap().to_string_lossy().into_owned()
         };
         assert_eq!(plan("photo.png"), "photo.xlsx");
         assert_eq!(plan("photo.jpg"), "photo (2).xlsx");
         // The case of the letters has no effect.
         assert_eq!(plan("PHOTO.gif"), "PHOTO (3).xlsx");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn two_folders_through_a_link_share_their_outputs() {
+        // /alias links to /real: photo.png and photo.jpg want one physical photo.xlsx.
+        let dir = tempfile::tempdir().unwrap();
+        let real = dir.path().join("real");
+        std::fs::create_dir(&real).unwrap();
+        let alias = dir.path().join("alias");
+        std::os::unix::fs::symlink(&real, &alias).unwrap();
+        let mut taken = HashSet::new();
+        let first = plan_output(&real.join("photo.png"), None, Existing::KeepBoth, &taken);
+        let Plan::Write(first) = first else { panic!() };
+        taken.insert(output_key(&first));
+        let second = plan_output(&alias.join("photo.jpg"), None, Existing::KeepBoth, &taken);
+        assert_eq!(second, Plan::Write(alias.join("photo (2).xlsx")));
+        assert_eq!(
+            output_key(&real.join("a.xlsx")),
+            output_key(&alias.join("a.xlsx"))
+        );
     }
 
     #[test]

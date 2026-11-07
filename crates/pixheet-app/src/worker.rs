@@ -17,6 +17,9 @@ use pixheet_core::{
     ConvertResult, Error, Options, Pixels, Step, check_output, fit_image, io_reason, load, write,
 };
 
+/// The marker of an output that appeared after the plan.
+const EXISTS: &str = "the output exists";
+
 /// The longest side of a preview, in pixels.
 const PREVIEW_SIDE: usize = 160;
 
@@ -28,6 +31,10 @@ pub struct Job {
     pub dst: PathBuf,
     /// Set to stop this job, but not the queue.
     pub skip: Arc<AtomicBool>,
+    /// True when the job can write over a file at `dst`: the policy Replace, or Convert
+    /// again of the own output. Else the worker refuses to write over a file that
+    /// appeared after the plan.
+    pub replace: bool,
 }
 
 /// The jobs that wait. The window and the worker share it.
@@ -49,6 +56,11 @@ impl Queue {
 
     pub fn remove(&self, ids: &HashSet<u64>) {
         self.jobs().retain(|job| !ids.contains(&job.id));
+    }
+
+    /// Take all jobs that wait out of the queue. The job that the reader has keeps going.
+    pub fn drain(&self) -> Vec<Job> {
+        self.jobs().drain(..).collect()
     }
 
     pub fn clear(&self) {
@@ -318,6 +330,10 @@ fn convert_one(loaded: Loaded, cancel: &AtomicBool, post: &mut dyn FnMut(Message
             }
             ControlFlow::Continue(())
         };
+        // A file that appeared after the plan must not go away without permission.
+        if !job.replace && job.dst.exists() {
+            return Err(Error::Invalid(EXISTS.to_string()));
+        }
         let colors = write(&fitted, &job.dst, options.compact, &mut progress)?;
         Ok(ConvertResult {
             original_size,
@@ -333,6 +349,16 @@ fn convert_one(loaded: Loaded, cancel: &AtomicBool, post: &mut dyn FnMut(Message
             Message::Done { id, result, bytes }
         }
         Err(Error::Cancelled) => Message::Stopped { id },
+        Err(Error::Invalid(text)) if text == EXISTS => Message::Failed {
+            id,
+            failure: Failure {
+                reason: "File exists".into(),
+                detail: format!(
+                    "{} appeared after the image was added. Retry to apply the setting \"If the file exists\".",
+                    name(&job.dst)
+                ),
+            },
+        },
         Err(error) => Message::Failed {
             id,
             failure: classify(&error, &job.dst),

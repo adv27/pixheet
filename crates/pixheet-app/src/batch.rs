@@ -13,7 +13,7 @@ use std::time::Instant;
 use pixheet_core::{ConvertResult, Options};
 use serde::Serialize;
 
-use crate::files::{Existing, Plan, find_images, key, plan_output};
+use crate::files::{Existing, Plan, find_images, key, output_key, plan_output};
 use crate::settings::Settings;
 use crate::worker::{Failure, Job, Message, Queue};
 
@@ -51,6 +51,9 @@ struct Item {
     bytes: u64,
     failure: Option<Failure>,
     skip: Arc<AtomicBool>,
+    /// True when the job can write over a file at `dst`: the policy Replace at the plan,
+    /// or Convert again of the own output.
+    replace: bool,
 }
 
 /// A card as the page shows it.
@@ -280,7 +283,7 @@ impl Batch {
         self.items
             .values()
             .filter(|i| !except.contains(&i.id))
-            .map(|i| key(&i.dst))
+            .map(|i| output_key(&i.dst))
             .collect()
     }
 
@@ -302,9 +305,10 @@ impl Batch {
                 Plan::Write(dst) => (dst, State::Ready),
                 Plan::Skip(dst) => (dst, State::Skipped),
             };
-            taken.insert(key(&dst));
+            taken.insert(output_key(&dst));
             if let Some(item) = self.items.get_mut(&id) {
                 item.dst = dst;
+                item.replace = existing == Existing::Replace;
                 item.percent = 0;
                 item.result = None;
                 item.failure = None;
@@ -312,6 +316,20 @@ impl Batch {
             }
             self.set_state(id, state);
         }
+    }
+
+    /// Make the finished item `id` ready again, with its own output. The job can write over
+    /// that output: the user asked to convert the image again.
+    fn keep_output(&mut self, id: u64) {
+        if let Some(item) = self.items.get_mut(&id) {
+            item.replace = true;
+            item.percent = 0;
+            item.result = None;
+            item.failure = None;
+            item.skip = Arc::new(AtomicBool::new(false));
+        }
+        self.previews.remove(&id);
+        self.set_state(id, State::Ready);
     }
 
     // --- Actions of the user ------------------------------------------------------------
@@ -345,6 +363,7 @@ impl Batch {
                         bytes: 0,
                         failure: None,
                         skip: Arc::new(AtomicBool::new(false)),
+                        replace: false,
                     };
                     self.items.insert(id, item);
                     self.order.push(id);
@@ -408,6 +427,14 @@ impl Batch {
         self.settings = settings;
         *self.options.lock().unwrap_or_else(|e| e.into_inner()) = options;
         if outputs_change {
+            // The jobs that wait in the queue leave the run, and get new outputs below. The
+            // job that the reader has already keeps its output. The worker does not write
+            // it over a file that appeared, unless its policy was Replace.
+            if self.running {
+                for job in self.queue.drain() {
+                    self.run_ids.remove(&job.id);
+                }
+            }
             let ready: Vec<u64> = self
                 .order
                 .iter()
@@ -416,6 +443,9 @@ impl Batch {
                 .filter(|id| !self.queued(*id))
                 .collect();
             self.plan(&ready, self.settings.existing);
+            if self.running {
+                self.start();
+            }
         }
     }
 
@@ -433,6 +463,19 @@ impl Batch {
             self.run_ids.clear();
             self.run_finished = 0;
         }
+        // A file can appear after the plan, for example before a click on Convert, or
+        // during a stop. Plan these outputs again with the current policy.
+        let appeared: Vec<u64> = self
+            .order
+            .iter()
+            .copied()
+            .filter(|id| !self.run_ids.contains(id))
+            .filter(|id| {
+                let item = &self.items[id];
+                item.state == State::Ready && !item.replace && item.dst.exists()
+            })
+            .collect();
+        self.plan(&appeared, self.settings.existing);
         let ready: Vec<u64> = self
             .order
             .iter()
@@ -455,6 +498,7 @@ impl Batch {
                     src: item.src.clone(),
                     dst: item.dst.clone(),
                     skip: Arc::clone(&item.skip),
+                    replace: item.replace,
                 }
             })
             .collect();
@@ -496,18 +540,20 @@ impl Batch {
         self.start();
     }
 
-    /// Convert the finished images `ids` again with the current settings. They write over
-    /// their own outputs.
+    /// Convert the finished images `ids` again with the current settings.
+    ///
+    /// A done or skipped image writes over its own output: the user asked for it. A failed
+    /// or stopped image gets a new output with the current policy, as Retry failed does.
     pub fn convert_again(&mut self, ids: &[u64]) {
-        let ids: Vec<u64> = ids
-            .iter()
-            .copied()
-            .filter(|id| self.items.get(id).is_some_and(|i| i.state.finished()))
-            .collect();
-        for &id in &ids {
-            self.previews.remove(&id);
+        let mut retry = Vec::new();
+        for &id in ids {
+            match self.items.get(&id).map(|i| i.state) {
+                Some(State::Done | State::Skipped) => self.keep_output(id),
+                Some(State::Failed | State::Stopped) => retry.push(id),
+                _ => {}
+            }
         }
-        self.plan(&ids, Existing::Replace);
+        self.plan(&retry, self.settings.existing);
         self.start();
     }
 
@@ -1160,6 +1206,108 @@ mod tests {
         run_all(&mut batch, &runs);
         assert_eq!(batch.counts().done, 1);
         assert!(!dir.path().join("img0 (2).xlsx").exists());
+    }
+
+    #[test]
+    fn convert_again_keeps_the_assigned_output() {
+        // Keep both gave photo (2).xlsx, because an unrelated photo.xlsx exists.
+        let dir = tempfile::tempdir().unwrap();
+        let src = dir.path().join("photo.png");
+        png(&src, 3, 2);
+        let other = dir.path().join("photo.xlsx");
+        std::fs::write(&other, b"other").unwrap();
+        let (spawn, runs) = deferred();
+        let mut batch = Batch::new(spawn, Settings::default());
+        batch.add(std::slice::from_ref(&src));
+        run_all(&mut batch, &runs);
+        let id = batch.order[0];
+        batch.convert_again(&[id]);
+        run_all(&mut batch, &runs);
+        assert_eq!(batch.counts().done, 1);
+        assert_eq!(std::fs::read(&other).unwrap(), b"other");
+        assert_eq!(batch.items[&id].dst, dir.path().join("photo (2).xlsx"));
+    }
+
+    #[test]
+    fn start_plans_again_an_output_that_appeared() {
+        let dir = tempfile::tempdir().unwrap();
+        let src = dir.path().join("photo.png");
+        png(&src, 3, 2);
+        let (spawn, runs) = deferred();
+        let mut batch = Batch::new(spawn, manual());
+        batch.add(std::slice::from_ref(&src));
+        let id = batch.order[0];
+        assert_eq!(batch.items[&id].dst, dir.path().join("photo.xlsx"));
+        // The file appears before the click on Convert.
+        std::fs::write(dir.path().join("photo.xlsx"), b"other").unwrap();
+        batch.start();
+        assert_eq!(batch.items[&id].dst, dir.path().join("photo (2).xlsx"));
+        run_all(&mut batch, &runs);
+        assert_eq!(
+            std::fs::read(dir.path().join("photo.xlsx")).unwrap(),
+            b"other"
+        );
+        // With Skip, the image does not convert.
+        let mut batch = Batch::new(
+            deferred().0,
+            Settings {
+                existing: Existing::Skip,
+                ..manual()
+            },
+        );
+        batch.add(std::slice::from_ref(&src));
+        std::fs::remove_file(dir.path().join("photo (2).xlsx")).unwrap();
+        batch.start();
+        assert_eq!(batch.counts().skipped, 1);
+    }
+
+    #[test]
+    fn the_worker_does_not_write_over_a_file_that_appeared() {
+        let dir = tempfile::tempdir().unwrap();
+        let src = dir.path().join("photo.png");
+        png(&src, 3, 2);
+        let (spawn, runs) = deferred();
+        let mut batch = Batch::new(spawn, Settings::default());
+        batch.add(std::slice::from_ref(&src));
+        batch.take_updates();
+        // The job waits in the queue, and then the file appears.
+        std::fs::write(dir.path().join("photo.xlsx"), b"other").unwrap();
+        run_all(&mut batch, &runs);
+        let card = batch.take_updates().changed.pop().unwrap();
+        assert_eq!(card.status, "File exists");
+        assert_eq!(
+            std::fs::read(dir.path().join("photo.xlsx")).unwrap(),
+            b"other"
+        );
+        batch.retry_failed();
+        run_all(&mut batch, &runs);
+        assert_eq!(batch.counts().done, 1);
+        assert!(dir.path().join("photo (2).xlsx").is_file());
+    }
+
+    #[test]
+    fn a_new_output_folder_during_a_run_moves_the_waiting_jobs() {
+        let dir = tempfile::tempdir().unwrap();
+        let out = dir.path().join("out");
+        std::fs::create_dir(&out).unwrap();
+        let (spawn, runs) = deferred();
+        let mut batch = Batch::new(spawn, Settings::default());
+        let paths = images(dir.path(), 3);
+        batch.add(&paths);
+        assert!(batch.running());
+        batch.set_settings(Settings {
+            out_dir: Some(out.clone()),
+            ..Settings::default()
+        });
+        run_all(&mut batch, &runs);
+        assert_eq!(batch.counts().done, 3);
+        for path in &paths {
+            assert!(
+                out.join(path.with_extension("xlsx").file_name().unwrap())
+                    .is_file()
+            );
+            assert!(!path.with_extension("xlsx").exists());
+        }
     }
 
     #[test]

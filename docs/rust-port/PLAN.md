@@ -164,9 +164,9 @@ These items are still open:
   Replace with an output that Excel has open: the card must say "File is in use". With
   Keep both (the default), the output never exists before the write, so this case
   does not occur;
-- a change of the output folder during a run moves only the images that are not in the
-  queue yet. The cards that wait in the queue keep the old folder, and the page does not
-  say so;
+- a change of the output folder or of the policy during a run applies to the waiting
+  images. Only the next image, which the reader has decoded already, keeps its output;
+  the worker then refuses to write over a file that appeared;
 - screen-reader tests with Narrator and Orca;
 - the build of installers and one-file apps (phase 5).
 
