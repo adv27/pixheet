@@ -28,6 +28,7 @@ same-file = "1.0"
 turbojpeg = { version = "1.5", features = ["cmake"], optional = true }
 
 [dev-dependencies]
+sha2 = "0.10"
 tempfile = "3"
 zip = { version = "2", default-features = false, features = ["deflate"] }
 
