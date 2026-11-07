@@ -319,7 +319,10 @@ dialog::backdrop { background: rgb(0 0 0 / 35%); }
 dialog h2 { margin: 0 0 8px; font-size: 17px; }
 .dialog-actions { display: flex; justify-content: flex-end; margin-top: 18px; }
 
-@media (max-width: 760px) {
-  .app { grid-template-columns: 1fr; grid-template-areas: "top" "content"; }
-  .sidebar { display: none; }
+/* The window can be 720 px wide (minWidth in tauri.conf.json). The settings must stay
+   reachable, so a small window gets a narrower sidebar, never a hidden one. */
+@media (max-width: 960px) {
+  .app { grid-template-columns: 1fr 250px; }
+  .sidebar { padding: 14px 14px 20px; }
+  .cards { grid-template-columns: repeat(auto-fill, minmax(180px, 1fr)); }
 }
