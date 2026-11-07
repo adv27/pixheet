@@ -1,10 +1,10 @@
-//! Tests of the `pixheet` binary, ported from tests/test_cli.py.
+//! Tests of the `pixheet` binary. The Python version had the same tests.
 
 use std::io::Read;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
 
-/// The report line. tests/test_cli.py has the same regular expression.
+/// The report line. Its format is the same as in the Python version.
 const LINE: &str = r"^(?P<name>.+)  (?P<ow>\d+)x(?P<oh>\d+) -> (?P<w>\d+)x(?P<h>\d+)  (?P<colors>[\d,]+) colors  (?P<cells>[\d,]+) cells  \d+\.\d\ds$";
 
 fn pixheet(args: &[&str]) -> Output {

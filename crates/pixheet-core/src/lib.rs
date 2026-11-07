@@ -2,6 +2,8 @@
 //!
 //! This crate is the Rust port of the Python package `pixheet`. With the `turbo` feature
 //! (the default), it gives the same pixels and the same sheet XML as the Python version.
+//! The module docs name the Python code of each part (`pixheet._image`, `pixheet._xlsx`):
+//! the branch `python-legacy` keeps it. The golden test keeps the parity.
 //!
 //! ```no_run
 //! use std::path::Path;

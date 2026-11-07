@@ -32,7 +32,7 @@ const ZIP_FILECOUNT_LIMIT: usize = (1 << 16) - 1;
 const CHUNK: usize = 256 * 1024;
 const WINDOW: usize = 32 * 1024;
 /// The DEFLATE level. zipfile uses 6. With zlib-rs, level 3 compresses about 2 times
-/// faster, and the files are only 2 to 3 % larger. Read spike/PROFILE.md.
+/// faster, and the files are only 2 to 3 % larger. Read docs/rust-port/PROFILE.md.
 const LEVEL: u32 = 3;
 
 const XML_DECL: &str = "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\n";

@@ -25,7 +25,7 @@ use tauri_plugin_dialog::DialogExt;
 use tauri_plugin_opener::OpenerExt;
 use worker::Message;
 
-/// mimalloc keeps freed memory for the next image. Read spike/PROFILE.md.
+/// mimalloc keeps freed memory for the next image. Read docs/rust-port/PROFILE.md.
 #[global_allocator]
 static ALLOCATOR: mimalloc::MiMalloc = mimalloc::MiMalloc;
 

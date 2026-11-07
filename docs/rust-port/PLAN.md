@@ -1,5 +1,11 @@
 # Plan: port Pixheet to Rust
 
+> **History.** This file records the port of Pixheet from Python to Rust in November 2026.
+> The Python version and its scripts are gone now; the branch `python-legacy` keeps them.
+> Today, `cargo xtask samples DIR` makes the sample images, `cargo xtask bench DIR` times
+> the command, and the golden test of `pixheet-core` keeps the parity with the Python
+> version. Read [AGENTS.md](../../AGENTS.md).
+
 This plan uses the results of the spike in [README.md](README.md). It starts with the
 command line, as the spike did. The desktop app comes after, because it needs a
 decision first.

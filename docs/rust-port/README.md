@@ -1,5 +1,11 @@
 # Spike: the CLI in Rust
 
+> **History.** This file records the port of Pixheet from Python to Rust in November 2026.
+> The Python version and its scripts are gone now; the branch `python-legacy` keeps them.
+> Today, `cargo xtask samples DIR` makes the sample images, `cargo xtask bench DIR` times
+> the command, and the golden test of `pixheet-core` keeps the parity with the Python
+> version. Read [AGENTS.md](../../AGENTS.md).
+
 This folder keeps the results of a spike: a first Rust version of the `pixheet`
 command. The spike answered two questions:
 
@@ -13,29 +19,9 @@ The code of the spike is now in `crates/pixheet-core` and `crates/pixheet-cli`. 
 
 | Path | Content |
 |---|---|
-| `PLAN.md` | The plan of the port to Rust. |
-| `make_samples.py` | Makes the synthetic sample images. |
-| `bench_cli.py` | Times one process for each conversion, Python and Rust. |
-
-`scripts/rust_parity.py` compares the output of the two commands. It replaces the
-`parity.py` of the spike.
-
-## Run the benchmark
-
-```console
-cargo build --release -p pixheet-cli
-uv run python spike/make_samples.py local-samples/spike
-uv run python scripts/rust_parity.py --bin target/release/pixheet --samples local-samples/spike
-uv run python spike/bench_cli.py local-samples/spike -n 7 --bin rust=target/release/pixheet
-```
-
-The `.gitignore` file excludes `local-samples/` and `target/`. On Windows, add `.exe` to
-the binary paths.
-
-The spike binary had options that the `pixheet` command does not have: `-j`,
-`--stages`, `--resizer`, `--dump-fitted` and `--no-fit`. The tables below come from
-those options. To set the number of threads of the command, set the environment
-variable `RAYON_NUM_THREADS`.
+| `README.md` | The results of the spike: the speed and the parity. |
+| `PLAN.md` | The plan of the port, the decisions, and the status of each phase. |
+| `PROFILE.md` | The profile of the Rust command and the changes after it. |
 
 ## Results
 
