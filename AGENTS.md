@@ -26,7 +26,7 @@ The first versions were in Python. The branch `python-legacy` keeps the last one
 | `crates/xtask/` | The project tasks: `version`, `check-pr`, `release-notes`, `release-plan`, `release-files`, `samples`, `bench`, `sample-pixels`. |
 | `scripts/excel_check.ps1` | Opens the outputs in Excel through COM (Windows) and compares cell colors with `cargo xtask sample-pixels`. |
 | `docs/rust-port/` | The history of the port: the spike, the plan and the profile. |
-| `.github/workflows/` | `ci.yml`: the format, clippy, the tests, the builds and the smoke test of the app on Windows, Ubuntu and macOS, and the check of the version tag and of `CHANGELOG.md`. `release.yml`: the release builds for the three systems and the release. |
+| `.github/workflows/` | `ci.yml`: the format and clippy on Ubuntu; the tests, the debug builds and the smoke test of the app on Windows, Ubuntu and macOS; and the check of the version tag and of `CHANGELOG.md`. CI caches the dependencies and builds without debug info. `release.yml`: the release builds for the three systems and the release. On a pull request, it runs only when the code, the manifests or the toolchain change. |
 | `CHANGELOG.md` | The changes of each version. The release job uses the section of the version as the release notes. |
 
 ## Commands

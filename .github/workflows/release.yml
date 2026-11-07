@@ -31,7 +31,16 @@ on:
   push:
     branches: [master]
     tags: ["v*"]
+  # A pull request runs the builds only when it changes something that the release files
+  # depend on. A push to master always runs them.
   pull_request:
+    paths:
+      - "crates/**"
+      - "Cargo.toml"
+      - "Cargo.lock"
+      - "rust-toolchain.toml"
+      - ".cargo/**"
+      - ".github/workflows/release.yml"
   workflow_dispatch:
 
 permissions: {}
