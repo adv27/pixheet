@@ -35,3 +35,5 @@ profiles/
 
 # Rust build output
 target/
+# Tauri writes these schemas on each build of the app
+crates/pixheet-app/gen/
