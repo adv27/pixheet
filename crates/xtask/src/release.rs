@@ -8,15 +8,18 @@ pub const REPOSITORY: &str = "https://github.com/adv27/pixheet";
 const CHECKSUM_SUFFIX: &str = ".sha256";
 
 /// The version in `[workspace.package]` of the root `Cargo.toml` at `path`.
+///
+/// A `pyproject.toml` with `[project] version` also works: the base branch of the pull
+/// request that ported the project to Rust has only that file.
 pub fn read_version(path: &Path) -> Result<String, String> {
     let text = std::fs::read_to_string(path)
         .map_err(|e| format!("Cannot read {}: {e}", path.display()))?;
     let table: toml::Table = text
         .parse()
         .map_err(|e| format!("{} is not valid TOML: {e}", path.display()))?;
-    table
-        .get("workspace")
-        .and_then(|w| w.get("package"))
+    let workspace = table.get("workspace").and_then(|w| w.get("package"));
+    workspace
+        .or_else(|| table.get("project"))
         .and_then(|p| p.get("version"))
         .and_then(|v| v.as_str())
         .map(str::to_string)
@@ -297,6 +300,12 @@ mod tests {
         assert_eq!(read_version(&path).unwrap(), "1.2.3");
         std::fs::write(&path, "[workspace]\n").unwrap();
         assert!(read_version(&path).is_err());
+        std::fs::write(
+            &path,
+            "[project]\nname = \"pixheet\"\nversion = \"0.1.0\"\n",
+        )
+        .unwrap();
+        assert_eq!(read_version(&path).unwrap(), "0.1.0");
     }
 
     #[test]

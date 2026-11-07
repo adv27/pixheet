@@ -1,8 +1,6 @@
-# Tests and lint on GitHub-hosted Windows and Ubuntu runners.
+# Tests and lint of the Rust workspace on GitHub-hosted Windows, Linux and macOS runners.
 # Each job runs on a new virtual machine, and its token can only read the repository. A
-# pull request from a fork gets no secrets. Read packaging/README.md.
-# Both test jobs send the coverage and the test results to Codecov, with a flag for the
-# system: Windows or Linux. Only this workflow uses the secret CODECOV_TOKEN.
+# pull request from a fork gets no secrets.
 name: CI
 
 on:
@@ -19,93 +17,15 @@ concurrency:
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
-  test:
-    name: Tests and lint (${{ matrix.os }})
-    strategy:
-      # A failure on one system does not cancel the job on the other system.
-      fail-fast: false
-      matrix:
-        os: [windows-latest, ubuntu-latest]
-    runs-on: ${{ matrix.os }}
-    timeout-minutes: 20
-    steps:
-      - name: Check out the repository
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          persist-credentials: false
-
-      # The GUI tests need an X server on Linux. Without it, they skip, and the job passes
-      # without a test of the window.
-      - name: Install Xvfb
-        if: runner.os == 'Linux'
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y xvfb xauth
-
-      # The version input gives one exact uv version, so each run uses the same uv. Use the
-      # same version in release.yml. The uv version selects the Python build: read "Pinned
-      # actions" in packaging/README.md. uv reads the Python version from .python-version. uv
-      # installs python-build-standalone, not the Python of the runner image, because
-      # pyproject.toml sets python-preference = "only-managed".
-      - name: Install uv
-        uses: astral-sh/setup-uv@18d369b23da25a81e9458561248e1aafff6a70fa # v10.3.1
-        with:
-          version: "0.13.5"
-
-      - name: Install the dependencies
-        run: uv sync --locked --extra gui
-
-      # Only CI measures the coverage. A plain "uv run pytest" stays fast. On Linux,
-      # xvfb-run starts an X server for the run. bash runs the step on both systems.
-      - name: Run the tests
-        shell: bash
-        run: |
-          run=()
-          if [[ "$RUNNER_OS" == "Linux" ]]; then run=(xvfb-run -a); fi
-          "${run[@]}" uv run --locked --extra gui pytest --cov --cov-branch \
-            --cov-report=xml --junitxml=junit.xml -o junit_family=legacy
-
-      # A pull request from a fork gets no secrets. Then the token is empty, and Codecov
-      # accepts the upload without a token, because the repository is public. An upload
-      # without a token can fail, so it does not stop the job.
-      - name: Upload the coverage to Codecov
-        uses: codecov/codecov-action@303a32d7a59b442fa8d48b6a1cc6825c09c847a5 # v7.1.1
-        with:
-          token: ${{ secrets.CODECOV_TOKEN }}
-          files: coverage.xml
-          flags: ${{ runner.os }}
-          disable_search: true
-          fail_ci_if_error: ${{ secrets.CODECOV_TOKEN != '' }}
-
-      # Upload the test results also when a test fails. Codecov then shows the failed tests.
-      - name: Upload the test results to Codecov
-        if: ${{ !cancelled() }}
-        uses: codecov/codecov-action@303a32d7a59b442fa8d48b6a1cc6825c09c847a5 # v7.1.1
-        with:
-          token: ${{ secrets.CODECOV_TOKEN }}
-          report_type: test_results
-          files: junit.xml
-          flags: ${{ runner.os }}
-          disable_search: true
-          fail_ci_if_error: ${{ secrets.CODECOV_TOKEN != '' }}
-
-      # The lint and the format check give the same result on each system.
-      - name: Lint
-        if: runner.os == 'Windows'
-        run: uv run --locked --extra gui ruff check
-
-      - name: Check the format
-        if: runner.os == 'Windows'
-        run: uv run --locked --extra gui ruff format --check
-
   rust:
     name: Rust (${{ matrix.os }})
     strategy:
+      # A failure on one system does not cancel the jobs on the other systems.
       fail-fast: false
       matrix:
-        os: [windows-latest, ubuntu-latest]
+        os: [windows-latest, ubuntu-latest, macos-latest]
     runs-on: ${{ matrix.os }}
-    timeout-minutes: 30
+    timeout-minutes: 40
     steps:
       - name: Check out the repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -119,8 +39,8 @@ jobs:
           rustup toolchain install stable --profile minimal --component clippy,rustfmt
           rustup default stable
 
-      # The turbo feature builds libjpeg-turbo with cmake, which the runners have, and
-      # with nasm for its SIMD code.
+      # pixheet-core builds libjpeg-turbo with cmake, which the runners have. On x86-64,
+      # its SIMD code needs nasm. On macOS (arm64), it uses NEON and needs no nasm.
       - name: Install nasm (Windows)
         if: runner.os == 'Windows'
         shell: pwsh
@@ -143,6 +63,8 @@ jobs:
       - name: Lint
         run: cargo clippy --workspace --all-targets --locked -- -D warnings
 
+      # The tests include the golden test: the output must be the output of the Python
+      # version of Pixheet, which crates/pixheet-core/tests/fixtures keeps.
       - name: Run the tests
         run: cargo test --workspace --locked
 
@@ -150,6 +72,12 @@ jobs:
         run: |
           cargo build --release --locked -p pixheet-cli
           cargo build --locked -p pixheet-app
+
+      - name: Convert a sample with the command
+        shell: bash
+        run: |
+          target/release/pixheet --version
+          target/release/pixheet crates/pixheet-core/tests/fixtures/photo.jpg -o "$RUNNER_TEMP/photo.xlsx"
 
       # The smoke test opens the window off the screen, waits until the page is ready,
       # and stops. WebKitGTK under Xvfb has no DMA-BUF, so the renderer must not use it.
@@ -163,22 +91,6 @@ jobs:
           if [[ "$RUNNER_OS" == "Linux" ]]; then run=(xvfb-run -a); fi
           "${run[@]}" target/debug/pixheet-app --smoke
 
-      # The Python version is the reference: both commands must write the same XML.
-      - name: Install uv
-        uses: astral-sh/setup-uv@18d369b23da25a81e9458561248e1aafff6a70fa # v10.3.1
-        with:
-          version: "0.13.5"
-
-      - name: Install the Python version
-        run: uv sync --locked
-
-      - name: Compare the output with the Python version
-        shell: bash
-        run: |
-          bin=target/release/pixheet
-          if [[ "$RUNNER_OS" == "Windows" ]]; then bin+=.exe; fi
-          uv run --locked python scripts/rust_parity.py --bin "$bin" --max-side 1000 --max-side 0
-
   version:
     name: Check the version tag
     # A merge that changes the version publishes a release, but only when the tag
@@ -186,7 +98,7 @@ jobs:
     # version with a tag fails here. Then the merge cannot skip the release silently.
     if: github.event_name == 'pull_request'
     runs-on: ubuntu-latest
-    timeout-minutes: 5
+    timeout-minutes: 10
     steps:
       - name: Check out the repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -194,18 +106,21 @@ jobs:
           persist-credentials: false
 
       # The repository is public. Thus git can read the base commit and the tags without
-      # a token, also for a pull request from a fork.
+      # a token, also for a pull request from a fork. The base branch can be the last
+      # Python version, which has a pyproject.toml and no Cargo.toml.
       - name: Check that a new version has no tag yet
         env:
           BASE_SHA: ${{ github.event.pull_request.base.sha }}
         run: |
           git fetch --quiet --depth=1 --no-tags origin "$BASE_SHA"
-          git show "$BASE_SHA:pyproject.toml" > "$RUNNER_TEMP/base-pyproject.toml"
-          python3 packaging/release_version.py check-pr "$RUNNER_TEMP/base-pyproject.toml"
+          base="$RUNNER_TEMP/base-manifest.toml"
+          git show "$BASE_SHA:Cargo.toml" > "$base" 2>/dev/null \
+            || git show "$BASE_SHA:pyproject.toml" > "$base"
+          cargo run -q --locked -p xtask --no-default-features -- check-pr "$base"
 
       # The release job uses the section of the version in CHANGELOG.md as the release
       # notes. Thus each version must have a section before the merge.
       - name: Check that CHANGELOG.md has a section for the version
         run: |
-          version=$(python3 packaging/release_version.py version)
-          python3 packaging/release_notes.py "$version" > /dev/null
+          version=$(cargo run -q --locked -p xtask --no-default-features -- version)
+          cargo run -q --locked -p xtask --no-default-features -- release-notes "$version" > /dev/null
