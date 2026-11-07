@@ -91,6 +91,12 @@ The spike is in this folder. It gives the numbers and the parity results.
 
 ### Phase 1: the command line in Rust, with parity
 
+Status: most of the work is done. `crates/pixheet-core` and `crates/pixheet-cli` have
+the code. `scripts/rust_parity.py` gives the same XML as the Python version for 23
+synthetic cases and 16 EXIF cases, normal and compact, at `--max-side 1000` and `0`.
+These items are still open: an Excel check of the Rust outputs, and parity runs on real
+photos and on Windows.
+
 1. Make the workspace from the spike. Move `spike/rust-cli/src` into `pixheet-core`
    and `pixheet-cli`.
 2. Add all the features of `cli.py` and `core.py`:
@@ -157,6 +163,9 @@ a Rust module with the same tests.
 
 ## Risks
 
+- **Linux baseline.** Tauri 2 needs WebKitGTK 4.1: Ubuntu 22.04, Debian 12 or later.
+  The Tk app runs on glibc 2.27 (Ubuntu 18.04). The Rust app thus drops the old
+  systems. The release notes and the README must say so.
 - **Pillow changes.** The resize and reduce port follows Pillow 13. A new Pillow can
   change the rounding. Then the parity tests fail. Pin the Pillow version in the
   parity job.
