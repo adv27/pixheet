@@ -26,6 +26,7 @@ Read [README.md](README.md) for usage, the Python API, and the Excel limits.
 | `Cargo.toml`, `Cargo.lock` | The Cargo workspace of the Rust version. `spike/PLAN.md` gives the plan of the port. |
 | `crates/pixheet-core/` | The Rust library: decode, normalize, fit, resize, and the xlsx writer. It ports `core.py`, `_image.py`, `_threads.py` and `_xlsx.py`. With the `turbo` feature (the default), it gives the same pixels and XML as the Python version. |
 | `crates/pixheet-cli/` | The Rust `pixheet` command. It ports `cli.py`. `tests/cli.rs` ports `tests/test_cli.py`. |
+| `crates/pixheet-app/` | The new desktop app in Rust: Tauri 2 with a page in plain HTML, CSS and JavaScript (`ui/`). It is a new design, not a port of `gui.py`. `batch.rs` holds the state and has the tests; `worker.rs` converts; `files.rs` finds the images and names the outputs; `settings.rs` saves the settings. |
 | `scripts/rust_parity.py` | Runs the Python and the Rust command on synthetic images and compares `sheet1.xml` and `styles.xml` byte for byte. CI runs it. |
 | `spike/` | The results of the Rust spike, the plan of the port, and `bench_cli.py`, which times the Python and the Rust command. |
 | `scripts/` | `excel_check.ps1` (Excel COM check, Windows) and `sample_pixels.py`. |
@@ -97,7 +98,16 @@ cargo fmt --all --check
 cargo clippy --workspace --all-targets -- -D warnings
 cargo test --workspace
 cargo build --release -p pixheet-cli                  # target/release/pixheet
+cargo run -p pixheet-app                              # the new desktop app
 uv run python scripts/rust_parity.py --bin target/release/pixheet --max-side 1000 --max-side 0
+```
+
+On Linux, the app needs WebKitGTK 4.1 and GTK 3 (`libwebkit2gtk-4.1-dev`,
+`libgtk-3-dev`). Under Xvfb, set `WEBKIT_DISABLE_DMABUF_RENDERER=1`. The smoke test opens
+the window off the screen and stops when the page is ready:
+
+```console
+PIXHEET_HIDDEN_WINDOW=1 WEBKIT_DISABLE_DMABUF_RENDERER=1 xvfb-run -a target/debug/pixheet-app --smoke
 ```
 
 Run the tests, the lint, and the format check before you report a change as complete.
@@ -146,6 +156,11 @@ For a change to the Rust code, also run the Rust commands above.
 - The Rust code ports the rounding of Pillow 13 (`resample.rs`, `decode.rs`, `color.rs`).
   Test a change there against Pillow, not against an estimate.
 - The Rust crates forbid `unsafe` code.
+- The page of the app has no npm packages and no build step. It writes text only with
+  `textContent`. The content security policy blocks inline scripts and inline `style`
+  attributes: use classes, or set styles from JavaScript.
+- A message of the worker of the app changes only its card and the counts.
+  `a_tick_of_500_cards_changes_one_card` in `batch.rs` checks this.
 - `packaging/pixheet.spec` leaves many modules out of `Pixheet.exe`. A new import of
   such a module can break the exe while the tests pass. After a change to the imports in
   `src/pixheet`, run `packaging/build.ps1`, and `packaging/build.sh` on Linux if you can.

@@ -28,12 +28,9 @@ These decisions change the plan. The recommendation of each decision is first.
    - Or accept small pixel differences. Then a pure Rust decoder (zune-jpeg) and a
      SIMD resize (`fast_image_resize`) are possible. The sheet size can then differ by
      one row or column from the Python version.
-2. **The desktop app.**
-   - (Recommended) Keep the Tk app for now. Phase 3 replaces its conversion code with
-     the Rust core through PyO3. Decide on a Rust GUI after phase 2, with real data.
-   - Or rewrite the app in Rust now, for example with `egui`, Slint, or Tauri. Then the
-     app is one binary without PyInstaller and without tkdnd. But the drag and drop, the
-     theme, the list of many rows, and their tests are a large rewrite.
+2. **The desktop app.** Decided: a new design in Tauri 2, not a port of the Tk app.
+   `crates/pixheet-app` has it. It shows a card with a preview of the sheet for each
+   image, and a settings sidebar without dialogs.
 3. **The Python API** (`convert()`, `prepare()`).
    - (Recommended) Keep it, on the Rust core, as a wheel that `maturin` builds.
    - Or remove it, and keep only the command and the app.
@@ -53,18 +50,18 @@ Use one Cargo workspace in the repository root:
 | `pixheet-core` | A library: decode, normalize, fit, resample, and the xlsx writer. It has no I/O except a `Read` and a `Write + Seek`. It sends progress through a callback. |
 | `pixheet-cli` | The `pixheet` binary: arguments, wildcards, the report line, and the exit status. |
 | `pixheet-py` | Later: the PyO3 module for the Python API and the Tk app. |
-| `pixheet-gui` | Later, if you choose a Rust GUI. |
+| `pixheet-app` | The desktop app: Tauri 2 and a page in plain HTML, CSS and JavaScript. |
 
 The Python modules map to Rust modules as follows:
 
 | Python | Rust | Note |
 |---|---|---|
 | `core.py` | `pixheet-core::convert` | `ConvertResult`, the check that the output is not the input, and the atomic write. |
-| `_image.py` | `decode`, `normalize`, `fit` | `fit` is in the spike. |
+| `_image.py` | `decode`, `normalize`, `fit` | Done, with the same pixels as Pillow. |
 | `_threads.py` | `resample`, `deflate` | rayon replaces the thread pool. The strips of `_threads.py` are not necessary: the port splits each pass by output rows. |
-| `_xlsx.py` | `xlsx` | The spike writes the same XML. zip64 is still to do. |
+| `_xlsx.py` | `xlsx` | Done: the same XML, and zip64. |
 | `cli.py` | `pixheet-cli` | `clap`, and the wildcards for cmd and PowerShell. |
-| `_desktop.py`, `_plan.py`, `gui.py` | Python, for now | Decision 2. |
+| `_desktop.py`, `_plan.py`, `gui.py` | None: `pixheet-app` is a new design | Decision 2. |
 
 ## Formats
 
@@ -151,9 +148,15 @@ Do these steps one at a time. Measure each step with `bench_cli.py` and `--stage
 
 ### Phase 4: the desktop app
 
-Decide on the GUI (decision 2) with the data of phases 1 to 3. If you choose a Rust
-GUI, port `_plan.py` first. It has no Tk code and has its own tests, so it can become
-a Rust module with the same tests.
+Status: a first version is in `crates/pixheet-app`. It is a new design: a grid of
+cards with a preview of each sheet, a settings sidebar (size, background, output folder,
+the policy for existing files, subfolders, automatic start, compact files, theme), and a
+run bar. The settings are saved in `settings.json` in the config folder of the app.
+These items are still open:
+
+- a test of the app on Windows and on a Linux desktop;
+- screen-reader tests with Narrator and Orca;
+- the build of installers and one-file apps (phase 5).
 
 ### Phase 5: the release
 
