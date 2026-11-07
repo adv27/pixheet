@@ -57,6 +57,9 @@ jobs:
         with:
           persist-credentials: false
 
+      - name: Install Rust
+        run: rustup toolchain install
+
       - name: Read the version of the workspace
         id: version
         run: echo "version=$(cargo run -q --locked -p xtask --no-default-features -- version)" >> "$GITHUB_OUTPUT"
@@ -97,10 +100,9 @@ jobs:
         with:
           persist-credentials: false
 
+      # rustup installs the toolchain of rust-toolchain.toml.
       - name: Install Rust
-        run: |
-          rustup toolchain install stable --profile minimal
-          rustup default stable
+        run: rustup toolchain install
 
       - name: Install nasm (Windows)
         if: runner.os == 'Windows'
@@ -175,6 +177,9 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+
+      - name: Install Rust
+        run: rustup toolchain install
 
       # A missing section in CHANGELOG.md stops the job before it makes the tag.
       - name: Write the release notes

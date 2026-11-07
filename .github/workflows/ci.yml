@@ -32,12 +32,17 @@ jobs:
         with:
           persist-credentials: false
 
-      # The runner images have rustup. The job uses the stable toolchain of the day, so
-      # it does not need a third-party action.
+      # The runner images have rustup. It installs the toolchain of rust-toolchain.toml,
+      # the same version as local builds, so a new lint cannot break CI by surprise.
       - name: Install Rust
-        run: |
-          rustup toolchain install stable --profile minimal --component clippy,rustfmt
-          rustup default stable
+        run: rustup toolchain install
+
+      # The cache keeps the compiled dependencies (Tauri, WebKitGTK bindings, the C build
+      # of libjpeg-turbo). Without it, each run compiles about 400 crates. The key holds
+      # the system, Cargo.lock and the toolchain. Only CI uses a cache: release.yml must
+      # not, because a file from a cache could go into a release.
+      - name: Cache the build of the dependencies
+        uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
 
       # pixheet-core builds libjpeg-turbo with cmake, which the runners have. On x86-64,
       # its SIMD code needs nasm. On macOS (arm64), it uses NEON and needs no nasm.
@@ -60,7 +65,7 @@ jobs:
       - name: Check the format
         run: cargo fmt --all --check
 
-      - name: Lint
+      - name: Lint (clippy)
         run: cargo clippy --workspace --all-targets --locked -- -D warnings
 
       # The tests include the golden test: the output must be the output of the Python
@@ -68,16 +73,16 @@ jobs:
       - name: Run the tests
         run: cargo test --workspace --locked
 
+      # A debug build reuses the dependencies of the tests. The release builds are in
+      # release.yml, which also runs for each pull request.
       - name: Build the command and the desktop app
-        run: |
-          cargo build --release --locked -p pixheet-cli
-          cargo build --locked -p pixheet-app
+        run: cargo build --locked -p pixheet-cli -p pixheet-app
 
       - name: Convert a sample with the command
         shell: bash
         run: |
-          target/release/pixheet --version
-          target/release/pixheet crates/pixheet-core/tests/fixtures/photo.jpg -o "$RUNNER_TEMP/photo.xlsx"
+          target/debug/pixheet --version
+          target/debug/pixheet crates/pixheet-core/tests/fixtures/photo.jpg -o "$RUNNER_TEMP/photo.xlsx"
 
       # The smoke test opens the window off the screen, waits until the page is ready,
       # and stops. WebKitGTK under Xvfb has no DMA-BUF, so the renderer must not use it.
@@ -104,6 +109,9 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+
+      - name: Install Rust
+        run: rustup toolchain install
 
       # The repository is public. Thus git can read the base commit and the tags without
       # a token, also for a pull request from a fork. The base branch can be the last
