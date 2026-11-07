@@ -32,3 +32,6 @@ Thumbs.db
 
 # Local profiler output (python -m profiling.sampling)
 profiles/
+
+# Rust build output
+target/

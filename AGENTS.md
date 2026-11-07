@@ -23,6 +23,7 @@ Read [README.md](README.md) for usage, the Python API, and the Excel limits.
 | `src/pixheet/_threads.py` | Private. Runs the resize and the zip compression on several threads. The resize helpers give the same pixels as the one-thread calls. The zip members decompress to the same bytes. The compressed bytes can differ. |
 | `tests/` | Pytest suite. `tests/images.py` generates all test images. No real photos. |
 | `bench/bench.py` | Benchmark on local sample photos. |
+| `spike/` | A spike of the CLI in Rust, its results, and the plan of the port. `spike/README.md` tells how to build and run it. |
 | `scripts/` | `excel_check.ps1` (Excel COM check, Windows) and `sample_pixels.py`. |
 | `packaging/` | The build of `Pixheet.exe` and of the Linux app, and the scripts of the release job. The table of files in `packaging/README.md` describes each file. |
 | `.gitattributes` | Keeps LF line ends in `*.sh` files and in the license texts in `packaging/notices/`. The apps include these texts byte for byte. |
@@ -30,7 +31,8 @@ Read [README.md](README.md) for usage, the Python API, and the Excel limits.
 | `CHANGELOG.md` | The changes of each version. The release job uses the section of the version as the release notes. |
 
 Modules with a leading underscore are private. Do not import them from outside the
-package, except in tests and in `bench/bench.py`, which times each stage.
+package, except in tests, in `bench/bench.py`, which times each stage, and in
+`spike/parity.py`, which compares each stage with the Rust spike.
 
 ## Commands
 
