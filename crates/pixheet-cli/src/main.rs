@@ -8,9 +8,14 @@ use std::ffi::OsString;
 use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
+use std::sync::mpsc;
+use std::time::{Duration, Instant};
 
 use clap::{CommandFactory, Parser, error::ErrorKind};
-use pixheet_core::{ConvertResult, DEFAULT_MAX_SIDE, Options, convert, parse_background};
+use pixheet_core::{
+    ConvertResult, DEFAULT_MAX_SIDE, Error, Options, Pixels, check_output, convert_loaded, load,
+    parse_background,
+};
 
 /// mimalloc keeps freed memory for the next allocation. The image buffers are large, and
 /// the system allocator gives them back to the system after each use. Then each new
@@ -180,6 +185,31 @@ fn set_threads() {
         .build_global();
 }
 
+/// Decode the images on a thread of their own, in the order of `inputs`.
+///
+/// The decode of a JPEG uses one CPU, and the other steps use all of them. Thus the
+/// reader decodes the next image while the main thread converts the current one. The
+/// channel has no buffer: the reader waits with one image until the main thread takes it.
+fn reader(
+    inputs: Vec<PathBuf>,
+    background: Option<[u8; 3]>,
+) -> mpsc::Receiver<(Duration, Result<Pixels, Error>)> {
+    let (tx, rx) = mpsc::sync_channel(0);
+    std::thread::Builder::new()
+        .name("pixheet-reader".into())
+        .spawn(move || {
+            for src in inputs {
+                let start = Instant::now();
+                let image = load(&src, background);
+                if tx.send((start.elapsed(), image)).is_err() {
+                    return;
+                }
+            }
+        })
+        .expect("start the reader thread");
+    rx
+}
+
 fn main() -> ExitCode {
     let args = Args::parse();
     let inputs = expand(&args.inputs);
@@ -201,7 +231,11 @@ fn main() -> ExitCode {
     // The normalized output path, and the input that wrote it.
     let mut written: HashMap<PathBuf, String> = HashMap::new();
     let mut stdout = std::io::stdout().lock();
+    let images = reader(inputs.clone(), options.background);
     for src in &inputs {
+        let (seconds, loaded) = images
+            .recv()
+            .expect("the reader sends one image for each input");
         let name = src.display().to_string();
         let dst = args
             .output
@@ -213,7 +247,16 @@ fn main() -> ExitCode {
                 "{} was already written from {first}",
                 dst.display()
             )),
-            None => convert(src, &dst, &options, None).map_err(|e| e.to_string()),
+            None => check_output(src, &dst)
+                .and(loaded)
+                .and_then(|upright| {
+                    // The time of the result counts the decode on the reader thread too.
+                    let start = Instant::now()
+                        .checked_sub(seconds)
+                        .unwrap_or_else(Instant::now);
+                    convert_loaded(upright, &dst, &options, None, start)
+                })
+                .map_err(|e| e.to_string()),
         };
         match result {
             Ok(result) => {
