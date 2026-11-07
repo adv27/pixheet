@@ -18,6 +18,7 @@ The first versions were in Python. The branch `python-legacy` keeps the last one
 |---|---|
 | `Cargo.toml`, `Cargo.lock` | The workspace. `[workspace.package] version` is the version of the project. |
 | `.cargo/config.toml` | The alias `cargo xtask`. |
+| `rust-toolchain.toml` | The pinned toolchain (1.99.0). rustup installs it for local builds, CI and the release builds. |
 | `crates/pixheet-core/` | The library: `decode.rs` (open, EXIF, color modes), `resample.rs` (the LANCZOS resize and the reduce of Pillow), `fit.rs` (the size cap and the color search), `xlsx.rs` (the XML and the zip), `color.rs` (the background colors), `convert.rs` (the API and the atomic write). |
 | `crates/pixheet-core/tests/golden.rs`, `tests/fixtures/` | The golden test: the output of the Python version for 139 cases. Read "Rules for code". |
 | `crates/pixheet-cli/` | The `pixheet` command. `tests/cli.rs` runs the binary. |
@@ -30,8 +31,9 @@ The first versions were in Python. The branch `python-legacy` keeps the last one
 
 ## Commands
 
-You need Rust 1.88 or later, `cmake`, and on x86-64 also `nasm`: the `turbo` feature of
-`pixheet-core` (the default) builds libjpeg-turbo. On Linux, the app also needs
+rustup installs the toolchain of `rust-toolchain.toml` for you. The minimum version in
+`rust-version` is 1.88. You also need `cmake`, and on x86-64 also `nasm`: the
+`turbo` feature of `pixheet-core` (the default) builds libjpeg-turbo. On Linux, the app also needs
 WebKitGTK 4.1 and GTK 3 (`libwebkit2gtk-4.1-dev`, `libgtk-3-dev`, `librsvg2-dev`).
 
 ```console
@@ -66,6 +68,9 @@ a change to the app, also run the smoke test.
   there against the golden test, not against an estimate. A faster loop must give the
   same bytes: integer sums can change their order, floating-point sums cannot.
 - The crates forbid `unsafe` code (`unsafe_code = "forbid"` in the workspace lints).
+- To update the toolchain, change the version in `rust-toolchain.toml`, fix the new
+  clippy lints, and say so in the commit body. Do not let CI use "stable": a new lint
+  then fails a pull request that did not change the code.
 - The `.xlsx` writer must keep `sheet1.xml` and `styles.xml` byte for byte. The
   compressed bytes can differ.
 - Add a test for each change in behavior. Tests must not show windows on the screen:

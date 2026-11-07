@@ -17,7 +17,7 @@ const MIN_SLOPE: f64 = 0.2;
 pub fn count_colors(im: &Pixels, limit: usize) -> Option<usize> {
     let mut seen = vec![0u64; 1 << 18]; // one bit for each 24-bit color: 2 MiB
     let mut count = 0;
-    for p in im.data.chunks_exact(3) {
+    for p in im.data.as_chunks::<3>().0 {
         let key = (usize::from(p[0]) << 16) | (usize::from(p[1]) << 8) | usize::from(p[2]);
         let (word, bit) = (key >> 6, 1u64 << (key & 63));
         if seen[word] & bit == 0 {

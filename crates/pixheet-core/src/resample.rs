@@ -137,7 +137,7 @@ fn horizontal(src: &Pixels, out_w: usize, rows: usize, offset: usize, c: &Coeffs
                 let y0 = si * strip + bi * BLOCK + offset;
                 for r in 0..n {
                     let line = &src.data[(y0 + r) * in_stride..(y0 + r + 1) * in_stride];
-                    for (column, p) in columns.iter_mut().zip(line.chunks_exact(3)) {
+                    for (column, p) in columns.iter_mut().zip(line.as_chunks::<3>().0) {
                         column[r * 3..r * 3 + 3].copy_from_slice(p);
                     }
                 }
@@ -182,13 +182,13 @@ fn horizontal_reference(
             for (ri, line_out) in chunk.chunks_exact_mut(out_stride).enumerate() {
                 let yy = si * strip + ri + offset;
                 let line_in = &src.data[yy * in_stride..(yy + 1) * in_stride];
-                for (xx, px) in line_out.chunks_exact_mut(3).enumerate() {
+                for (xx, px) in line_out.as_chunks_mut::<3>().0.iter_mut().enumerate() {
                     let (xmin, xmax) = c.bounds[xx];
                     let k = &c.kk[xx * c.ksize..xx * c.ksize + xmax];
                     let input = &line_in[xmin * 3..(xmin + xmax) * 3];
                     let half = 1i32 << (PRECISION_BITS - 1);
                     let (mut s0, mut s1, mut s2) = (half, half, half);
-                    for (p, &w) in input.chunks_exact(3).zip(k) {
+                    for (p, &w) in input.as_chunks::<3>().0.iter().zip(k) {
                         s0 = s0.wrapping_add(i32::from(p[0]).wrapping_mul(w));
                         s1 = s1.wrapping_add(i32::from(p[1]).wrapping_mul(w));
                         s2 = s2.wrapping_add(i32::from(p[2]).wrapping_mul(w));
@@ -300,7 +300,7 @@ fn reduce(src: &Pixels, fx: usize, fy: usize) -> Pixels {
         .for_each(|(oy, line_out)| {
             let y0 = oy * fy;
             let y1 = (y0 + fy).min(src.h);
-            for (ox, px) in line_out.chunks_exact_mut(3).enumerate() {
+            for (ox, px) in line_out.as_chunks_mut::<3>().0.iter_mut().enumerate() {
                 let x0 = ox * fx;
                 let x1 = (x0 + fx).min(src.w);
                 let n = ((x1 - x0) * (y1 - y0)) as u32;
@@ -308,7 +308,7 @@ fn reduce(src: &Pixels, fx: usize, fy: usize) -> Pixels {
                 let mut s = [amend; 3];
                 for y in y0..y1 {
                     let row = &src.data[y * stride + x0 * 3..y * stride + x1 * 3];
-                    for p in row.chunks_exact(3) {
+                    for p in row.as_chunks::<3>().0 {
                         s[0] += u32::from(p[0]);
                         s[1] += u32::from(p[1]);
                         s[2] += u32::from(p[2]);
@@ -381,13 +381,19 @@ mod tests {
     #[test]
     fn a_flat_image_stays_flat() {
         let mut im = Pixels::new(40, 30);
-        for p in im.data.chunks_exact_mut(3) {
+        for p in im.data.as_chunks_mut::<3>().0 {
             p.copy_from_slice(&[10, 200, 99]);
         }
         for (w, h, gap) in [(13, 9, None), (5, 4, Some(2.0)), (80, 61, None)] {
             let out = resize(&im, w, h, gap);
             assert_eq!((out.w, out.h), (w, h));
-            assert!(out.data.chunks_exact(3).all(|p| p == [10, 200, 99]));
+            assert!(
+                out.data
+                    .as_chunks::<3>()
+                    .0
+                    .iter()
+                    .all(|p| *p == [10, 200, 99])
+            );
         }
     }
 

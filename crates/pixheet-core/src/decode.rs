@@ -89,7 +89,9 @@ fn open_turbo(bytes: &[u8]) -> Result<DynamicImage, String> {
             let row = &row[..out.width * size];
             if cmyk {
                 data.extend(
-                    row.chunks_exact(4)
+                    row.as_chunks::<4>()
+                        .0
+                        .iter()
                         .flat_map(|p| inverted_cmyk_to_rgb([p[0], p[1], p[2], p[3]])),
                 );
             } else {
@@ -156,7 +158,9 @@ pub fn normalize(im: DynamicImage, background: Option<[u8; 3]>) -> Pixels {
                 DynamicImage::ImageRgba16(buf) => buf.into_raw().into_iter().map(top).collect(),
                 DynamicImage::ImageLumaA16(buf) => buf
                     .into_raw()
-                    .chunks_exact(2)
+                    .as_chunks::<2>()
+                    .0
+                    .iter()
                     .flat_map(|p| {
                         let l = top(p[0]);
                         [l, l, l, top(p[1])]
@@ -166,11 +170,15 @@ pub fn normalize(im: DynamicImage, background: Option<[u8; 3]>) -> Pixels {
             };
             match background {
                 None => rgba
-                    .chunks_exact(4)
+                    .as_chunks::<4>()
+                    .0
+                    .iter()
                     .flat_map(|p| [p[0], p[1], p[2]])
                     .collect(),
                 Some(bg) => rgba
-                    .chunks_exact(4)
+                    .as_chunks::<4>()
+                    .0
+                    .iter()
                     .flat_map(|p| {
                         [
                             blend(p[3], bg[0], p[0]),

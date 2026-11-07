@@ -149,7 +149,9 @@ fn style_ids(im: &Pixels) -> (Vec<u32>, Vec<u32>) {
     let mut order = Vec::new();
     let ids = im
         .data
-        .chunks_exact(3)
+        .as_chunks::<3>()
+        .0
+        .iter()
         .map(|p| {
             let key = (u32::from(p[0]) << 16) | (u32::from(p[1]) << 8) | u32::from(p[2]);
             *map.entry(key).or_insert_with(|| {
@@ -594,7 +596,7 @@ mod tests {
 
     fn image(w: usize, h: usize, colors: &[[u8; 3]]) -> Pixels {
         let mut im = Pixels::new(w, h);
-        for (i, p) in im.data.chunks_exact_mut(3).enumerate() {
+        for (i, p) in im.data.as_chunks_mut::<3>().0.iter_mut().enumerate() {
             p.copy_from_slice(&colors[i % colors.len()]);
         }
         im
