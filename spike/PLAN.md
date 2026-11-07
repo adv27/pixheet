@@ -154,7 +154,13 @@ the policy for existing files, subfolders, automatic start, compact files, theme
 run bar. The settings are saved in `settings.json` in the config folder of the app.
 These items are still open:
 
-- a test of the app on Windows and on a Linux desktop;
+- a test of the app on Windows and on a Linux desktop. On Windows, test the policy
+  Replace with an output that Excel has open: the card must say "File is in use". With
+  Keep both (the default), the output never exists before the write, so this case
+  does not occur;
+- a change of the output folder during a run moves only the images that are not in the
+  queue yet. The cards that wait in the queue keep the old folder, and the page does not
+  say so;
 - screen-reader tests with Narrator and Orca;
 - the build of installers and one-file apps (phase 5).
 

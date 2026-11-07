@@ -38,7 +38,7 @@ With 4 threads, only 1.9 of the 4 CPUs worked: the decode runs on one thread.
 |---|---|---|
 | The horizontal pass makes 16 rows together, in columns of fixed width. | Each tap of the filter is one multiply-add of 48 values, so the sums stay in vector registers. The sums are integers, so the bytes do not change. | 222 to 188 ms |
 | The JPEG decoder keeps its buffer. | The code copied the 36 MB image row by row, also without padding. | 188 to 166 ms, 9,000 fewer page faults |
-| mimalloc is the allocator of the command. | The system allocator gives large buffers back after each use. Then each new buffer costs page faults again. | About 5 to 13 %, almost no page faults |
+| mimalloc is the allocator of the command. | The system allocator gives large buffers back after each use. Then each new buffer costs page faults again. | Page faults: 24,000 to about 260. The time is noisy on this VM: in an A/B test, the 12 MP photo was 0 to 13 % faster, and the other images did not change. |
 | DEFLATE level 3, not 6. | With zlib-rs, level 3 compresses about 2 times faster. The files are only 1.9 % (flat) and 2.9 % (photo) larger. Level 2 gives 10 % larger files for no more speed. | 158 to 123 ms. The flat image: 84 to 41 ms |
 | The command decodes the next image during the current conversion. | The decode uses one CPU, and the other steps use all of them. A new API of `pixheet-core` (`load`, `fit_image`, `write`, `convert_loaded`) makes this possible. | A batch of the 5 samples: 513 to 269 ms |
 
