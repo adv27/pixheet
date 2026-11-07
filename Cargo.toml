@@ -1,7 +1,7 @@
-# The Rust version of Pixheet. Read spike/PLAN.md for the plan of the port.
+# Pixheet: turn an image into an .xlsx spreadsheet where every cell is one pixel.
 [workspace]
 resolver = "3"
-members = ["crates/pixheet-core", "crates/pixheet-cli", "crates/pixheet-app"]
+members = ["crates/pixheet-core", "crates/pixheet-cli", "crates/pixheet-app", "crates/xtask"]
 
 [workspace.package]
 version = "0.1.0"

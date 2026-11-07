@@ -1,0 +1,3 @@
+# `cargo xtask <task>` runs the tasks of the project: read crates/xtask/src/main.rs.
+[alias]
+xtask = "run -q -p xtask --"

@@ -5,7 +5,7 @@ Open every .xlsx in a folder with Excel (COM automation) and check it against it
 .DESCRIPTION
 For each workbook this reports the used range, the row height and the column width, and
 compares about -Samples random cell colors with the fitted source image (the image with the
-same file name stem in -Source, fitted by scripts/sample_pixels.py with the same options).
+same file name stem in -Source, fitted by "cargo xtask sample-pixels" with the same options).
 
 Excel runs hidden with alerts off. In that mode Excel refuses to open a file that it would
 otherwise offer to repair, so "opened" also means "no repair prompt".
@@ -16,7 +16,7 @@ screen, so the PDF is stretched sideways (about 1.2x); on screen every cell is 0
 which the report line shows.
 
 .EXAMPLE
-uv run pixheet samples\*.jpg
+cargo run --release -p pixheet-cli -- samples\*.jpg
 powershell -ExecutionPolicy Bypass -File scripts\excel_check.ps1 -Folder samples
 #>
 param(
@@ -30,12 +30,11 @@ param(
 
 $ErrorActionPreference = "Stop"
 $repo = Split-Path -Parent $PSScriptRoot
-$helper = Join-Path $PSScriptRoot "sample_pixels.py"
 $files = @(Get-ChildItem -Path $Folder -Filter *.xlsx -File | Sort-Object Name)
 if ($files.Count -eq 0) { Write-Error "No .xlsx files in $Folder" }
 $sources = @(Get-ChildItem -Path $Source -File | Where-Object { $_.Extension -ne ".xlsx" })
 if ($Snapshot) { $Snapshot = (New-Item -ItemType Directory -Force -Path $Snapshot).FullName }
-# Pass --max-side and --background only when you give them. Then the package defaults apply.
+# Pass --max-side and --background only when you give them. Then the defaults apply.
 $options = @("--count", $Samples)
 if ($PSBoundParameters.ContainsKey("MaxSide")) { $options += "--max-side", $MaxSide }
 if ($PSBoundParameters.ContainsKey("Background")) { $options += "--background", $Background }
@@ -71,8 +70,8 @@ try {
 
             $src = $sources | Where-Object { $_.BaseName -eq $file.BaseName } | Select-Object -First 1
             if ($src) {
-                $json = & uv run --project $repo --quiet python $helper $src.FullName @options
-                if ($LASTEXITCODE -ne 0) { throw "sample_pixels.py failed for $($src.Name)" }
+                $json = & cargo run --quiet --manifest-path (Join-Path $repo "Cargo.toml") -p xtask -- sample-pixels $src.FullName @options
+                if ($LASTEXITCODE -ne 0) { throw "cargo xtask sample-pixels failed for $($src.Name)" }
                 $expected = $json | ConvertFrom-Json
                 if ($expected.width -ne $cols -or $expected.height -ne $rows) {
                     $problems += "size {0}x{1}, expected {2}x{3}" -f $cols, $rows, $expected.width, $expected.height
