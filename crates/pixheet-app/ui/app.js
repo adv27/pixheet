@@ -198,6 +198,8 @@ function onKey(event) {
     event.preventDefault();
     const next = order[Math.min(order.length - 1, Math.max(0, index + step))];
     select(next, event);
+  } else if (event.key === "Enter" && target.closest("button")) {
+    // The browser clicks the focused button: Enter must not also open the file.
   } else if (event.key === "Enter" && ids.length === 1 && cards.get(ids[0])?.card.state === "done") {
     call("open", { id: ids[0] });
   } else if (event.key === "Delete" || event.key === "Backspace") {
