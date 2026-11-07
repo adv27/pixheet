@@ -12,6 +12,12 @@ use std::process::ExitCode;
 use clap::{CommandFactory, Parser, error::ErrorKind};
 use pixheet_core::{ConvertResult, DEFAULT_MAX_SIDE, Options, convert, parse_background};
 
+/// mimalloc keeps freed memory for the next allocation. The image buffers are large, and
+/// the system allocator gives them back to the system after each use. Then each new
+/// buffer costs page faults again.
+#[global_allocator]
+static ALLOCATOR: mimalloc::MiMalloc = mimalloc::MiMalloc;
+
 /// The parsed --background value. None drops the alpha.
 #[derive(Clone, Copy, Debug)]
 struct Background(Option<[u8; 3]>);
