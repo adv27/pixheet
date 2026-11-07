@@ -110,8 +110,67 @@ fn strip_rows(rows: usize) -> usize {
     rows.div_ceil(rayon::current_num_threads() * 4).max(1)
 }
 
+/// The number of rows that the horizontal pass makes together.
+const BLOCK: usize = 16;
+
 /// The horizontal pass: `rows` output rows from input rows `offset..offset + rows`.
+///
+/// The pass makes BLOCK rows together. It copies the block into columns first: column
+/// `x` holds pixel `x` of each row of the block, `LANES` bytes. A block with fewer rows
+/// gets zeros in the free places. Then each tap of the filter is one multiply-add of
+/// `LANES` values with a fixed length, which the compiler keeps in vector registers. The
+/// sums are integers, so the new order of the additions gives the same bytes as Pillow.
 fn horizontal(src: &Pixels, out_w: usize, rows: usize, offset: usize, c: &Coeffs) -> Pixels {
+    const LANES: usize = BLOCK * 3;
+    let mut out = Pixels::new(out_w, rows);
+    let in_stride = src.w * 3;
+    let out_stride = out_w * 3;
+    let strip = strip_rows(rows).next_multiple_of(BLOCK);
+    let half = 1i32 << (PRECISION_BITS - 1);
+    out.data
+        .par_chunks_mut(out_stride * strip)
+        .enumerate()
+        .for_each(|(si, chunk)| {
+            let mut columns = vec![[0u8; LANES]; src.w];
+            for (bi, block) in chunk.chunks_mut(out_stride * BLOCK).enumerate() {
+                let n = block.len() / out_stride;
+                let y0 = si * strip + bi * BLOCK + offset;
+                for r in 0..n {
+                    let line = &src.data[(y0 + r) * in_stride..(y0 + r + 1) * in_stride];
+                    for (column, p) in columns.iter_mut().zip(line.chunks_exact(3)) {
+                        column[r * 3..r * 3 + 3].copy_from_slice(p);
+                    }
+                }
+                for xx in 0..out_w {
+                    let (xmin, xmax) = c.bounds[xx];
+                    let k = &c.kk[xx * c.ksize..xx * c.ksize + xmax];
+                    let mut acc = [half; LANES];
+                    for (column, &w) in columns[xmin..xmin + xmax].iter().zip(k) {
+                        for (a, &p) in acc.iter_mut().zip(column) {
+                            *a = a.wrapping_add(i32::from(p).wrapping_mul(w));
+                        }
+                    }
+                    for r in 0..n {
+                        let o = r * out_stride + xx * 3;
+                        block[o] = clip8(acc[r * 3]);
+                        block[o + 1] = clip8(acc[r * 3 + 1]);
+                        block[o + 2] = clip8(acc[r * 3 + 2]);
+                    }
+                }
+            }
+        });
+    out
+}
+
+/// The horizontal pass of Pillow, one pixel at a time: the reference for the tests.
+#[cfg(test)]
+fn horizontal_reference(
+    src: &Pixels,
+    out_w: usize,
+    rows: usize,
+    offset: usize,
+    c: &Coeffs,
+) -> Pixels {
     let mut out = Pixels::new(out_w, rows);
     let in_stride = src.w * 3;
     let out_stride = out_w * 3;
@@ -297,6 +356,20 @@ mod tests {
             *v = (i * 7 % 256) as u8;
         }
         im
+    }
+
+    #[test]
+    fn the_block_pass_gives_the_bytes_of_the_reference() {
+        // Odd sizes give blocks that are not full and strips of other lengths.
+        for (w, h, out_w) in [(37, 23, 11), (100, 50, 33), (5, 40, 9), (300, 17, 97)] {
+            let im = ramp(w, h);
+            let c = precompute_coeffs(w, 0.0, w as f32, out_w);
+            for (rows, offset) in [(h, 0), (h - 3, 2)] {
+                let a = horizontal(&im, out_w, rows, offset, &c);
+                let b = horizontal_reference(&im, out_w, rows, offset, &c);
+                assert_eq!(a, b, "{w}x{h} -> {out_w}, {rows} rows from {offset}");
+            }
+        }
     }
 
     #[test]
