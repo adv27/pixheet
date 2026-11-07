@@ -22,7 +22,10 @@ mod resample;
 mod xlsx;
 
 pub use color::parse_background;
-pub use convert::{ConvertResult, DEFAULT_MAX_SIDE, Options, TEMP_PREFIX, convert, prepare};
+pub use convert::{
+    ConvertResult, DEFAULT_MAX_SIDE, Options, TEMP_PREFIX, check_output, convert, convert_loaded,
+    fit_image, load, prepare, write,
+};
 pub use error::{Error, Step, io_reason};
 pub use resample::Pixels;
 pub use xlsx::{MAX_COLORS, MAX_COLUMNS, MAX_ROWS};

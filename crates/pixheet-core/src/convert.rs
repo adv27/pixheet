@@ -54,12 +54,35 @@ pub struct ConvertResult {
     pub seconds: f64,
 }
 
+/// Open `src`, apply the EXIF orientation, and make it 8-bit RGB with the alpha blended
+/// onto `background`. This is the first step of [`convert`]. It is the slow step that
+/// runs on one thread, so a caller can do it for the next image during a conversion.
+pub fn load(src: &Path, background: Option<[u8; 3]>) -> Result<Pixels, Error> {
+    Ok(normalize(open(src)?, background))
+}
+
+/// Shrink an upright image to the size that [`convert`] writes: the second step.
+pub fn fit_image(upright: Pixels, max_side: usize) -> Result<Pixels, Error> {
+    fit(upright, max_side)
+}
+
 /// Open, normalize and fit `src`. Return the upright size and the image that
 /// [`convert`] would write, one pixel for each cell.
 pub fn prepare(src: &Path, options: &Options) -> Result<((usize, usize), Pixels), Error> {
-    let upright = normalize(open(src)?, options.background);
+    let upright = load(src, options.background)?;
     let size = (upright.w, upright.h);
-    Ok((size, fit(upright, options.max_side)?))
+    Ok((size, fit_image(upright, options.max_side)?))
+}
+
+/// The error of an output that is the input. None when they are different files.
+pub fn check_output(src: &Path, dst: &Path) -> Result<(), Error> {
+    if same_file(src, dst) {
+        return Err(Error::Invalid(format!(
+            "the output {} is the input image; choose another path",
+            quoted(&dst.display().to_string())
+        )));
+    }
+    Ok(())
 }
 
 /// True when `src` and `dst` name one file that exists.
@@ -100,16 +123,27 @@ pub fn convert(
     progress: Option<&mut dyn FnMut(usize, usize) -> ControlFlow<()>>,
 ) -> Result<ConvertResult, Error> {
     let start = Instant::now();
-    if same_file(src, dst) {
-        return Err(Error::Invalid(format!(
-            "the output {} is the input image; choose another path",
-            quoted(&dst.display().to_string())
-        )));
-    }
-    let (original_size, image) = prepare(src, options)?;
+    check_output(src, dst)?;
+    let upright = load(src, options.background)?;
+    convert_loaded(upright, dst, options, progress, start)
+}
+
+/// The steps of [`convert`] after [`load`]: fit the image and write it to `dst`.
+///
+/// `start` is the time when the conversion started, for [`ConvertResult::seconds`].
+/// Call [`check_output`] before [`load`].
+pub fn convert_loaded(
+    upright: Pixels,
+    dst: &Path,
+    options: &Options,
+    progress: Option<&mut dyn FnMut(usize, usize) -> ControlFlow<()>>,
+    start: Instant,
+) -> Result<ConvertResult, Error> {
+    let original_size = (upright.w, upright.h);
+    let image = fit_image(upright, options.max_side)?;
     let mut ignore = |_: usize, _: usize| ControlFlow::Continue(());
     let progress = progress.unwrap_or(&mut ignore);
-    let colors = write_path(&image, dst, options.compact, progress)?;
+    let colors = write(&image, dst, options.compact, progress)?;
     Ok(ConvertResult {
         original_size,
         size: (image.w, image.h),
@@ -119,8 +153,13 @@ pub fn convert(
     })
 }
 
-/// Write `image` to a temporary file next to `dst`, then rename it over `dst`.
-fn write_path(
+/// Write `image` as an .xlsx to `dst`, one cell for each pixel: the last step of
+/// [`convert`]. Return the number of colors.
+///
+/// The writer writes a temporary file next to `dst`, then renames it over `dst`. On
+/// failure, an existing file at `dst` does not change, and the temporary file goes away.
+/// `progress` works as in [`convert`].
+pub fn write(
     image: &Pixels,
     dst: &Path,
     compact: bool,
