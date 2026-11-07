@@ -1,9 +1,7 @@
 # The Rust version of Pixheet. Read spike/PLAN.md for the plan of the port.
 [workspace]
 resolver = "3"
-members = ["crates/pixheet-core", "crates/pixheet-cli"]
-# The desktop app joins the workspace when the crate pixheet-plan is ready.
-exclude = ["crates/pixheet-app"]
+members = ["crates/pixheet-core", "crates/pixheet-cli", "crates/pixheet-app"]
 
 [workspace.package]
 version = "0.1.0"
