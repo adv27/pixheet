@@ -31,7 +31,9 @@ const ZIP_FILECOUNT_LIMIT: usize = (1 << 16) - 1;
 
 const CHUNK: usize = 256 * 1024;
 const WINDOW: usize = 32 * 1024;
-const LEVEL: u32 = 6; // what zipfile uses
+/// The DEFLATE level. zipfile uses 6. With zlib-rs, level 3 compresses about 2 times
+/// faster, and the files are only 2 to 3 % larger. Read spike/PROFILE.md.
+const LEVEL: u32 = 3;
 
 const XML_DECL: &str = "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\n";
 const MAIN_NS: &str = "http://schemas.openxmlformats.org/spreadsheetml/2006/main";
