@@ -1464,7 +1464,7 @@ def test_ci_uses_one_exact_uv_and_users_can_use_a_newer_uv():
         found = step.findall(text)
         assert len(found) == text.count("uses: astral-sh/setup-uv@"), name
         versions += found
-    assert len(versions) == 3
+    assert len(versions) == 4  # ci.yml: the Python tests and the Rust parity; release.yml: 2
     assert len(set(versions)) == 1, versions
     assert tuple(map(int, versions[0].split("."))) >= minimum
 

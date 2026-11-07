@@ -98,6 +98,70 @@ jobs:
         if: runner.os == 'Windows'
         run: uv run --locked --extra gui ruff format --check
 
+  rust:
+    name: Rust (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, ubuntu-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
+    steps:
+      - name: Check out the repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      # The runner images have rustup. The job uses the stable toolchain of the day, so
+      # it does not need a third-party action.
+      - name: Install Rust
+        run: |
+          rustup toolchain install stable --profile minimal --component clippy,rustfmt
+          rustup default stable
+
+      # The turbo feature builds libjpeg-turbo with cmake, which the runners have, and
+      # with nasm for its SIMD code.
+      - name: Install nasm (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          choco install nasm --no-progress -y
+          "C:\Program Files\NASM" | Out-File -FilePath $env:GITHUB_PATH -Append
+
+      - name: Install nasm (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y nasm
+
+      - name: Check the format
+        run: cargo fmt --all --check
+
+      - name: Lint
+        run: cargo clippy --workspace --all-targets --locked -- -D warnings
+
+      - name: Run the tests
+        run: cargo test --workspace --locked
+
+      - name: Build the command
+        run: cargo build --release --locked -p pixheet-cli
+
+      # The Python version is the reference: both commands must write the same XML.
+      - name: Install uv
+        uses: astral-sh/setup-uv@18d369b23da25a81e9458561248e1aafff6a70fa # v10.3.1
+        with:
+          version: "0.13.5"
+
+      - name: Install the Python version
+        run: uv sync --locked
+
+      - name: Compare the output with the Python version
+        shell: bash
+        run: |
+          bin=target/release/pixheet
+          if [[ "$RUNNER_OS" == "Windows" ]]; then bin+=.exe; fi
+          uv run --locked python scripts/rust_parity.py --bin "$bin" --max-side 1000 --max-side 0
+
   version:
     name: Check the version tag
     # A merge that changes the version publishes a release, but only when the tag
