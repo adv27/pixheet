@@ -23,7 +23,11 @@ Read [README.md](README.md) for usage, the Python API, and the Excel limits.
 | `src/pixheet/_threads.py` | Private. Runs the resize and the zip compression on several threads. The resize helpers give the same pixels as the one-thread calls. The zip members decompress to the same bytes. The compressed bytes can differ. |
 | `tests/` | Pytest suite. `tests/images.py` generates all test images. No real photos. |
 | `bench/bench.py` | Benchmark on local sample photos. |
-| `spike/` | A spike of the CLI in Rust, its results, and the plan of the port. `spike/README.md` tells how to build and run it. |
+| `Cargo.toml`, `Cargo.lock` | The Cargo workspace of the Rust version. `spike/PLAN.md` gives the plan of the port. |
+| `crates/pixheet-core/` | The Rust library: decode, normalize, fit, resize, and the xlsx writer. It ports `core.py`, `_image.py`, `_threads.py` and `_xlsx.py`. With the `turbo` feature (the default), it gives the same pixels and XML as the Python version. |
+| `crates/pixheet-cli/` | The Rust `pixheet` command. It ports `cli.py`. `tests/cli.rs` ports `tests/test_cli.py`. |
+| `scripts/rust_parity.py` | Runs the Python and the Rust command on synthetic images and compares `sheet1.xml` and `styles.xml` byte for byte. CI runs it. |
+| `spike/` | The results of the Rust spike, the plan of the port, and `bench_cli.py`, which times the Python and the Rust command. |
 | `scripts/` | `excel_check.ps1` (Excel COM check, Windows) and `sample_pixels.py`. |
 | `packaging/` | The build of `Pixheet.exe` and of the Linux app, and the scripts of the release job. The table of files in `packaging/README.md` describes each file. |
 | `.gitattributes` | Keeps LF line ends in `*.sh` files and in the license texts in `packaging/notices/`. The apps include these texts byte for byte. |
@@ -31,8 +35,7 @@ Read [README.md](README.md) for usage, the Python API, and the Excel limits.
 | `CHANGELOG.md` | The changes of each version. The release job uses the section of the version as the release notes. |
 
 Modules with a leading underscore are private. Do not import them from outside the
-package, except in tests, in `bench/bench.py`, which times each stage, and in
-`spike/parity.py`, which compares each stage with the Rust spike.
+package, except in tests and in `bench/bench.py`, which times each stage.
 
 ## Commands
 
@@ -86,7 +89,19 @@ Set `PIXHEET_TEST_SHOW_WINDOWS=1` to see the test windows, for example to debug 
 Then the windows show on the screen, also the window of a new process, and the session
 takes no foreground lock.
 
+The Rust version needs Rust 1.88 or later. The `turbo` feature builds libjpeg-turbo, so
+it needs `cmake` and `nasm`. Run these commands for the Rust code:
+
+```console
+cargo fmt --all --check
+cargo clippy --workspace --all-targets -- -D warnings
+cargo test --workspace
+cargo build --release -p pixheet-cli                  # target/release/pixheet
+uv run python scripts/rust_parity.py --bin target/release/pixheet --max-side 1000 --max-side 0
+```
+
 Run the tests, the lint, and the format check before you report a change as complete.
+For a change to the Rust code, also run the Rust commands above.
 
 ## Rules for code
 
@@ -125,6 +140,12 @@ Run the tests, the lint, and the format check before you report a change as comp
 - `App` does not load the Sun Valley theme. Only `main()` loads it, so most window tests
   use the default ttk theme. A test that needs the theme calls `apply_theme()`.
 - The primary development OS is Windows. Keep paths and shell examples portable.
+- The Rust version must give the same `sheet1.xml` and `styles.xml` as the Python
+  version. If you change the output of one version, change the other version too, and
+  make sure that `scripts/rust_parity.py` still passes.
+- The Rust code ports the rounding of Pillow 13 (`resample.rs`, `decode.rs`, `color.rs`).
+  Test a change there against Pillow, not against an estimate.
+- The Rust crates forbid `unsafe` code.
 - `packaging/pixheet.spec` leaves many modules out of `Pixheet.exe`. A new import of
   such a module can break the exe while the tests pass. After a change to the imports in
   `src/pixheet`, run `packaging/build.ps1`, and `packaging/build.sh` on Linux if you can.

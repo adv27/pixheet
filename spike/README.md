@@ -1,56 +1,41 @@
 # Spike: the CLI in Rust
 
-This folder holds a spike: a Rust version of the `pixheet` command. The spike answers
-two questions:
+This folder keeps the results of a spike: a first Rust version of the `pixheet`
+command. The spike answered two questions:
 
 1. How much faster is the command in Rust?
 2. Can the Rust version give the same output as the Python version?
 
-The spike is not a product. Do not ship it. Read [PLAN.md](PLAN.md) for the plan of the
-full port.
+The code of the spike is now in `crates/pixheet-core` and `crates/pixheet-cli`. Read
+[PLAN.md](PLAN.md) for the plan of the full port.
 
 ## Contents
 
 | Path | Content |
 |---|---|
-| `rust-cli/` | The Cargo project. The binary is `pixheet-rs`. |
-| `rust-cli/src/resample.rs` | A port of the LANCZOS resize and of the reduce of Pillow 13 (`Resample.c`, `Reduce.c`). |
-| `rust-cli/src/fit.rs` | A port of `_image.fit`: the size cap, the thumbnail size, and the search that the color counts guide. |
-| `rust-cli/src/xlsx.rs` | A port of `_xlsx.write_xlsx`, a zip writer, and the DEFLATE in chunks of `_threads.py`. |
-| `rust-cli/src/decode.rs` | Opens the image, applies the EXIF orientation, and blends the alpha onto the background. |
+| `PLAN.md` | The plan of the port to Rust. |
 | `make_samples.py` | Makes the synthetic sample images. |
-| `parity.py` | Compares the Rust output with the Python output, stage by stage. |
 | `bench_cli.py` | Times one process for each conversion, Python and Rust. |
 
-## Build and run
+`scripts/rust_parity.py` compares the output of the two commands. It replaces the
+`parity.py` of the spike.
 
-You need Rust 1.88 or later. The `turbo` feature decodes JPEG with libjpeg-turbo, as
-Pillow does. It needs `cmake` and `nasm`.
+## Run the benchmark
 
 ```console
-cd spike/rust-cli
-cargo build --release                                            # JPEG with zune-jpeg
-cargo build --release --features turbo --target-dir target/turbo # JPEG with libjpeg-turbo
-cd ../..
+cargo build --release -p pixheet-cli
 uv run python spike/make_samples.py local-samples/spike
-uv run python spike/parity.py --bin spike/rust-cli/target/turbo/release/pixheet-rs local-samples/spike --max-side 1000 --max-side 0
-uv run python spike/bench_cli.py local-samples/spike -n 7 --bin rust-zune=spike/rust-cli/target/release/pixheet-rs --bin rust-turbo=spike/rust-cli/target/turbo/release/pixheet-rs
+uv run python scripts/rust_parity.py --bin target/release/pixheet --samples local-samples/spike
+uv run python spike/bench_cli.py local-samples/spike -n 7 --bin rust=target/release/pixheet
 ```
 
 The `.gitignore` file excludes `local-samples/` and `target/`. On Windows, add `.exe` to
 the binary paths.
 
-`pixheet-rs` has the options of `pixheet`, with these limits and additions:
-
-- `--background` takes `white`, `black`, `none`, and `#RRGGBB`. It does not take the
-  other CSS color names.
-- The spike does not expand wildcards. It does not check that two inputs give the same
-  output, or that the output is the input.
-- `-j N` sets the number of threads. The default is the number of CPUs, at most 8.
-- `--stages` writes the time of each stage to stderr.
-- `--resizer fir` uses `fast_image_resize` (SIMD). The pixels are then different.
-- `--dump-fitted PNG` also saves the fitted image. `--no-fit` writes the input as it
-  is. `parity.py` uses these two options.
+The spike binary had options that the `pixheet` command does not have: `-j`,
+`--stages`, `--resizer`, `--dump-fitted` and `--no-fit`. The tables below come from
+those options. To set the number of threads of the command, set the environment
+variable `RAYON_NUM_THREADS`.
 
 ## Results
 

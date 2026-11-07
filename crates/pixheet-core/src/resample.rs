@@ -6,21 +6,31 @@
 
 use rayon::prelude::*;
 
-/// An 8-bit RGB image, 3 bytes for each pixel, rows from the top.
-#[derive(Clone)]
-pub struct Rgb {
+/// An 8-bit RGB image: 3 bytes for each pixel, rows from the top.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Pixels {
+    /// The width in pixels.
     pub w: usize,
+    /// The height in pixels.
     pub h: usize,
+    /// `w * h * 3` bytes: R, G, B for each pixel.
     pub data: Vec<u8>,
 }
 
-impl Rgb {
+impl Pixels {
+    /// A black image.
     pub fn new(w: usize, h: usize) -> Self {
         Self {
             w,
             h,
             data: vec![0; w * h * 3],
         }
+    }
+
+    /// The color of the pixel at (x, y).
+    pub fn get(&self, x: usize, y: usize) -> [u8; 3] {
+        let i = (y * self.w + x) * 3;
+        [self.data[i], self.data[i + 1], self.data[i + 2]]
     }
 }
 
@@ -95,12 +105,17 @@ fn clip8(v: i32) -> u8 {
     (v >> PRECISION_BITS).clamp(0, 255) as u8
 }
 
+/// The number of output rows in each job of a pass.
+fn strip_rows(rows: usize) -> usize {
+    rows.div_ceil(rayon::current_num_threads() * 4).max(1)
+}
+
 /// The horizontal pass: `rows` output rows from input rows `offset..offset + rows`.
-fn horizontal(src: &Rgb, out_w: usize, rows: usize, offset: usize, c: &Coeffs) -> Rgb {
-    let mut out = Rgb::new(out_w, rows);
+fn horizontal(src: &Pixels, out_w: usize, rows: usize, offset: usize, c: &Coeffs) -> Pixels {
+    let mut out = Pixels::new(out_w, rows);
     let in_stride = src.w * 3;
     let out_stride = out_w * 3;
-    let strip = rows.div_ceil(rayon::current_num_threads() * 4).max(1);
+    let strip = strip_rows(rows);
     out.data
         .par_chunks_mut(out_stride * strip)
         .enumerate()
@@ -129,10 +144,10 @@ fn horizontal(src: &Rgb, out_w: usize, rows: usize, offset: usize, c: &Coeffs) -
 }
 
 /// The vertical pass: `out_h` output rows, with the same width as `src`.
-fn vertical(src: &Rgb, out_h: usize, c: &Coeffs) -> Rgb {
-    let mut out = Rgb::new(src.w, out_h);
+fn vertical(src: &Pixels, out_h: usize, c: &Coeffs) -> Pixels {
+    let mut out = Pixels::new(src.w, out_h);
     let stride = src.w * 3;
-    let strip = out_h.div_ceil(rayon::current_num_threads() * 4).max(1);
+    let strip = strip_rows(out_h);
     out.data
         .par_chunks_mut(stride * strip)
         .enumerate()
@@ -159,7 +174,7 @@ fn vertical(src: &Rgb, out_h: usize, c: &Coeffs) -> Rgb {
 }
 
 /// `ImagingResampleInner` with the LANCZOS filter.
-fn resample(src: &Rgb, xsize: usize, ysize: usize, bx: [f32; 4]) -> Rgb {
+fn resample(src: &Pixels, xsize: usize, ysize: usize, bx: [f32; 4]) -> Pixels {
     let need_h = xsize != src.w || bx[0] != 0.0 || bx[2] != xsize as f32;
     let need_v = ysize != src.h || bx[1] != 0.0 || bx[3] != ysize as f32;
     let dy = src.h as i64 - ysize as i64;
@@ -173,8 +188,7 @@ fn resample(src: &Rgb, xsize: usize, ysize: usize, bx: [f32; 4]) -> Rgb {
     let mut horiz = None;
     let (mut ybox_first, mut ybox_last) = (0, src.h);
     if need_h {
-        if horizontal_first {
-            let v = vert.as_mut().unwrap();
+        if let (true, Some(v)) = (horizontal_first, vert.as_mut()) {
             ybox_first = v.bounds[0].0;
             let last = v.bounds[ysize - 1];
             ybox_last = last.0 + last.1;
@@ -184,7 +198,7 @@ fn resample(src: &Rgb, xsize: usize, ysize: usize, bx: [f32; 4]) -> Rgb {
         }
         horiz = Some(precompute_coeffs(src.w, bx[0], bx[2], xsize));
     }
-    let mut cur: Option<Rgb> = None;
+    let mut cur: Option<Pixels> = None;
     if horizontal_first {
         if let Some(h) = &horiz {
             cur = Some(horizontal(
@@ -195,33 +209,31 @@ fn resample(src: &Rgb, xsize: usize, ysize: usize, bx: [f32; 4]) -> Rgb {
                 h,
             ));
         }
-        if need_v {
-            let input = cur.as_ref().unwrap_or(src);
-            cur = Some(vertical(input, ysize, vert.as_ref().unwrap()));
+        if let (true, Some(v)) = (need_v, &vert) {
+            cur = Some(vertical(cur.as_ref().unwrap_or(src), ysize, v));
         }
     } else {
-        if need_v {
-            cur = Some(vertical(src, ysize, vert.as_ref().unwrap()));
+        if let (true, Some(v)) = (need_v, &vert) {
+            cur = Some(vertical(src, ysize, v));
         }
         if let Some(h) = &horiz {
-            let input = cur.as_ref().unwrap_or(src);
-            cur = Some(horizontal(input, xsize, ysize, 0, h));
+            cur = Some(horizontal(cur.as_ref().unwrap_or(src), xsize, ysize, 0, h));
         }
     }
     cur.unwrap_or_else(|| src.clone())
 }
 
-/// `division_UINT32(divider, 8)` of Reduce.c: the division is in float.
+/// `division_UINT32(divider, 8)` of Reduce.c. The division is in float, as in C.
 fn reduce_multiplier(n: u32) -> u32 {
     (4_294_967_296.0f32 / (256 * n) as f32) as u32
 }
 
 /// `Image.reduce((fx, fy))` for the full image. Each output pixel is the mean of its
-/// block. The last column and row can have smaller blocks.
-fn reduce(src: &Rgb, fx: usize, fy: usize) -> Rgb {
+/// block. The last column and the last row can have smaller blocks.
+fn reduce(src: &Pixels, fx: usize, fy: usize) -> Pixels {
     let ow = (src.w - 1) / fx + 1;
     let oh = (src.h - 1) / fy + 1;
-    let mut out = Rgb::new(ow, oh);
+    let mut out = Pixels::new(ow, oh);
     let stride = src.w * 3;
     out.data
         .par_chunks_mut(ow * 3)
@@ -243,16 +255,16 @@ fn reduce(src: &Rgb, fx: usize, fy: usize) -> Rgb {
                         s[2] += u32::from(p[2]);
                     }
                 }
-                for c in 0..3 {
-                    px[c] = (s[c].wrapping_mul(mult) >> 24) as u8;
+                for (o, sum) in px.iter_mut().zip(s) {
+                    *o = (sum.wrapping_mul(mult) >> 24) as u8;
                 }
             }
         });
     out
 }
 
-/// `Image.resize(size, LANCZOS, reducing_gap=gap)` for the full image.
-pub fn resize(src: &Rgb, w: usize, h: usize, reducing_gap: Option<f64>) -> Rgb {
+/// `Image.resize((w, h), LANCZOS, reducing_gap=gap)` for the full image.
+pub fn resize(src: &Pixels, w: usize, h: usize, reducing_gap: Option<f64>) -> Pixels {
     if (w, h) == (src.w, src.h) {
         return src.clone();
     }
@@ -275,24 +287,59 @@ pub fn resize(src: &Rgb, w: usize, h: usize, reducing_gap: Option<f64>) -> Rgb {
     resample(src, w, h, [0.0, 0.0, src.w as f32, src.h as f32])
 }
 
-/// The same resize with `fast_image_resize` (SIMD). Its pixels can differ from Pillow.
-pub fn resize_fir(src: &Rgb, w: usize, h: usize) -> Rgb {
-    use fast_image_resize as fr;
-    if (w, h) == (src.w, src.h) {
-        return src.clone();
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn ramp(w: usize, h: usize) -> Pixels {
+        let mut im = Pixels::new(w, h);
+        for (i, v) in im.data.iter_mut().enumerate() {
+            *v = (i * 7 % 256) as u8;
+        }
+        im
     }
-    let input =
-        fr::images::ImageRef::new(src.w as u32, src.h as u32, &src.data, fr::PixelType::U8x3)
-            .expect("valid image");
-    let mut out = fr::images::Image::new(w as u32, h as u32, fr::PixelType::U8x3);
-    let options =
-        fr::ResizeOptions::new().resize_alg(fr::ResizeAlg::Convolution(fr::FilterType::Lanczos3));
-    fr::Resizer::new()
-        .resize(&input, &mut out, &options)
-        .expect("resize");
-    Rgb {
-        w,
-        h,
-        data: out.into_vec(),
+
+    #[test]
+    fn same_size_is_a_copy() {
+        let im = ramp(5, 4);
+        assert_eq!(resize(&im, 5, 4, None), im);
+    }
+
+    #[test]
+    fn a_flat_image_stays_flat() {
+        let mut im = Pixels::new(40, 30);
+        for p in im.data.chunks_exact_mut(3) {
+            p.copy_from_slice(&[10, 200, 99]);
+        }
+        for (w, h, gap) in [(13, 9, None), (5, 4, Some(2.0)), (80, 61, None)] {
+            let out = resize(&im, w, h, gap);
+            assert_eq!((out.w, out.h), (w, h));
+            assert!(out.data.chunks_exact(3).all(|p| p == [10, 200, 99]));
+        }
+    }
+
+    #[test]
+    fn reduce_rounds_as_pillow() {
+        // The values come from Image.reduce((3, 1)) of Pillow 13. The multiplier is a
+        // little too small, so a mean of 2/3 gives 0, and a mean of 254.67 gives 254.
+        let im = Pixels {
+            w: 3,
+            h: 1,
+            data: vec![0, 1, 1, 0, 1, 1, 1, 0, 0],
+        };
+        assert_eq!(reduce(&im, 3, 1).data, vec![0, 0, 0]);
+        let im = Pixels {
+            w: 3,
+            h: 1,
+            data: vec![0, 2, 255, 0, 2, 255, 1, 2, 254],
+        };
+        assert_eq!(reduce(&im, 3, 1).data, vec![0, 2, 254]);
+        assert_eq!(reduce_multiplier(4), 1 << 22);
+    }
+
+    #[test]
+    fn the_multiplier_of_three_is_below_the_exact_value() {
+        // 2**32 / 768 = 5592405.33: the float division truncates.
+        assert_eq!(reduce_multiplier(3), 5_592_405);
     }
 }

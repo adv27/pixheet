@@ -1,13 +1,15 @@
-"""Time the Python command and the Rust spike, one process for each conversion.
+"""Time the Python command and the Rust command, one process for each conversion.
 
     uv run python spike/bench_cli.py --bin NAME=PATH [--bin NAME=PATH ...] DIR [-n 5]
 
 The time is the wall-clock time of the whole process, the best of N runs. Thus it
 includes the start of the interpreter or of the binary. The last row is one process
-that converts all images of DIR.
+that converts all images of DIR. The "1 thread" columns set -X cpu_count=1 for Python
+and RAYON_NUM_THREADS=1 for Rust.
 """
 
 import argparse
+import os
 import subprocess
 import sys
 import tempfile
@@ -16,10 +18,14 @@ from pathlib import Path
 
 
 def best(cmd: list[str], n: int) -> float:
+    env = dict(os.environ)
+    if cmd[0] == "RAYON_NUM_THREADS=1":
+        cmd = cmd[1:]
+        env["RAYON_NUM_THREADS"] = "1"
     times = []
     for _ in range(n):
         t = time.perf_counter()
-        subprocess.run(cmd, check=True, stdout=subprocess.DEVNULL)
+        subprocess.run(cmd, check=True, stdout=subprocess.DEVNULL, env=env)
         times.append(time.perf_counter() - t)
     return min(times)
 
@@ -39,7 +45,7 @@ def main() -> int:
     }
     for item in args.bin:
         name, _, path = item.partition("=")
-        commands[f"{name} 1 thread"] = [path, "-j", "1"]
+        commands[f"{name} 1 thread"] = ["RAYON_NUM_THREADS=1", path]
         commands[name] = [path]
 
     images = sorted(p for p in args.folder.iterdir() if p.suffix in {".png", ".jpg"})
