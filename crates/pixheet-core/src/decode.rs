@@ -78,18 +78,26 @@ fn open_turbo(bytes: &[u8]) -> Result<DynamicImage, String> {
     };
     let out = turbojpeg::decompress(bytes, format).map_err(|e| e.to_string())?;
     let size = format.size();
-    let mut data = Vec::with_capacity(out.width * out.height * 3);
-    for row in out.pixels.chunks(out.pitch).take(out.height) {
-        let row = &row[..out.width * size];
-        if cmyk {
-            data.extend(
-                row.chunks_exact(4)
-                    .flat_map(|p| inverted_cmyk_to_rgb([p[0], p[1], p[2], p[3]])),
-            );
-        } else {
-            data.extend_from_slice(row);
+    let data = if !cmyk && out.pitch == out.width * size {
+        // The rows have no padding: keep the buffer of the decoder, without a copy.
+        let mut pixels = out.pixels;
+        pixels.truncate(out.width * out.height * size);
+        pixels
+    } else {
+        let mut data = Vec::with_capacity(out.width * out.height * 3);
+        for row in out.pixels.chunks(out.pitch).take(out.height) {
+            let row = &row[..out.width * size];
+            if cmyk {
+                data.extend(
+                    row.chunks_exact(4)
+                        .flat_map(|p| inverted_cmyk_to_rgb([p[0], p[1], p[2], p[3]])),
+                );
+            } else {
+                data.extend_from_slice(row);
+            }
         }
-    }
+        data
+    };
     let rgb = image::RgbImage::from_raw(out.width as u32, out.height as u32, data)
         .ok_or("the decoder gave a wrong size")?;
     let mut im = DynamicImage::ImageRgb8(rgb);
