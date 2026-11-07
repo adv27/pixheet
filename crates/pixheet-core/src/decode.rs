@@ -30,11 +30,10 @@ pub fn open(path: &Path) -> Result<DynamicImage, Error> {
             step: Step::Read,
             source,
         })?;
-    // A TGA file has no magic bytes: then the suffix tells the format.
-    if reader.format().is_none()
-        && let Ok(format) = ImageFormat::from_path(path)
-    {
-        reader.set_format(format);
+    // A TGA file has no magic bytes: then the suffix tells the format. Other files that
+    // the content does not identify are not images, as in Pillow.
+    if reader.format().is_none() && ImageFormat::from_path(path).ok() == Some(ImageFormat::Tga) {
+        reader.set_format(ImageFormat::Tga);
     }
     let Some(format) = reader.format() else {
         return Err(Error::NotAnImage {

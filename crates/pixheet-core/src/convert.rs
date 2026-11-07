@@ -228,6 +228,30 @@ mod tests {
     }
 
     #[test]
+    fn a_bad_file_with_an_image_suffix_is_not_an_image() {
+        // Only a TGA file gets its format from the suffix. A broken PNG is not an image.
+        let dir = tempfile::tempdir().unwrap();
+        for name in ["bad.png", "bad.jpg", "bad.bmp"] {
+            let src = dir.path().join(name);
+            std::fs::write(&src, b"not an image").unwrap();
+            let err = convert(&src, &dir.path().join("a.xlsx"), &Options::default(), None);
+            assert!(matches!(err, Err(Error::NotAnImage { .. })), "{name}");
+        }
+    }
+
+    #[test]
+    fn a_tga_file_opens_by_its_suffix() {
+        let dir = tempfile::tempdir().unwrap();
+        let src = dir.path().join("a.tga");
+        image::RgbImage::from_pixel(3, 2, image::Rgb([1, 2, 3]))
+            .save(&src)
+            .unwrap();
+        let (size, im) = prepare(&src, &Options::default()).unwrap();
+        assert_eq!(size, (3, 2));
+        assert_eq!(im.get(2, 1), [1, 2, 3]);
+    }
+
+    #[test]
     fn a_missing_file_names_the_source() {
         let dir = tempfile::tempdir().unwrap();
         let src = dir.path().join("missing.png");
