@@ -16,6 +16,18 @@ The CI job "Check the version tag" stops a pull request when `CHANGELOG.md` has 
 section for the version in `Cargo.toml`. Write the text in Simplified Technical English
 (ASD-STE100). Read [AGENTS.md](AGENTS.md).
 
+## Unreleased
+
+### Changed
+
+- The release files are smaller, with the same speed and the same output:
+  - The app is 45 to 57% smaller: 7.1 MB on Windows, 7.8 MB on Linux, and 5.7 MB on
+    macOS.
+  - The command is 18 to 38% smaller: 3.2 MB on Windows, 2.6 MB on Linux, and 2.1 MB
+    on macOS.
+- A panic stops the program at once. Before, a panic in the conversion thread of the
+  app stopped only that thread.
+
 ## 0.2.0
 
 Pixheet is now written in Rust. The output is the same as the output of version 0.1.0:
