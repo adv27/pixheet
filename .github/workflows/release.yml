@@ -120,11 +120,13 @@ jobs:
           choco install nasm --no-progress -y
           "C:\Program Files\NASM" | Out-File -FilePath $env:GITHUB_PATH -Append
 
+      # The build needs only the build files, not the recommended packages.
       - name: Install nasm and the libraries of the app (Linux)
         if: runner.os == 'Linux'
         run: |
           sudo apt-get update
-          sudo apt-get install -y nasm libwebkit2gtk-4.1-dev libgtk-3-dev librsvg2-dev
+          sudo apt-get install -y --no-install-recommends nasm libwebkit2gtk-4.1-dev \
+            libgtk-3-dev librsvg2-dev
 
       - name: Build the command and the app
         run: cargo build --release --locked -p pixheet-cli -p pixheet-app
