@@ -102,6 +102,11 @@ a change to the app, also run the smoke test.
   before you add it to `accepted`. When `turbojpeg-sys` or `libmimalloc-sys` changes,
   update the license files and the checksums in `about.toml`: a wrong checksum stops
   the job too.
+- The release profile in `Cargo.toml` makes small files: fat LTO, `panic = "abort"`,
+  `strip`, and `opt-level = "s"` for the dependencies. The crates of the image path
+  and the crates of the workspace keep `opt-level = 3`. When a new dependency is in
+  the path of a conversion, add it to that list, and compare `cargo xtask bench`
+  before and after. Do not use `catch_unwind`: a panic stops the release files.
 - The release tasks of `xtask` must build with `--no-default-features`, without the image
   code. The release job runs them that way.
 - When you change `version` in `Cargo.toml`, add a section `## <version>` at the top of

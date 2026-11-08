@@ -82,8 +82,96 @@ opt-level = 3
 [profile.dev.package.zip]
 opt-level = 3
 
-# Thin LTO with the default 16 codegen units: the command is as fast as with fat LTO and one
-# codegen unit, and the output is the same. A release build takes about 30% less time. The
-# binaries are larger: the command about 0.7 MB, and the app about 6 MB.
+# The release files are small and fast:
+# - fat LTO with one codegen unit, no unwind (a panic stops the program), no symbols;
+# - opt-level "s" for the dependencies outside the image path (Tauri, GTK, serde, clap).
+# On Linux, the command is 34% and the app 56% smaller than with thin LTO, the speed and
+# the output are the same, and a release build takes about two times as long.
 [profile.release]
-lto = "thin"
+lto = "fat"
+codegen-units = 1
+panic = "abort"
+strip = "symbols"
+
+# "*" does not include the crates of the workspace: they keep opt-level 3. The binary
+# crates must keep it: with "s" on pixheet-cli, a conversion took about 55% more time.
+[profile.release.package."*"]
+opt-level = "s"
+
+# The crates of the image path, and the C code of libjpeg-turbo and mimalloc, keep
+# opt-level 3. Keep this list complete: a new crate in the path of a conversion compiles
+# at "s" and makes it slower. Compare with `cargo xtask bench` after a dependency change.
+[profile.release.package.image]
+opt-level = 3
+
+[profile.release.package.png]
+opt-level = 3
+
+[profile.release.package.zune-jpeg]
+opt-level = 3
+
+[profile.release.package.zune-core]
+opt-level = 3
+
+[profile.release.package.tiff]
+opt-level = 3
+
+[profile.release.package.gif]
+opt-level = 3
+
+[profile.release.package.image-webp]
+opt-level = 3
+
+[profile.release.package.fdeflate]
+opt-level = 3
+
+[profile.release.package.flate2]
+opt-level = 3
+
+[profile.release.package.zlib-rs]
+opt-level = 3
+
+[profile.release.package.crc32fast]
+opt-level = 3
+
+[profile.release.package.miniz_oxide]
+opt-level = 3
+
+[profile.release.package.adler2]
+opt-level = 3
+
+[profile.release.package.simd-adler32]
+opt-level = 3
+
+[profile.release.package.weezl]
+opt-level = 3
+
+[profile.release.package.rayon]
+opt-level = 3
+
+[profile.release.package.rayon-core]
+opt-level = 3
+
+[profile.release.package.turbojpeg]
+opt-level = 3
+
+[profile.release.package.turbojpeg-sys]
+opt-level = 3
+
+[profile.release.package.mimalloc]
+opt-level = 3
+
+[profile.release.package.libmimalloc-sys]
+opt-level = 3
+
+[profile.release.package.itoa]
+opt-level = 3
+
+[profile.release.package.moxcms]
+opt-level = 3
+
+[profile.release.package.bytemuck]
+opt-level = 3
+
+[profile.release.package.byteorder-lite]
+opt-level = 3
