@@ -82,6 +82,8 @@ opt-level = 3
 [profile.dev.package.zip]
 opt-level = 3
 
+# Thin LTO with the default 16 codegen units: the command is as fast as with fat LTO and one
+# codegen unit, and the output is the same. A release build takes about 30% less time. The
+# binaries are larger: the command about 0.7 MB, and the app about 6 MB.
 [profile.release]
-lto = "fat"
-codegen-units = 1
+lto = "thin"
