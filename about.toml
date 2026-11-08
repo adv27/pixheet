@@ -1,0 +1,43 @@
+# The config of cargo-about for THIRD-PARTY-LICENSES.html. Read about.hbs and the job
+# "Third-party licenses" of .github/workflows/release.yml.
+
+# Read a license before you add it here. A dependency with a license that is not in this
+# list stops the job.
+accepted = ["Apache-2.0", "MIT", "BSD-3-Clause", "MPL-2.0", "Zlib", "Unicode-3.0", "IJG"]
+# The systems of the release files. The page lists the crates of all three.
+targets = ["x86_64-pc-windows-msvc", "x86_64-unknown-linux-gnu", "aarch64-apple-darwin"]
+# The crates that only build scripts or tests use are not in the release files.
+ignore-build-dependencies = true
+ignore-dev-dependencies = true
+
+# The license fields of the crates below tell only the license of the Rust code. The
+# crates also contain C code with other license files. Each checksum is the SHA-256 of
+# the text from the start of `start` to the end of `end`. When a checksum does not agree,
+# cargo-about gives a warning, and the job stops: read the new text, then update it.
+
+# libjpeg-turbo: the IJG License (README.ijg), the Modified BSD License (LICENSE.md), and
+# the zlib License of the SIMD code.
+[turbojpeg-sys.clarify]
+license = "MIT AND IJG AND BSD-3-Clause AND Zlib"
+
+[[turbojpeg-sys.clarify.files]]
+path = "libjpeg-turbo/README.ijg"
+license = "IJG"
+checksum = "165b8446a355bd300df8c0b1f27ed128b516d0f65ebc38fc2ad663fc8ece8088"
+start = "In legalese:"
+end = "assumed by the product vendor."
+
+[[turbojpeg-sys.clarify.files]]
+path = "libjpeg-turbo/LICENSE.md"
+license = "BSD-3-Clause"
+checksum = "f998dd0dfb60eb53be78b0716f702b2b06e517d3d80b512e302e1acee4ba43a1"
+start = "Copyright (C)2009-2024 D. R. Commander."
+end = "POSSIBILITY OF SUCH DAMAGE."
+
+# mimalloc: the MIT License of Microsoft for the C code (version 2, the default).
+[libmimalloc-sys.clarify]
+license = "MIT"
+
+[[libmimalloc-sys.clarify.files]]
+path = "c_src/mimalloc/v2/LICENSE"
+checksum = "82ade5d7d9b029044b5fbbc326207fc47c2d44ee4dd71e8a559c36d728217de9"

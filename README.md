@@ -40,8 +40,9 @@ Debian 12 or later. To build it, install `libwebkit2gtk-4.1-dev`, `libgtk-3-dev`
 `librsvg2-dev`.
 
 The release workflow builds both programs for Windows x64, Linux x64 and macOS arm64.
-The next release after v0.1.0 will have these files on the
-[Releases](https://github.com/adv27/pixheet/releases) page.
+The [Releases](https://github.com/adv27/pixheet/releases) page has these files from
+version 0.2.0. Each release also has `THIRD-PARTY-LICENSES.html`, with the licenses of
+the third-party code in the programs.
 
 ## Command line
 

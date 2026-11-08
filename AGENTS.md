@@ -24,9 +24,10 @@ The first versions were in Python. The branch `python-legacy` keeps the last one
 | `crates/pixheet-cli/` | The `pixheet` command. `tests/cli.rs` runs the binary. |
 | `crates/pixheet-app/` | The desktop app: Tauri 2 with a page in plain HTML, CSS and JavaScript (`ui/`). `batch.rs` holds the state and has the tests; `worker.rs` converts; `files.rs` finds the images and names the outputs; `settings.rs` saves the settings. |
 | `crates/xtask/` | The project tasks: `version`, `check-pr`, `release-notes`, `release-plan`, `release-files`, `samples`, `bench`, `sample-pixels`. |
+| `about.toml`, `about.hbs` | The config and the template of cargo-about: the accepted licenses, the license files of the bundled C code (libjpeg-turbo, mimalloc), and the page `THIRD-PARTY-LICENSES.html` of each release. |
 | `scripts/excel_check.ps1` | Opens the outputs in Excel through COM (Windows) and compares cell colors with `cargo xtask sample-pixels`. |
 | `docs/rust-port/` | The history of the port: the spike, the plan and the profile. |
-| `.github/workflows/` | `ci.yml`: the format and clippy on Ubuntu; the tests, the debug builds and the smoke test of the app on Windows, Ubuntu and macOS; and the check of the version tag and of `CHANGELOG.md`. The coverage job on Ubuntu sends the line coverage to Codecov (`codecov.yml`). CI caches the dependencies and builds without debug info. With a full cache, Windows skips nasm. `release.yml`: the release builds for the three systems and the release. On a pull request, it runs only when the code, the manifests or the toolchain change. |
+| `.github/workflows/` | `ci.yml`: the format and clippy on Ubuntu; the tests, the debug builds and the smoke test of the app on Windows, Ubuntu and macOS; and the check of the version tag and of `CHANGELOG.md`. The coverage job on Ubuntu sends the line coverage to Codecov (`codecov.yml`). CI caches the dependencies and builds without debug info. With a full cache, Windows skips nasm. `release.yml`: the release builds for the three systems, the third-party licenses, and the release. On a pull request, it runs only when the code, the manifests or the toolchain change. |
 | `CHANGELOG.md` | The changes of each version. The release job uses the section of the version as the release notes. |
 
 ## Commands
@@ -56,6 +57,10 @@ PIXHEET_HIDDEN_WINDOW=1 WEBKIT_DISABLE_DMABUF_RENDERER=1 xvfb-run -a target/debu
 
 For the coverage, install `cargo-llvm-cov` and its LLVM tools: run
 `rustup component add llvm-tools` and `cargo install cargo-llvm-cov --locked`.
+
+To write the third-party licenses, install cargo-about with
+`cargo install cargo-about --locked --features cli`, then run
+`cargo about generate --workspace --locked about.hbs -o THIRD-PARTY-LICENSES.html`.
 
 To lint the workflows, run `actionlint` and `zizmor --offline .github/workflows`.
 
@@ -92,6 +97,11 @@ a change to the app, also run the smoke test.
 - The workflows run on GitHub-hosted runners, and the repository is public. Never add a
   `pull_request_target` trigger. Pin each action to a full commit SHA. Only the release
   job of `release.yml` can write to the repository. The release workflow uses no cache.
+- Each release has `THIRD-PARTY-LICENSES.html`. A dependency with a license that
+  `about.toml` does not accept stops the job "Third-party licenses". Read the license
+  before you add it to `accepted`. When `turbojpeg-sys` or `libmimalloc-sys` changes,
+  update the license files and the checksums in `about.toml`: a wrong checksum stops
+  the job too.
 - The release tasks of `xtask` must build with `--no-default-features`, without the image
   code. The release job runs them that way.
 - When you change `version` in `Cargo.toml`, add a section `## <version>` at the top of
