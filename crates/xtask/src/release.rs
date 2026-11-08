@@ -80,10 +80,16 @@ pub const BINARIES: &[&str] = &[
     "pixheet-app-macos-arm64",
 ];
 
-/// The files of a release, in the order of the upload: each binary, then its checksum.
+/// The licenses of the third-party code in the binaries. The job "Third-party licenses" of
+/// release.yml makes this file with cargo-about (about.toml and about.hbs).
+pub const NOTICES: &str = "THIRD-PARTY-LICENSES.html";
+
+/// The files of a release, in the order of the upload: each binary, then the third-party
+/// licenses, and each file with its checksum.
 pub fn release_files() -> Vec<String> {
     BINARIES
         .iter()
+        .chain([&NOTICES])
         .flat_map(|b| [b.to_string(), format!("{b}{CHECKSUM_SUFFIX}")])
         .collect()
 }
@@ -101,6 +107,8 @@ file: run `chmod +x` first.
 - macOS (Apple silicon): the files have no code signature yet.
 - The files have no code signature. Windows SmartScreen can show \"Windows protected your \
 PC\": click **More info**, then **Run anyway**.
+- `{NOTICES}` gives the licenses of the third-party code in the files. The files are \
+based in part on the work of the Independent JPEG Group.
 - The [README]({REPOSITORY}/blob/v{version}/README.md) of this version tells more.
 "
     )
@@ -335,6 +343,19 @@ mod tests {
         assert!(notes.contains("```\ncode\nblock\n```"));
         assert!(notes.contains("## Downloads"));
         assert!(notes.contains("/blob/v0.2.0/README.md"));
+    }
+
+    #[test]
+    fn the_release_has_the_third_party_licenses() {
+        let files = release_files();
+        assert_eq!(files.len(), 2 * (BINARIES.len() + 1));
+        assert_eq!(
+            files[files.len() - 2..],
+            [NOTICES.to_string(), format!("{NOTICES}.sha256")]
+        );
+        let notes = release_notes("## 0.2.0\n\nText.\n", "0.2.0").unwrap();
+        assert!(notes.contains("`THIRD-PARTY-LICENSES.html` gives the licenses"));
+        assert!(notes.contains("Independent JPEG Group"));
     }
 
     #[test]

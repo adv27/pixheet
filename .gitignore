@@ -3,6 +3,9 @@ target/
 # Tauri writes these schemas on each build of the app
 crates/pixheet-app/gen/
 
+# The release job writes this page with cargo-about
+THIRD-PARTY-LICENSES.html
+
 # Local sample images and outputs: never commit them
 samples/
 local-samples/

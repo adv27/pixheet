@@ -1,6 +1,7 @@
 # Pixheet
 
 [![CI](https://github.com/adv27/pixheet/actions/workflows/ci.yml/badge.svg?branch=master)](https://github.com/adv27/pixheet/actions/workflows/ci.yml)
+[![codecov](https://codecov.io/gh/adv27/pixheet/graph/badge.svg?token=6ZUOTE5GOF)](https://codecov.io/gh/adv27/pixheet)
 
 Pixheet turns an image into an `.xlsx` spreadsheet. Each cell is one pixel and has the
 color of that pixel. Open the file in a spreadsheet app, zoom out, and you see the
@@ -39,8 +40,9 @@ Debian 12 or later. To build it, install `libwebkit2gtk-4.1-dev`, `libgtk-3-dev`
 `librsvg2-dev`.
 
 The release workflow builds both programs for Windows x64, Linux x64 and macOS arm64.
-The next release after v0.1.0 will have these files on the
-[Releases](https://github.com/adv27/pixheet/releases) page.
+The [Releases](https://github.com/adv27/pixheet/releases) page has these files from
+version 0.2.0. Each release also has `THIRD-PARTY-LICENSES.html`, with the licenses of
+the third-party code in the programs.
 
 ## Command line
 
@@ -147,6 +149,7 @@ numbers.
 $ cargo fmt --all --check
 $ cargo clippy --workspace --all-targets -- -D warnings
 $ cargo test --workspace
+$ cargo llvm-cov --workspace --open            # the coverage (cargo-llvm-cov)
 $ cargo run -p pixheet-app                     # the desktop app
 $ cargo xtask samples local-samples            # synthetic sample images
 $ cargo build --release -p pixheet-cli && cargo xtask bench local-samples

@@ -16,7 +16,7 @@ The CI job "Check the version tag" stops a pull request when `CHANGELOG.md` has 
 section for the version in `Cargo.toml`. Write the text in Simplified Technical English
 (ASD-STE100). Read [AGENTS.md](AGENTS.md).
 
-## Unreleased
+## 0.2.0
 
 Pixheet is now written in Rust. The output is the same as the output of version 0.1.0:
 the same pixels and the same sheet XML.
@@ -30,7 +30,8 @@ the same pixels and the same sheet XML.
   output folder, the policy for existing files, subfolders, and the theme.
 - The library `pixheet-core`, with `convert`, `prepare`, `load`, `fit_image` and
   `write`.
-- Release builds for Windows x64, Linux x64 and macOS arm64.
+- Release builds for Windows x64, Linux x64 and macOS arm64. Each release also has
+  `THIRD-PARTY-LICENSES.html`, with the licenses of the third-party code in the files.
 
 ### Changed
 

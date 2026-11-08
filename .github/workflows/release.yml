@@ -3,6 +3,9 @@
 #
 # - build makes pixheet-cli-<system> and pixheet-app-<system>, each with a .sha256 file.
 #   Linux builds on Ubuntu 22.04, so the files need glibc 2.35 or later.
+# - notices makes THIRD-PARTY-LICENSES.html with cargo-about: the licenses of the
+#   third-party code in the files. A dependency with a license that about.toml does not
+#   accept stops the job, also in a pull request.
 # - The release job publishes the files in the GitHub release "Pixheet v<version>". The
 #   notes come from CHANGELOG.md (cargo xtask release-notes).
 #
@@ -41,6 +44,8 @@ on:
       - "rust-toolchain.toml"
       - ".cargo/**"
       - ".github/workflows/release.yml"
+      - "about.toml"
+      - "about.hbs"
   workflow_dispatch:
 
 permissions: {}
@@ -165,9 +170,58 @@ jobs:
           if-no-files-found: error
           retention-days: 30
 
+  notices:
+    name: Third-party licenses
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read # check out the code
+    steps:
+      - name: Check out the repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Install Rust
+        run: rustup toolchain install
+
+      # The binary of cargo-about needs the feature cli. This workflow uses no cache, so
+      # cargo builds it each time, in parallel with the builds.
+      - name: Install cargo-about
+        run: cargo install cargo-about --locked --version 0.9.3 --features cli
+
+      # The page lists the crates of all three systems (the targets in about.toml) and the
+      # bundled C code of libjpeg-turbo and mimalloc. A wrong checksum of a license file
+      # in about.toml gives only a warning, even with --fail. Thus the step stops at each
+      # warning, and it checks that the page has the license of libjpeg-turbo.
+      - name: Write the third-party licenses
+        shell: bash
+        run: |
+          mkdir dist
+          log="$RUNNER_TEMP/cargo-about.log"
+          cargo about generate --workspace --locked --fail about.hbs \
+            -o dist/THIRD-PARTY-LICENSES.html 2> "$log" || { cat "$log"; exit 1; }
+          cat "$log"
+          if grep -q "WARN" "$log"; then
+            echo "::error::cargo-about gave a warning. Correct about.toml."
+            exit 1
+          fi
+          grep -q "Independent JPEG Group License" dist/THIRD-PARTY-LICENSES.html
+          cd dist
+          sha256sum THIRD-PARTY-LICENSES.html > THIRD-PARTY-LICENSES.html.sha256
+          ls -l
+
+      - name: Upload the file
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: pixheet-licenses
+          path: dist/*
+          if-no-files-found: error
+          retention-days: 30
+
   release:
     name: Publish the release
-    needs: [version, build]
+    needs: [version, build, notices]
     # A push to master, a push of a v* tag, or a manual start on master. Never a pull
     # request, and never a manual start on a different branch.
     if: >-
