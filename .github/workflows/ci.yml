@@ -1,8 +1,6 @@
-# Tests and lint on GitHub-hosted Windows and Ubuntu runners.
+# Tests and lint of the Rust workspace on GitHub-hosted Windows, Linux and macOS runners.
 # Each job runs on a new virtual machine, and its token can only read the repository. A
-# pull request from a fork gets no secrets. Read packaging/README.md.
-# Both test jobs send the coverage and the test results to Codecov, with a flag for the
-# system: Windows or Linux. Only this workflow uses the secret CODECOV_TOKEN.
+# pull request from a fork gets no secrets.
 name: CI
 
 on:
@@ -18,85 +16,125 @@ concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
+env:
+  # CI needs no debug info. Without it, the links are faster and the cache is smaller: the
+  # debug build of the app is about 200 MB with debug info.
+  CARGO_PROFILE_DEV_DEBUG: "0"
+  CARGO_TERM_COLOR: always
+
 jobs:
-  test:
-    name: Tests and lint (${{ matrix.os }})
-    strategy:
-      # A failure on one system does not cancel the job on the other system.
-      fail-fast: false
-      matrix:
-        os: [windows-latest, ubuntu-latest]
-    runs-on: ${{ matrix.os }}
-    timeout-minutes: 20
+  # The format and clippy run one time, on Linux, in parallel with the tests. Clippy gives
+  # the same result on each system: the code has no part for Windows or macOS only.
+  lint:
+    name: Lint (fmt, clippy)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
     steps:
       - name: Check out the repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
 
-      # The GUI tests need an X server on Linux. Without it, they skip, and the job passes
-      # without a test of the window.
-      - name: Install Xvfb
+      # The runner images have rustup. It installs the toolchain of rust-toolchain.toml,
+      # the same version as local builds, so a new lint cannot break CI by surprise.
+      - name: Install Rust
+        run: rustup toolchain install
+
+      # The cache keeps the compiled dependencies (Tauri, WebKitGTK bindings, the C build
+      # of libjpeg-turbo). Without it, each run compiles about 400 crates. The key holds
+      # the job, the system, Cargo.lock and the toolchain. Only CI uses a cache:
+      # release.yml must not, because a file from a cache could go into a release.
+      - name: Cache the build of the dependencies
+        uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+
+      # Clippy needs only the build files: the recommended packages take time and are not
+      # necessary.
+      - name: Install nasm and the libraries of the app
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends nasm libwebkit2gtk-4.1-dev \
+            libgtk-3-dev librsvg2-dev
+
+      - name: Check the format
+        run: cargo fmt --all --check
+
+      - name: Lint (clippy)
+        run: cargo clippy --workspace --all-targets --locked -- -D warnings
+
+  test:
+    name: Test (${{ matrix.os }})
+    strategy:
+      # A failure on one system does not cancel the jobs on the other systems.
+      fail-fast: false
+      matrix:
+        os: [windows-latest, ubuntu-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 40
+    steps:
+      - name: Check out the repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Install Rust
+        run: rustup toolchain install
+
+      # cache-hit is true only when the key matches fully. Then the cache has the build of
+      # libjpeg-turbo. It does not have the crates.io index, so cargo must stay online: with
+      # CARGO_NET_OFFLINE, it cannot resolve Cargo.lock.
+      - name: Cache the build of the dependencies
+        id: cache
+        uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+
+      # pixheet-core builds libjpeg-turbo with cmake, which the runners have. On x86-64,
+      # its SIMD code needs nasm. On macOS (arm64), it uses NEON and needs no nasm. With a
+      # full cache, the build script of turbojpeg-sys does not run again (it does not watch
+      # PATH), so the job does not install nasm: choco takes about 16 seconds.
+      - name: Install nasm (Windows)
+        if: runner.os == 'Windows' && steps.cache.outputs.cache-hit != 'true'
+        shell: pwsh
+        run: |
+          choco install nasm --no-progress -y
+          "C:\Program Files\NASM" | Out-File -FilePath $env:GITHUB_PATH -Append
+
+      # The desktop app (Tauri) needs WebKitGTK 4.1 and GTK 3 on Linux. Xvfb runs its
+      # smoke test, and WebKit draws with the Mesa drivers (libgl1-mesa-dri). Do not install
+      # the recommended packages: they include xdg-desktop-portal, and with it the app
+      # waited 30 seconds at the start in CI. They also make this step slower.
+      - name: Install nasm and the libraries of the app (Linux)
         if: runner.os == 'Linux'
         run: |
           sudo apt-get update
-          sudo apt-get install -y xvfb xauth
+          sudo apt-get install -y --no-install-recommends nasm libwebkit2gtk-4.1-dev \
+            libgtk-3-dev librsvg2-dev libgl1-mesa-dri xvfb xauth
 
-      # The version input gives one exact uv version, so each run uses the same uv. Use the
-      # same version in release.yml. The uv version selects the Python build: read "Pinned
-      # actions" in packaging/README.md. uv reads the Python version from .python-version. uv
-      # installs python-build-standalone, not the Python of the runner image, because
-      # pyproject.toml sets python-preference = "only-managed".
-      - name: Install uv
-        uses: astral-sh/setup-uv@18d369b23da25a81e9458561248e1aafff6a70fa # v10.3.1
-        with:
-          version: "0.13.5"
-
-      - name: Install the dependencies
-        run: uv sync --locked --extra gui
-
-      # Only CI measures the coverage. A plain "uv run pytest" stays fast. On Linux,
-      # xvfb-run starts an X server for the run. bash runs the step on both systems.
+      # The tests include the golden test: the output must be the output of the Python
+      # version of Pixheet, which crates/pixheet-core/tests/fixtures keeps.
       - name: Run the tests
+        run: cargo test --workspace --locked
+
+      # A debug build reuses the dependencies of the tests. The release builds are in
+      # release.yml, which also runs for each pull request that changes the code.
+      - name: Build the command and the desktop app
+        run: cargo build --locked -p pixheet-cli -p pixheet-app
+
+      - name: Convert a sample with the command
         shell: bash
+        run: |
+          target/debug/pixheet --version
+          target/debug/pixheet crates/pixheet-core/tests/fixtures/photo.jpg -o "$RUNNER_TEMP/photo.xlsx"
+
+      # The smoke test opens the window off the screen, waits until the page is ready,
+      # and stops. WebKitGTK under Xvfb has no DMA-BUF, so the renderer must not use it.
+      - name: Start the desktop app (smoke test)
+        shell: bash
+        env:
+          PIXHEET_HIDDEN_WINDOW: "1"
+          WEBKIT_DISABLE_DMABUF_RENDERER: "1"
         run: |
           run=()
           if [[ "$RUNNER_OS" == "Linux" ]]; then run=(xvfb-run -a); fi
-          "${run[@]}" uv run --locked --extra gui pytest --cov --cov-branch \
-            --cov-report=xml --junitxml=junit.xml -o junit_family=legacy
-
-      # A pull request from a fork gets no secrets. Then the token is empty, and Codecov
-      # accepts the upload without a token, because the repository is public. An upload
-      # without a token can fail, so it does not stop the job.
-      - name: Upload the coverage to Codecov
-        uses: codecov/codecov-action@303a32d7a59b442fa8d48b6a1cc6825c09c847a5 # v7.1.1
-        with:
-          token: ${{ secrets.CODECOV_TOKEN }}
-          files: coverage.xml
-          flags: ${{ runner.os }}
-          disable_search: true
-          fail_ci_if_error: ${{ secrets.CODECOV_TOKEN != '' }}
-
-      # Upload the test results also when a test fails. Codecov then shows the failed tests.
-      - name: Upload the test results to Codecov
-        if: ${{ !cancelled() }}
-        uses: codecov/codecov-action@303a32d7a59b442fa8d48b6a1cc6825c09c847a5 # v7.1.1
-        with:
-          token: ${{ secrets.CODECOV_TOKEN }}
-          report_type: test_results
-          files: junit.xml
-          flags: ${{ runner.os }}
-          disable_search: true
-          fail_ci_if_error: ${{ secrets.CODECOV_TOKEN != '' }}
-
-      # The lint and the format check give the same result on each system.
-      - name: Lint
-        if: runner.os == 'Windows'
-        run: uv run --locked --extra gui ruff check
-
-      - name: Check the format
-        if: runner.os == 'Windows'
-        run: uv run --locked --extra gui ruff format --check
+          "${run[@]}" target/debug/pixheet-app --smoke
 
   version:
     name: Check the version tag
@@ -105,26 +143,32 @@ jobs:
     # version with a tag fails here. Then the merge cannot skip the release silently.
     if: github.event_name == 'pull_request'
     runs-on: ubuntu-latest
-    timeout-minutes: 5
+    timeout-minutes: 10
     steps:
       - name: Check out the repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
 
+      - name: Install Rust
+        run: rustup toolchain install
+
       # The repository is public. Thus git can read the base commit and the tags without
-      # a token, also for a pull request from a fork.
+      # a token, also for a pull request from a fork. The base branch can be the last
+      # Python version, which has a pyproject.toml and no Cargo.toml.
       - name: Check that a new version has no tag yet
         env:
           BASE_SHA: ${{ github.event.pull_request.base.sha }}
         run: |
           git fetch --quiet --depth=1 --no-tags origin "$BASE_SHA"
-          git show "$BASE_SHA:pyproject.toml" > "$RUNNER_TEMP/base-pyproject.toml"
-          python3 packaging/release_version.py check-pr "$RUNNER_TEMP/base-pyproject.toml"
+          base="$RUNNER_TEMP/base-manifest.toml"
+          git show "$BASE_SHA:Cargo.toml" > "$base" 2>/dev/null \
+            || git show "$BASE_SHA:pyproject.toml" > "$base"
+          cargo run -q --locked -p xtask --no-default-features -- check-pr "$base"
 
       # The release job uses the section of the version in CHANGELOG.md as the release
       # notes. Thus each version must have a section before the merge.
       - name: Check that CHANGELOG.md has a section for the version
         run: |
-          version=$(python3 packaging/release_version.py version)
-          python3 packaging/release_notes.py "$version" > /dev/null
+          version=$(cargo run -q --locked -p xtask --no-default-features -- version)
+          cargo run -q --locked -p xtask --no-default-features -- release-notes "$version" > /dev/null

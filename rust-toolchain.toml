@@ -1,0 +1,7 @@
+# The toolchain of the project. CI, the release builds and local builds use the same
+# version, so a new lint of clippy cannot break a build by surprise. To update, change the
+# version here, fix the new lints, and say so in the commit body.
+[toolchain]
+channel = "1.99.0"
+components = ["clippy", "rustfmt"]
+profile = "minimal"

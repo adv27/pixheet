@@ -6,14 +6,42 @@ The release page on GitHub shows the date of each release.
 
 To add a version, do these steps:
 
-1. Add a section `## <version>` at the top, below this text.
+1. Rename the section `## Unreleased` to `## <version>`, or add a section `## <version>`
+   at the top, below this text.
 2. Write the changes in the subsections Added, Changed, Fixed and Removed. Leave out a
    subsection that has no items.
-3. Change `version` in `pyproject.toml`, and run `uv lock`.
+3. Change `version` in `[workspace.package]` of `Cargo.toml`, and run `cargo update -w`.
 
 The CI job "Check the version tag" stops a pull request when `CHANGELOG.md` has no
-section for the version in `pyproject.toml`. Write the text in Simplified Technical
-English (ASD-STE100). Read [AGENTS.md](AGENTS.md).
+section for the version in `Cargo.toml`. Write the text in Simplified Technical English
+(ASD-STE100). Read [AGENTS.md](AGENTS.md).
+
+## Unreleased
+
+Pixheet is now written in Rust. The output is the same as the output of version 0.1.0:
+the same pixels and the same sheet XML.
+
+### Added
+
+- The command `pixheet` in Rust, with the options of version 0.1.0. It is 3 to 5 times
+  faster, and it starts in less than 5 ms.
+- A new desktop app (Tauri 2) for Windows, Linux and macOS. Each image gets a card with
+  a preview of the sheet. A sidebar holds the settings: the size, the background, the
+  output folder, the policy for existing files, subfolders, and the theme.
+- The library `pixheet-core`, with `convert`, `prepare`, `load`, `fit_image` and
+  `write`.
+- Release builds for Windows x64, Linux x64 and macOS arm64.
+
+### Changed
+
+- The `.xlsx` files are 2 to 3% larger: they use the DEFLATE level 3, which is about 2
+  times faster.
+- The Linux app needs WebKitGTK 4.1, for example Ubuntu 22.04 or Debian 12.
+
+### Removed
+
+- The Python package, its API (`convert()`, `prepare()`), and the Tk app. The branch
+  `python-legacy` keeps them.
 
 ## 0.1.0
 

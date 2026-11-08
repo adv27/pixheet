@@ -1,0 +1,34 @@
+[package]
+name = "pixheet-app"
+description = "The Pixheet desktop app: drop images, get .xlsx spreadsheets."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+publish = false
+
+[[bin]]
+name = "pixheet-app"
+path = "src/main.rs"
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+base64 = "0.22"
+image = { version = "0.25", default-features = false, features = ["png"] }
+mimalloc = { version = "0.1", default-features = false }
+pixheet-core = { path = "../pixheet-core" }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tauri = { version = "2", features = [] }
+tauri-plugin-dialog = "2"
+tauri-plugin-opener = "2"
+
+[dev-dependencies]
+tempfile = "3"
+
+[lints]
+workspace = true

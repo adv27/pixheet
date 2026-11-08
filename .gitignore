@@ -1,21 +1,7 @@
-# Python
-__pycache__/
-*.py[cod]
-.venv/
-build/
-dist/
-*.spec
-# The spec of the Windows app is a source file.
-!packaging/*.spec
-*.egg-info/
-
-# Tools
-.pytest_cache/
-.ruff_cache/
-.coverage*
-coverage.xml
-junit.xml
-htmlcov/
+# Rust build output
+target/
+# Tauri writes these schemas on each build of the app
+crates/pixheet-app/gen/
 
 # Local sample images and outputs: never commit them
 samples/
@@ -24,11 +10,12 @@ output/
 *.xlsx
 .pixheet-*.tmp
 
-# Editors / OS
+# Local profiler output
+profiles/
+perf.data*
+
+# Editors and systems
 .idea/
 .vscode/
 Thumbs.db
 .DS_Store
-
-# Local profiler output (python -m profiling.sampling)
-profiles/

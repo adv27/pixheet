@@ -1,32 +1,46 @@
 # Pixheet
 
 [![CI](https://github.com/adv27/pixheet/actions/workflows/ci.yml/badge.svg?branch=master)](https://github.com/adv27/pixheet/actions/workflows/ci.yml)
-[![codecov](https://codecov.io/gh/adv27/pixheet/graph/badge.svg?token=6ZUOTE5GOF)](https://codecov.io/gh/adv27/pixheet)
 
-Pixheet turns any image into an `.xlsx` spreadsheet where every cell is one pixel,
-filled with that pixel's color. Open the file in a spreadsheet app, zoom out, and you
-see the picture.
+Pixheet turns an image into an `.xlsx` spreadsheet. Each cell is one pixel and has the
+color of that pixel. Open the file in a spreadsheet app, zoom out, and you see the
+picture.
 
 ```console
 $ pixheet photo.jpg
-photo.jpg  3400x2267 -> 480x320  63,942 colors  153,600 cells  0.55s
+photo.jpg  4032x3024 -> 297x223  63,758 colors  66,231 cells  0.13s
 ```
 
-The output is a plain `.xlsx` with one sheet, written for Microsoft Excel (verified in
-Excel 16 on Windows) and readable by any .xlsx reader.
+The output is a plain `.xlsx` file with one sheet. It is written for Microsoft Excel
+(verified in Excel 16 on Windows), and any `.xlsx` reader can read it.
+
+Pixheet is written in Rust. It has three parts:
+
+- `pixheet`, a command for the terminal;
+- Pixheet, a desktop app for Windows, Linux and macOS;
+- `pixheet-core`, the library that both use.
+
+The first versions of Pixheet were in Python. The branch
+[`python-legacy`](https://github.com/adv27/pixheet/tree/python-legacy) keeps the last
+Python version (v0.1.0).
 
 ## Install
 
-Pixheet needs Python 3.15 or newer and depends only on [Pillow](https://python-pillow.org/).
-It is not on PyPI yet; install it from a checkout with [uv](https://docs.astral.sh/uv/)
-0.13.1 or later:
+Build Pixheet from a checkout. You need Rust 1.88 or later, `cmake`, and on x86-64 also
+`nasm` (for libjpeg-turbo).
 
 ```console
-$ uv tool install .        # puts `pixheet` on your PATH
-$ uv run pixheet --help    # or run it from the checkout without installing
+$ cargo install --path crates/pixheet-cli      # puts `pixheet` on your PATH
+$ cargo build --release -p pixheet-app         # the desktop app: target/release/pixheet-app
 ```
 
-`pip install .` works too.
+On Linux, the desktop app needs WebKitGTK 4.1 and GTK 3, for example Ubuntu 22.04,
+Debian 12 or later. To build it, install `libwebkit2gtk-4.1-dev`, `libgtk-3-dev` and
+`librsvg2-dev`.
+
+The release workflow builds both programs for Windows x64, Linux x64 and macOS arm64.
+The next release after v0.1.0 will have these files on the
+[Releases](https://github.com/adv27/pixheet/releases) page.
 
 ## Command line
 
@@ -36,375 +50,120 @@ pixheet INPUT [INPUT ...] [-o OUTPUT] [--max-side N] [--background COLOR] [--com
 
 | Option | Default | Meaning |
 |---|---|---|
-| `-o`, `--output OUTPUT` | `INPUT` with an `.xlsx` suffix | Output path. Only allowed with a single input. |
-| `--max-side N` | `1000` | Cap on the longest side, in pixels. `0` means only the sheet limits apply. |
-| `--background COLOR` | `white` | Color that transparent areas are blended onto: `white`, `black`, `#RRGGBB` (any CSS color name works), or `none` to drop the alpha channel as is. |
-| `--compact` | off | Leave out cell references. See [Compact mode](#compact-mode). |
-| `-q`, `--quiet` | off | Print errors only. |
+| `-o`, `--output OUTPUT` | `INPUT` with an `.xlsx` suffix | The output path. Only for one input. |
+| `--max-side N` | `1000` | The cap on the longest side, in pixels. `0` means only the sheet limits apply. |
+| `--background COLOR` | `white` | The color under transparent areas: a color name (`white`, `black`, all CSS names), `#RRGGBB`, `rgb(...)`, `hsl(...)`, or `none` to drop the alpha. |
+| `--compact` | off | Leave out the cell references. Read [Compact mode](#compact-mode). |
+| `-q`, `--quiet` | off | Print only the errors. |
 
-Each converted file prints one line: input, original size, sheet size, colors, cells and
-time. If an input fails, Pixheet reports it, carries on with the rest, and exits with
-status 1. Wildcards such as `photos\*.jpg` are expanded even in shells that don't do it
-themselves (cmd, PowerShell). `python -m pixheet` works too.
+Each converted file prints one line: the input, the original size, the sheet size, the
+colors, the cells and the time. When an input fails, Pixheet tells why, converts the
+other inputs, and stops with the exit status 1. The command expands wildcards such as
+`photos\*.jpg` itself, also in cmd and PowerShell.
+
+The command uses all CPUs, at most 8. To set the number of threads, set the environment
+variable `RAYON_NUM_THREADS`.
 
 ## Desktop app
 
-Pixheet also has a desktop app. Drop images or folders on its window, and the app
-converts each image to an `.xlsx` file. Install the app with the `gui` extra:
+Drop images or folders on the window, or click **Add images** or **Add folder**. Each
+image gets a card. After the fit, the card shows a preview of the sheet. A done card can
+open the file, show it in its folder, or convert it again.
 
-```console
-$ uv tool install ".[gui]"     # or: pip install ".[gui]"
-$ pixheet-gui                  # or: uv run --extra gui pixheet-gui from the checkout
+The settings are in the sidebar:
+
+- **Longest side**: the cap on the size, the same as `--max-side`.
+- **Transparent areas**: white, black, the colors as they are, or a color of your own.
+- **Save to**: next to each image, or in one folder.
+- **If the file exists**: keep both (`photo (2).xlsx`), replace it, or skip the image.
+- **Start when images are added**, **Include subfolders**, and **Compact file**.
+- The button at the top right sets the theme: system, light or dark.
+
+A change of the settings applies to the images that have not started. The app saves the
+settings in `settings.json` in its config folder, for example
+`%APPDATA%\io.github.adv27.pixheet` on Windows or `~/.config/io.github.adv27.pixheet` on
+Linux.
+
+## Library
+
+```rust
+use std::path::Path;
+use pixheet_core::{Options, convert};
+
+let result = convert(Path::new("photo.jpg"), Path::new("photo.xlsx"), &Options::default(), None)?;
+println!("{}x{} {} colors", result.size.0, result.size.1, result.colors);
 ```
 
-To add images:
-
-- Drop images or folders on the window, or click **Add files...** or **Add folder...**.
-  Ctrl+O also adds files.
-- A folder adds only the images directly in it. When the folder has subfolders, a note
-  shows the button **Include subfolders**.
-- The app ignores files that are not images, and a note names them.
-- Set the maximum side, the background, compact mode, and **Save to** before you add
-  images. During a run, the app locks these settings and shows them in gray.
-- **Save to** sets the folder of the outputs: **Next to each image** (the default), or a
-  folder that you choose. When two images have the same output name, each output gets a
-  tag. For example, `photo.png` and `photo.jpg` give `photo (png).xlsx` and
-  `photo (jpg).xlsx`.
-- Two output names that differ only in the case of the letters also get a tag, on all
-  systems. For example, `Photo.png` and `photo.jpg` give `Photo (png).xlsx` and
-  `photo (jpg).xlsx`. Some file systems ignore the case, for example APFS, exFAT, and
-  network shares.
-
-One image shows in the drop zone, with a progress bar and the result. **Show in folder**
-shows the output in its folder, and **Open** opens it.
-
-Two or more images show in a list, with the name, the folder, and the status of each
-image:
-
-- The conversion starts at once. A drop during a run adds the images to the end of the
-  list. A new drop of an image with a finished row converts that row again, into the
-  current **Save to** folder.
-- The progress line shows the number of the current file, the counts, and the time
-  left. The window title also shows the progress. The progress changes about 4 times
-  each second.
-- The list keeps the current file in view. A click or a scroll in the list stops this.
-  Esc starts it again.
-- **Stop** stops the run. The app does not write the current file. **Convert N**
-  converts the files that wait. A drop after **Stop**, before the current file stops,
-  adds rows that wait. **Convert N** starts them too.
-- An error in one file does not stop the run. The row of the file is red and tells the
-  reason. Select the row to see the reason and the advice below the list. The reason
-  names the folder that failed, also after a change of **Save to**.
-- On Windows, when another app has the output open, for example Excel, the row shows
-  "Failed: file is in use". Close the file in that app, then click **Retry failed**.
-- **Retry failed (N)** converts the failed files and the stopped files again. A row
-  keeps its output name when **Save to** did not change.
-- **Failed only (N)** shows only the failed files. When you remove the last failed row,
-  the list shows all rows again.
-- **Show folders (N)** opens one of the output folders. **Clear list** removes all rows.
-- Right-click a row, or press Shift+F10, for more actions. Enter opens the selected
-  file. Delete removes the selected rows.
-
-When output files exist, the app asks one time for each drop:
-
-- For two or more files, click **Replace all**, **Skip these N**, or **Cancel**.
-- For one file, click **Replace**, **Skip this file**, or **Cancel**.
-- The Skip button has the focus, so Enter does not replace files.
-- When the drop has no other images, the dialog has no Skip button, and Cancel has the
-  focus.
-
-**Convert N**, **Retry failed**, and a drop after **Stop** also check the files that
-wait. The app asks again before it replaces an output, also when you clicked **Replace**
-before the Stop. When you cancel **Convert N** or **Retry failed**, the note says "The
-app did not start the run." An output path that is too long fails at once.
-
-Screen readers cannot read the rows of the list, because Tk does not give the list to UI
-Automation. The details line below the list shows the paths and the result of the
-selected row. Long paths get "…" there. **Copy full path** and **Copy error** in the
-context menu copy the full text.
-
-The app uses Tkinter from the Python standard library. The `gui` extra adds
-[tkinterdnd2](https://pypi.org/project/tkinterdnd2/) for the drop of files. Without
-tkinterdnd2, the app opens without the drop function, and **Add files...** and **Add
-folder...** still work. You can also give paths of images and folders as arguments:
-`pixheet-gui photo.jpg`. The app makes a relative path a full path, so the tag of an
-output names the real folder.
-
-The `gui` extra also adds [sv-ttk](https://pypi.org/project/sv-ttk/). It gives the
-window the look of Windows 11:
-
-- The toggle at the top right sets the theme: **System**, **Light**, or **Dark**. The
-  title bar on Windows gets the same theme. You can use Tab and the arrow keys.
-- With **System** (the default), the window is light or dark, the same as the Windows
-  setting for apps. When you change the setting, the window changes in about 2 seconds.
-  On Linux, the app reads the dark style setting of the desktop: the color scheme of
-  the desktop portal, or else the GNOME setting. On macOS, **System** is light.
-- The app saves your choice in `%APPDATA%\Pixheet\settings.ini`. On other systems, the
-  file is `pixheet/settings.ini` in `$XDG_CONFIG_HOME`, or else in `~/.config`. A
-  damaged file gives **System**.
-- The environment variable `PIXHEET_THEME` sets the theme at the start: `system`,
-  `light`, or `dark`. It wins over the saved choice.
-- Without sv-ttk, the app opens with the standard Tk look and has no toggle.
-
-On Linux, drag and drop needs libX11 1.7 or later and libxcb 1.14 or later, for example
-Ubuntu 22.04 or Debian 11. With an older library, tkdnd stops the app when it loads. Thus
-the app does not load tkdnd, and you use **Add files...** and **Add folder...**. Set the
-environment variable `PIXHEET_DND` to `0` to turn off drag and drop on all systems.
-
-To build the Windows app yourself, see [Windows app](#windows-app). For Linux, see
-[Linux app](#linux-app).
-
-## Windows app
-
-Pixheet.exe is the desktop app in one file. It does not need Python.
-
-Download `Pixheet.exe` and `Pixheet.exe.sha256` from the
-[Releases](https://github.com/adv27/pixheet/releases) page. Each merge that changes the
-version publishes a release. The release also has `THIRD-PARTY-NOTICES-windows-x64.txt`,
-with the licenses of the third-party parts in the app. Read [License](#license).
-
-Download the app only from the Releases page. The Actions page of the repository also
-has builds of the app, for each pull request and for each push to `master`. These
-artifacts are for tests only. A pull request from a fork can change the build, and its
-artifact gets the same name. The `.sha256` file in an artifact comes from the same run.
-Thus it does not show where the app comes from.
-
-To compare the hash with the text in `Pixheet.exe.sha256`, run this command in
-PowerShell:
-
-```console
-> (Get-FileHash Pixheet.exe -Algorithm SHA256).Hash.ToLower()
-```
-
-The exe does not have a code signature yet. Thus Windows SmartScreen can show the
-message "Windows protected your PC". To start the app, click **More info**, then
-**Run anyway**. If you do not want to run an exe without a signature, build it yourself.
-
-To build Pixheet.exe from a checkout, run this command in PowerShell:
-
-```console
-> powershell -ExecutionPolicy Bypass -File packaging\build.ps1
-```
-
-The script builds `dist\Pixheet.exe`, about 13.9 MB, and tests it. Add `-OneDir` to
-build the folder `dist\Pixheet\`. The folder starts faster, because the exe does not
-extract itself each time. [packaging/README.md](packaging/README.md) gives more data
-about the build and the CI.
-
-To publish a release, do these steps in a pull request:
-
-1. Add a section `## <version>` at the top of [CHANGELOG.md](CHANGELOG.md).
-2. Change `version` in `pyproject.toml`, and run `uv lock`.
-3. Merge the pull request.
-
-The release notes come from the section of the version in `CHANGELOG.md`. Read
-"Releases" in [packaging/README.md](packaging/README.md#releases).
-
-The exe has all the features of the app, but it does not have these parts:
-
-- The Python modules for network, crypto, mail, XML, processes, and the command line,
-  and the OpenSSL DLLs. The app does not use them.
-- The Pillow modules that pixheet never calls, for example `ImageTk` and `ImageShow`.
-- The docstrings and the `assert` statements in the bytecode.
-- The Tcl and Tk files that the app does not use on Windows. Examples are the time zone
-  data, most encodings, and the messages for other languages.
-
-These changes make the exe about 6 MB smaller. The exe does not use UPX, because
-antivirus programs flag UPX-packed exes.
-
-## Linux app
-
-`Pixheet-linux-x86_64` is the desktop app for Linux in one file. It does not need
-Python. It runs on x86_64 Linux with glibc 2.27 or later, for example Ubuntu 18.04,
-Debian 10, RHEL 8, and later versions.
-
-Download `Pixheet-linux-x86_64` and `Pixheet-linux-x86_64.sha256` from the
-[Releases](https://github.com/adv27/pixheet/releases) page. The release also has
-`THIRD-PARTY-NOTICES-linux-x86_64.txt`. Do not use the artifacts on the Actions page.
-They are for tests only, as [Windows app](#windows-app) tells.
-
-Then run these commands in the download folder. A download does not keep the
-permission to run the file, so `chmod +x` adds it:
-
-```console
-$ sha256sum -c Pixheet-linux-x86_64.sha256
-$ chmod +x Pixheet-linux-x86_64
-$ ./Pixheet-linux-x86_64
-```
-
-The app needs an X server. On a Wayland desktop, it runs through Xwayland. It also
-needs `libxcb.so.1`, which each X11 desktop has.
-
-Known limits:
-
-- The text uses the core X fonts of Tk, without antialiasing, so it looks plain. The Tk
-  in the app has no Xft. Some letters, for example Vietnamese letters in a file name,
-  can show as boxes.
-- Drag and drop needs libxcb 1.14 or later. The app has its own libX11 1.7.2, but it
-  uses the `libxcb.so.1` of the system. Ubuntu 18.04, Debian 10 and RHEL 8 have libxcb
-  1.13. On these systems, the app starts without drag and drop, and the drop zone shows
-  "Drag and drop is not available. Use Add files or Add folder."
-- At each start, the app extracts itself to a folder `/tmp/_MEI...`. If `/tmp` does not
-  let programs run (`noexec`), set `TMPDIR` to a different folder.
-- To open a folder, the app uses `xdg-open`.
-- The file has no menu entry and no desktop icon.
-
-A GitHub-hosted runner builds the file in a Debian 11 container on `ubuntu-latest`. The
-build passes the smoke test and the conversion test under Xvfb. Nobody has tested the
-file on a real Linux desktop yet. Please report a problem in an issue.
-
-To build the file yourself, use Debian 11 or a `debian:11` container. Install the
-packages that [Build the Linux app](packaging/README.md#build-the-linux-app) lists, then
-run this command:
-
-```console
-$ bash packaging/build.sh
-```
-
-The script builds `dist/Pixheet-linux-x86_64`, about 19.4 MB, and tests it. The build
-stops on a system with a libX11 older than 1.7, because then tkdnd stops the app. It
-also stops when the app would need a glibc newer than 2.27.
-[packaging/README.md](packaging/README.md) tells why.
-
-## Python API
-
-```python
-from pixheet import convert
-
-result = convert("photo.jpg", "photo.xlsx")
-print(result.size, result.colors, f"{result.seconds:.2f}s")
-```
-
-```python
-convert(
-    src,                    # path, binary file object, or PIL.Image.Image
-    dst,                    # path or writable binary file object
-    *,
-    max_side=1000,          # 0 = no cap; only the sheet limits apply
-    background="white",     # "white", "black", "#RRGGBB", (r, g, b), or "none"
-    compact=False,
-    progress=None,          # function that gets (rows_done, rows_total)
-) -> ConvertResult
-```
-
-`ConvertResult` has `original_size` and `size` (width, height), `colors`, `cells` and
-`seconds`. When `src` is a `PIL.Image.Image`, it is left open and unchanged. When `dst`
-is a path, the file is written next to it and renamed into place, so a failed conversion
-never leaves a half-written file and keeps any previous file.
-
-Use `progress` to show the progress of a conversion, for example in a progress bar:
-
-- `convert` calls `progress(rows_done, rows_total)` on the thread that called `convert`.
-- The first call is `(0, rows_total)`. Then one call comes after each row of the sheet.
-- The last call is `(rows_total, rows_total)`.
-- An exception from `progress` stops the conversion, and `convert` raises it again.
-  When `dst` is a path, an existing file at `dst` does not change.
-  When `dst` is a stream, the stream then holds an incomplete file. Discard it.
-- `convert` does not limit the number of calls. A slow `progress` function makes the
-  conversion slow.
-
-```python
-def show(done, total):
-    print(f"\r{done * 100 // total}%", end="")
-
-
-convert("photo.jpg", "photo.xlsx", progress=show)
-```
-
-`prepare(src, max_side=..., background=...)` returns the RGB image that `convert` would
-write, one pixel per cell, without writing anything.
+`convert` writes a temporary file next to the output, then renames it over the output.
+Thus a failed conversion never leaves a half-written file, and an old file stays as it
+was. The optional progress function gets `(rows_done, rows_total)` and can stop the
+conversion. `load`, `fit_image` and `write` are the three steps of `convert`, and
+`prepare` gives the image that `convert` writes.
 
 ## What happens to the image
 
-1. **Orientation and color mode.** The EXIF orientation is applied, so phone photos come
-   out upright. Images with transparency (RGBA, LA, palette or RGB/L with a transparent
-   color) are blended onto the background color. Every other mode (palette, grayscale,
-   CMYK, 16-bit grayscale, ...) is converted to RGB.
-2. **Size cap.** If the image is larger than `max_side` or the sheet grid, it is resized
-   once (LANCZOS, aspect ratio kept).
-3. **Color fit.** If the image still has more distinct colors than a sheet can style, a
-   search finds the largest longest side whose resized image fits. The result is exact
-   to the pixel. The color count of each test size tells the search where to look
-   next. For a photo, the search needs about 4 tests. A binary search needs about 9.
+1. **Orientation and color mode.** Pixheet applies the EXIF orientation, so photos from
+   a phone come out upright. It blends transparent areas onto the background color. It
+   converts each other mode (palette, gray, CMYK, 16-bit) to 8-bit RGB.
+2. **Size cap.** When the image is larger than `--max-side` or the sheet grid, one
+   LANCZOS resize makes it smaller, with the same aspect ratio.
+3. **Color fit.** When the image still has more colors than a sheet can style, a search
+   finds the largest size whose colors fit. The color counts of the tested sizes guide
+   the search, so a photo needs about 4 tests.
 
-Pixheet uses up to 8 threads, one for each CPU, to resize the image and to compress
-the sheet. The result is the same as with one thread: the same pixels and the same
-cells. Only the compressed bytes in the file can differ a little.
+The decode, the resize and the color rules give the same pixels as Pillow 13, the image
+library of the Python version. The golden test checks this for 139 cases.
 
 ## Limits
 
 | Limit | Value | Why |
 |---|---|---|
-| Distinct colors | 63,999 | Excel allows 64,000 cell formats, and format 0 is the default style. Every color needs its own format. |
-| Columns | 16,384 | Excel's column limit (A to XFD). |
-| Rows | 1,048,576 | Excel's row limit. |
-| Longest side | `max_side`, 1000 by default | Keeps files small and fast to open. |
+| Colors | 63,999 | Excel allows 64,000 cell formats, and format 0 is the default style. Each color needs its own format. |
+| Columns | 16,384 | The column limit of Excel (A to XFD). |
+| Rows | 1,048,576 | The row limit of Excel. |
+| Longest side | `--max-side`, 1000 by default | Small files open fast. |
 
-Most photos have far more than 63,999 colors at full size, so they end up somewhere
-around 100,000 to 250,000 cells (for example 480x320 or 300x440). Flat images such as
-logos, pixel art and screenshots keep their full size up to `max_side`.
+Most photos have far more than 63,999 colors at full size. Thus they become about
+100,000 to 250,000 cells, for example 480x320. Flat images such as logos, pixel art and
+screenshots keep their full size up to `--max-side`.
 
 ## Compact mode
 
-`--compact` (`compact=True`) leaves out the optional `r="A1"` reference on every cell.
-The spreadsheet format allows this: a reader puts each cell right after the previous one.
-On the sample photos, files were 25 to 50% smaller. Writing the sheet took 13% less time
-with 8 threads, and 23% less with one thread.
+`--compact` leaves out the optional `r="A1"` reference of each cell. The spreadsheet
+format allows this: a reader puts each cell after the cell before it. The files are 25 to
+50% smaller. Only Excel 16 and openpyxl are tested with compact files, so the mode is
+off by default.
 
-It is off by default because it has only been verified in Excel 16 and openpyxl. Don't
-rely on it for Google Sheets, LibreOffice or Numbers until it has been tested there.
+## Speed
+
+On a 4-core Linux machine, the command converts a 12 MP photo in about 0.13 s, 3.8 times
+faster than the Python version. A batch of 5 sample images takes 0.25 s, 4.8 times
+faster. [docs/rust-port/PROFILE.md](docs/rust-port/PROFILE.md) has the profile and the
+numbers.
 
 ## Development
 
 ```console
-$ uv sync                              # Python 3.15 per .python-version
-$ uv run pytest                        # tests, including the golden test against xlsxwriter
-$ uv run ruff check && uv run ruff format --check
+$ cargo fmt --all --check
+$ cargo clippy --workspace --all-targets -- -D warnings
+$ cargo test --workspace
+$ cargo run -p pixheet-app                     # the desktop app
+$ cargo xtask samples local-samples            # synthetic sample images
+$ cargo build --release -p pixheet-cli && cargo xtask bench local-samples
 ```
 
-Test images are generated in `tests/images.py`; no real photos are used. The golden test
-builds the same fitted image with xlsxwriter (a dev dependency only) and compares
-`sheet1.xml` and `styles.xml` byte for byte.
+[AGENTS.md](AGENTS.md) has the layout, the commands and the rules of the project.
+[docs/rust-port/](docs/rust-port/) records the port from Python to Rust.
 
-**Benchmark.** `bench/bench.py` converts every image in one or more folders and reports
-best-of-N time, size, colors, cells and cells per second (`--stages` adds a per-stage
-breakdown):
-
-```console
-$ uv run python bench/bench.py --samples path\to\photos -n 3 --stages
-```
-
-Folders come from `--samples` (repeatable), else `PIXHEET_SAMPLES` (several separated by
-`;` on Windows), else `./samples`. Keep sample photos out of the repository: `samples/`
-is git-ignored. The last line of the output gives the number of worker threads. To time
-one thread, add `-X cpu_count=1`: `uv run python -X cpu_count=1 bench/bench.py ...`.
-
-**Profiling.** Python 3.15's sampling profiler works on the benchmark as is:
+**Excel check (Windows).** `scripts/excel_check.ps1` opens each `.xlsx` file of a folder
+with Excel through COM automation. It reports the used range, the row height and the
+column width, and it compares 80 random cell colors with the source image.
 
 ```console
-$ uv run python -m profiling.sampling run --flamegraph -o profiles/flamegraph.html bench/bench.py -n 3
-```
-
-**Excel check (Windows).** `scripts/excel_check.ps1` opens every `.xlsx` in a folder with
-Excel through COM automation and reports the used range, row height and column width,
-and compares 80 random cell colors with the source image of the same name. Excel runs
-hidden with alerts off, and in that mode it refuses to open a file it would offer to
-repair, so a pass also means "no repair prompt". `-Snapshot DIR` exports each sheet as a
-PDF rendered by Excel. Excel prints very narrow columns wider than it shows them, so these
-PDFs look about 1.2x stretched sideways; on screen every cell is a 0.75 x 0.75 pt square.
-
-```console
-$ uv run pixheet samples\*.jpg
-$ powershell -ExecutionPolicy Bypass -File scripts\excel_check.ps1 -Folder samples -Snapshot out
+> cargo run --release -p pixheet-cli -- samples\*.jpg
+> powershell -ExecutionPolicy Bypass -File scripts\excel_check.ps1 -Folder samples
 ```
 
 ## License
 
-Pixheet uses the MIT license. Read [LICENSE](LICENSE).
-
-`Pixheet.exe` and `Pixheet-linux-x86_64` also include third-party parts, and each part
-has its own license. Examples are Python, Tcl and Tk, Pillow and its libraries, sv-ttk,
-tkinterdnd2, tkdnd, and the bootloader of PyInstaller. The Linux app also includes
-OpenSSL and other libraries in libpython, and libraries of Debian 11. Each app has the
-license texts in the file `THIRD-PARTY-NOTICES.txt`. The release has the same text in
-`THIRD-PARTY-NOTICES-windows-x64.txt` and `THIRD-PARTY-NOTICES-linux-x86_64.txt`.
+MIT. Read [LICENSE](LICENSE).
