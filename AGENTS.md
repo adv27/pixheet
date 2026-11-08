@@ -26,7 +26,7 @@ The first versions were in Python. The branch `python-legacy` keeps the last one
 | `crates/xtask/` | The project tasks: `version`, `check-pr`, `release-notes`, `release-plan`, `release-files`, `samples`, `bench`, `sample-pixels`. |
 | `scripts/excel_check.ps1` | Opens the outputs in Excel through COM (Windows) and compares cell colors with `cargo xtask sample-pixels`. |
 | `docs/rust-port/` | The history of the port: the spike, the plan and the profile. |
-| `.github/workflows/` | `ci.yml`: the format and clippy on Ubuntu; the tests, the debug builds and the smoke test of the app on Windows, Ubuntu and macOS; and the check of the version tag and of `CHANGELOG.md`. CI caches the dependencies and builds without debug info. With a full cache, Windows skips nasm. `release.yml`: the release builds for the three systems and the release. On a pull request, it runs only when the code, the manifests or the toolchain change. |
+| `.github/workflows/` | `ci.yml`: the format and clippy on Ubuntu; the tests, the debug builds and the smoke test of the app on Windows, Ubuntu and macOS; and the check of the version tag and of `CHANGELOG.md`. The coverage job on Ubuntu sends the line coverage to Codecov (`codecov.yml`). CI caches the dependencies and builds without debug info. With a full cache, Windows skips nasm. `release.yml`: the release builds for the three systems and the release. On a pull request, it runs only when the code, the manifests or the toolchain change. |
 | `CHANGELOG.md` | The changes of each version. The release job uses the section of the version as the release notes. |
 
 ## Commands
@@ -40,6 +40,7 @@ WebKitGTK 4.1 and GTK 3 (`libwebkit2gtk-4.1-dev`, `libgtk-3-dev`, `librsvg2-dev`
 cargo fmt --all --check
 cargo clippy --workspace --all-targets -- -D warnings
 cargo test --workspace
+cargo llvm-cov --workspace --open                     # the coverage, in a browser
 cargo build --release -p pixheet-cli                  # target/release/pixheet
 cargo run -p pixheet-app                              # the desktop app
 cargo xtask samples local-samples                     # synthetic sample images
@@ -52,6 +53,9 @@ ready. Under Xvfb on Linux, set `WEBKIT_DISABLE_DMABUF_RENDERER=1`:
 ```console
 PIXHEET_HIDDEN_WINDOW=1 WEBKIT_DISABLE_DMABUF_RENDERER=1 xvfb-run -a target/debug/pixheet-app --smoke
 ```
+
+For the coverage, install `cargo-llvm-cov` and its LLVM tools: run
+`rustup component add llvm-tools` and `cargo install cargo-llvm-cov --locked`.
 
 To lint the workflows, run `actionlint` and `zizmor --offline .github/workflows`.
 

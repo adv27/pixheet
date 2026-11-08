@@ -1,6 +1,8 @@
 # Tests and lint of the Rust workspace on GitHub-hosted Windows, Linux and macOS runners.
 # Each job runs on a new virtual machine, and its token can only read the repository. A
 # pull request from a fork gets no secrets.
+# The coverage job sends the line coverage to Codecov. Only this workflow uses the secret
+# CODECOV_TOKEN.
 name: CI
 
 on:
@@ -135,6 +137,56 @@ jobs:
           run=()
           if [[ "$RUNNER_OS" == "Linux" ]]; then run=(xvfb-run -a); fi
           "${run[@]}" target/debug/pixheet-app --smoke
+
+  # cargo-llvm-cov builds the workspace with -C instrument-coverage and runs the tests. The
+  # CLI tests start the command in a subprocess, and its coverage counts too. One system
+  # is sufficient: the code has no part for Windows or macOS only. The job runs in
+  # parallel with the tests and has its own cache.
+  coverage:
+    name: Coverage
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    steps:
+      - name: Check out the repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      # llvm-tools gives llvm-profdata and llvm-cov, which cargo-llvm-cov uses. Only this
+      # job needs them, so rust-toolchain.toml does not list them.
+      - name: Install Rust
+        run: |
+          rustup toolchain install
+          rustup component add llvm-tools
+
+      # The cache also keeps ~/.cargo/bin, so cargo install builds cargo-llvm-cov only
+      # when the cache misses.
+      - name: Cache the build of the dependencies
+        uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+
+      - name: Install nasm and the libraries of the app
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends nasm libwebkit2gtk-4.1-dev \
+            libgtk-3-dev librsvg2-dev
+
+      - name: Install cargo-llvm-cov
+        run: cargo install cargo-llvm-cov --locked --version 0.9.1
+
+      - name: Measure the coverage of the tests
+        run: cargo llvm-cov --workspace --locked --codecov --output-path codecov.json
+
+      # A pull request from a fork gets no secrets. Then the token is empty, and Codecov
+      # accepts the upload without a token, because the repository is public. An upload
+      # without a token can fail, so it does not stop the job.
+      - name: Upload the coverage to Codecov
+        uses: codecov/codecov-action@303a32d7a59b442fa8d48b6a1cc6825c09c847a5 # v7.1.1
+        with:
+          token: ${{ secrets.CODECOV_TOKEN }}
+          files: codecov.json
+          flags: ${{ runner.os }}
+          disable_search: true
+          fail_ci_if_error: ${{ secrets.CODECOV_TOKEN != '' }}
 
   version:
     name: Check the version tag

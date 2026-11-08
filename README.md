@@ -1,6 +1,7 @@
 # Pixheet
 
 [![CI](https://github.com/adv27/pixheet/actions/workflows/ci.yml/badge.svg?branch=master)](https://github.com/adv27/pixheet/actions/workflows/ci.yml)
+[![codecov](https://codecov.io/gh/adv27/pixheet/graph/badge.svg?token=6ZUOTE5GOF)](https://codecov.io/gh/adv27/pixheet)
 
 Pixheet turns an image into an `.xlsx` spreadsheet. Each cell is one pixel and has the
 color of that pixel. Open the file in a spreadsheet app, zoom out, and you see the
@@ -147,6 +148,7 @@ numbers.
 $ cargo fmt --all --check
 $ cargo clippy --workspace --all-targets -- -D warnings
 $ cargo test --workspace
+$ cargo llvm-cov --workspace --open            # the coverage (cargo-llvm-cov)
 $ cargo run -p pixheet-app                     # the desktop app
 $ cargo xtask samples local-samples            # synthetic sample images
 $ cargo build --release -p pixheet-cli && cargo xtask bench local-samples
