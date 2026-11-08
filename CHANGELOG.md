@@ -20,8 +20,11 @@ section for the version in `Cargo.toml`. Write the text in Simplified Technical 
 
 ### Changed
 
-- The release files are smaller. On Linux, the command is about 34% smaller (2.7 MB)
-  and the app about 56% smaller (7.8 MB). The speed and the output are the same.
+- The release files are smaller, with the same speed and the same output:
+  - The app is 45 to 57% smaller: 7.1 MB on Windows, 7.8 MB on Linux, and 5.7 MB on
+    macOS.
+  - The command is 18 to 38% smaller: 3.2 MB on Windows, 2.6 MB on Linux, and 2.1 MB
+    on macOS.
 - A panic stops the program at once. Before, a panic in the conversion thread of the
   app stopped only that thread.
 
