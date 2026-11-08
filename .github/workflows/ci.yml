@@ -80,7 +80,8 @@ jobs:
         run: rustup toolchain install
 
       # cache-hit is true only when the key matches fully. Then the cache has the build of
-      # libjpeg-turbo and the index entries of all crates in Cargo.lock.
+      # libjpeg-turbo. It does not have the crates.io index, so cargo must stay online: with
+      # CARGO_NET_OFFLINE, it cannot resolve Cargo.lock.
       - name: Cache the build of the dependencies
         id: cache
         uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
@@ -109,20 +110,12 @@ jobs:
 
       # The tests include the golden test: the output must be the output of the Python
       # version of Pixheet, which crates/pixheet-core/tests/fixtures keeps.
-      #
-      # With a full cache, cargo works offline. Online, it asks crates.io again for each
-      # index entry, and on Windows this took 25 seconds. Set CARGO_NET_OFFLINE only on
-      # these steps: rust-cache puts each CARGO_ variable of its step into the key.
       - name: Run the tests
-        env:
-          CARGO_NET_OFFLINE: ${{ steps.cache.outputs.cache-hit == 'true' }}
         run: cargo test --workspace --locked
 
       # A debug build reuses the dependencies of the tests. The release builds are in
       # release.yml, which also runs for each pull request that changes the code.
       - name: Build the command and the desktop app
-        env:
-          CARGO_NET_OFFLINE: ${{ steps.cache.outputs.cache-hit == 'true' }}
         run: cargo build --locked -p pixheet-cli -p pixheet-app
 
       - name: Convert a sample with the command
