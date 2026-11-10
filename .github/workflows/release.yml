@@ -20,7 +20,7 @@
 # request.
 #
 # The release job runs only when all builds pass:
-# - For a push to master. The version in Cargo.toml gives the tag v<version>.
+# - For a push to main. The version in Cargo.toml gives the tag v<version>.
 #   - When the tag does not exist, the job makes it at the commit of the push.
 #   - When the tag exists at the commit of the push, an earlier run made it. The job adds
 #     the files that the release does not have.
@@ -32,10 +32,10 @@ name: Release
 
 on:
   push:
-    branches: [master]
+    branches: [main]
     tags: ["v*"]
   # A pull request runs the builds only when it changes something that the release files
-  # depend on. A push to master always runs them.
+  # depend on. A push to main always runs them.
   pull_request:
     paths:
       - "crates/**"
@@ -51,7 +51,7 @@ on:
 permissions: {}
 
 # One run at a time for each ref. A new run of a pull request cancels the old run. A push
-# to master never cancels a run that has started.
+# to main never cancels a run that has started.
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
@@ -222,12 +222,12 @@ jobs:
   release:
     name: Publish the release
     needs: [version, build, notices]
-    # A push to master, a push of a v* tag, or a manual start on master. Never a pull
+    # A push to main, a push of a v* tag, or a manual start on main. Never a pull
     # request, and never a manual start on a different branch.
     if: >-
       (github.event_name == 'push'
-        && (github.ref == 'refs/heads/master' || startsWith(github.ref, 'refs/tags/v')))
-      || (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/master')
+        && (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v')))
+      || (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main')
     runs-on: ubuntu-latest
     timeout-minutes: 20
     permissions:
