@@ -80,6 +80,8 @@ The settings are in the sidebar:
 - **If the file exists**: keep both (`photo (2).xlsx`), replace it, or skip the image.
 - **Start when images are added**, **Include subfolders**, and **Compact file**.
 - The button at the top right sets the theme: system, light or dark.
+- The top bar shows the version of the app. The GitHub button opens the page of the
+  project in your browser.
 
 A change of the settings applies to the images that have not started. The app saves the
 settings in `settings.json` in its config folder, for example

@@ -321,6 +321,7 @@ function bind() {
   $("retry").addEventListener("click", () => call("retry_failed"));
   $("clear").addEventListener("click", () => call("clear"));
   $("open-folder").addEventListener("click", () => call("open_folder"));
+  $("repository").addEventListener("click", () => call("open_repository"));
 
   $("max-side").addEventListener("change", (e) => {
     const value = Number.parseInt(e.target.value, 10);
@@ -371,6 +372,11 @@ async function start() {
   await listen("updates", (event) => apply(event.payload));
   await listen("drag", (event) => document.body.classList.toggle("dragging", event.payload));
   await call("ready");
+  const version = await call("version");
+  if (typeof version === "string") {
+    $("version").textContent = `v${version}`;
+    $("version").hidden = false;
+  }
 }
 
 start();

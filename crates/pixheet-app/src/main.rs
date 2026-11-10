@@ -32,6 +32,12 @@ static ALLOCATOR: mimalloc::MiMalloc = mimalloc::MiMalloc;
 /// The longest time between two updates of the page during a run.
 const PUMP_INTERVAL: Duration = Duration::from_millis(200);
 
+/// The version of the app: `version` in `[workspace.package]` of `Cargo.toml`.
+const VERSION: &str = env!("CARGO_PKG_VERSION");
+
+/// The page of the project on GitHub: `repository` in `[workspace.package]`.
+const REPOSITORY: &str = env!("CARGO_PKG_REPOSITORY");
+
 struct App {
     batch: Mutex<Batch>,
     settings_path: Option<PathBuf>,
@@ -287,6 +293,21 @@ fn open_folder(handle: AppHandle) -> Result<(), String> {
         .map_err(|e| format!("Cannot open the folder: {e}"))
 }
 
+/// The version of the app, for the top bar of the page.
+#[tauri::command]
+fn version() -> &'static str {
+    VERSION
+}
+
+/// Open the page of the project on GitHub in the browser. The page cannot give a URL.
+#[tauri::command]
+fn open_repository(handle: AppHandle) -> Result<(), String> {
+    handle
+        .opener()
+        .open_url(REPOSITORY, None::<&str>)
+        .map_err(|e| format!("Cannot open the page of the project: {e}"))
+}
+
 /// The options of the command line.
 struct Startup {
     smoke: bool,
@@ -402,8 +423,33 @@ fn main() {
             open,
             reveal,
             open_folder,
+            version,
+            open_repository,
         ])
         .build(tauri::generate_context!())
         .expect("build the app");
     app.run(|_, _| {});
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn the_version_has_three_numbers() {
+        let parts: Vec<&str> = VERSION.split('.').collect();
+        assert_eq!(parts.len(), 3, "{VERSION}");
+        for part in parts {
+            assert!(part.parse::<u32>().is_ok(), "{VERSION}");
+        }
+    }
+
+    #[test]
+    fn the_repository_is_on_github() {
+        assert!(
+            REPOSITORY.starts_with("https://github.com/"),
+            "{REPOSITORY}"
+        );
+        assert!(!REPOSITORY.ends_with('/'), "{REPOSITORY}");
+    }
 }
