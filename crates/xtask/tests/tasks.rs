@@ -7,8 +7,11 @@ use std::path::Path;
 use std::process::{Command, Output, Stdio};
 
 fn xtask(args: &[&str], stdin: &str) -> Output {
-    let mut child = Command::new(env!("CARGO_BIN_EXE_xtask"))
-        .args(args)
+    run(Command::new(env!("CARGO_BIN_EXE_xtask")).args(args), stdin)
+}
+
+fn run(command: &mut Command, stdin: &str) -> Output {
+    let mut child = command
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
@@ -67,6 +70,98 @@ fn check_pr_passes_a_pull_request_that_keeps_the_version() {
     assert_eq!(
         stdout(&out),
         "check-pr: the pull request does not change the version 1.2.3.\n"
+    );
+}
+
+/// A command of git in `dir` without the system and user config, so that the identity, the
+/// signing and the URL rules of the user do not apply. Git does not look above `dir`.
+fn isolated<'a>(command: &'a mut Command, dir: &Path) -> &'a mut Command {
+    let parent = dir.parent().unwrap();
+    // A git hook sets GIT_DIR and other variables for the repository of the project.
+    for (name, _) in std::env::vars_os() {
+        if name.to_string_lossy().starts_with("GIT_") {
+            command.env_remove(name);
+        }
+    }
+    command
+        .current_dir(dir)
+        .env("GIT_CONFIG_NOSYSTEM", "1")
+        .env("GIT_CONFIG_GLOBAL", parent.join("no-gitconfig"))
+        .env("GIT_CEILING_DIRECTORIES", parent)
+}
+
+fn git(dir: &Path, args: &[&str]) {
+    let out = run(isolated(&mut Command::new("git"), dir).args(args), "");
+    assert!(out.status.success(), "git {args:?}: {}", stderr(&out));
+}
+
+#[test]
+fn check_pr_asks_origin_for_the_tag_of_a_new_version() {
+    let dir = tempfile::tempdir().unwrap();
+    let (upstream, repo, plain) = (
+        dir.path().join("upstream"),
+        dir.path().join("repo"),
+        dir.path().join("plain"),
+    );
+    for folder in [&upstream, &repo, &plain] {
+        std::fs::create_dir(folder).unwrap();
+    }
+    git(&upstream, &["init", "-q"]);
+    let identity = [
+        "-c",
+        "user.name=Pixheet",
+        "-c",
+        "user.email=pixheet@example.com",
+    ];
+    git(
+        &upstream,
+        &[
+            &identity[..],
+            &["commit", "-q", "--allow-empty", "-m", "v1.2.4"],
+        ]
+        .concat(),
+    );
+    git(&upstream, &["tag", "v1.2.4"]);
+    git(&repo, &["init", "-q"]);
+    git(&repo, &["remote", "add", "origin", s(&upstream)]);
+    let base = manifest(dir.path(), "base.toml", "1.2.3");
+    let check_pr = |folder: &Path, version: &str| {
+        let head = manifest(dir.path(), "head.toml", version);
+        let mut command = Command::new(env!("CARGO_BIN_EXE_xtask"));
+        run(
+            isolated(&mut command, folder).args(["check-pr", &base, &head]),
+            "",
+        )
+    };
+
+    // The tag of the new version exists: the merge would not publish a release.
+    let out = check_pr(&repo, "1.2.4");
+    assert!(!out.status.success());
+    assert!(
+        stdout(&out).starts_with(
+            "::error::The pull request changes the version from 1.2.3 to 1.2.4, but the tag \
+             v1.2.4 exists already."
+        ),
+        "{}",
+        stdout(&out)
+    );
+    assert!(stderr(&out).contains("the pull request has a problem"));
+
+    let out = check_pr(&repo, "1.2.5");
+    assert!(out.status.success(), "{}", stderr(&out));
+    assert_eq!(
+        stdout(&out),
+        "check-pr: the tag v1.2.5 does not exist. The merge publishes it.\n"
+    );
+
+    // Without a repository, git fails: the check must not pass.
+    let out = check_pr(&plain, "1.2.5");
+    assert!(!out.status.success());
+    assert!(stdout(&out).is_empty());
+    assert!(
+        stderr(&out).contains("git ls-remote stopped with exit code"),
+        "{}",
+        stderr(&out)
     );
 }
 

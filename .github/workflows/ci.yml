@@ -151,9 +151,9 @@ jobs:
           "${run[@]}" target/debug/pixheet-app --smoke
 
   # cargo-llvm-cov builds the workspace with -C instrument-coverage and runs the tests. The
-  # CLI tests start the command in a subprocess, and its coverage counts too. One system
-  # is sufficient: the code has no part for Windows or macOS only. The job runs in
-  # parallel with the tests and has its own cache.
+  # CLI tests start the command in a subprocess, and its coverage counts too. The smoke
+  # test of the app also counts. One system is sufficient: the code has no part for
+  # Windows or macOS only. The job runs in parallel with the tests and has its own cache.
   coverage:
     name: Coverage
     runs-on: ubuntu-latest
@@ -178,16 +178,35 @@ jobs:
         with:
           save-if: ${{ github.ref == 'refs/heads/main' }}
 
+      # The same packages as the tests on Linux, so that the two jobs share the package
+      # cache. Xvfb runs the smoke test of the app.
       - name: Install nasm and the libraries of the app
         uses: $/.github/actions/apt-install
         with:
-          packages: nasm libwebkit2gtk-4.1-dev libgtk-3-dev librsvg2-dev
+          packages: >-
+            nasm libwebkit2gtk-4.1-dev libgtk-3-dev librsvg2-dev libgl1-mesa-dri xvfb xauth
 
       - name: Install cargo-llvm-cov
         run: cargo install cargo-llvm-cov --locked --version 0.9.1
 
+      # With --no-report, cargo llvm-cov keeps the profiles of earlier runs. Remove them, so
+      # that the report has only the profiles of this job.
+      - name: Remove the profiles of earlier runs
+        run: cargo llvm-cov clean --workspace
+
       - name: Measure the coverage of the tests
-        run: cargo llvm-cov --workspace --locked --codecov --output-path codecov.json
+        run: cargo llvm-cov --workspace --locked --no-report
+
+      # The tests cannot run main() and the setup hook of the app: these need a window. The
+      # smoke test runs them. On Linux, the app writes its profile when it exits.
+      - name: Measure the coverage of the smoke test of the app
+        env:
+          PIXHEET_HIDDEN_WINDOW: "1"
+          WEBKIT_DISABLE_DMABUF_RENDERER: "1"
+        run: xvfb-run -a cargo llvm-cov run --locked --no-report -p pixheet-app -- --smoke
+
+      - name: Write the report of the tests and of the smoke test
+        run: cargo llvm-cov report --codecov --output-path codecov.json
 
       # A pull request from a fork gets no secrets. Then the token is empty, and Codecov
       # accepts the upload without a token, because the repository is public. An upload

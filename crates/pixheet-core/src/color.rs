@@ -222,6 +222,17 @@ mod tests {
             ("hsl(30.5, 40%, 60.25%)", Some([194, 154, 113])),
             ("hsv(200, 50%, 80%)", Some([102, 170, 204])),
             ("hsb(359, 100%, 100%)", Some([255, 0, 4])),
+            // Gray, then each sixth of the hue circle.
+            ("hsl(0, 0%, 50%)", Some([128, 128, 128])),
+            ("hsv(0, 0%, 50%)", Some([128, 128, 128])),
+            ("hsl(240, 100%, 50%)", Some([0, 0, 255])),
+            ("hsl(300, 60%, 70%)", Some([224, 133, 224])),
+            ("hsv(30, 100%, 100%)", Some([255, 128, 0])),
+            ("hsv(60, 100%, 100%)", Some([255, 255, 0])),
+            ("hsv(120, 100%, 100%)", Some([0, 255, 0])),
+            ("hsv(180, 100%, 100%)", Some([0, 255, 255])),
+            ("hsv(240, 100%, 100%)", Some([0, 0, 255])),
+            ("hsv(300, 50%, 100%)", Some([255, 128, 255])),
         ];
         for (text, expected) in cases {
             assert_eq!(parse_background(text).unwrap(), *expected, "{text}");
@@ -238,10 +249,17 @@ mod tests {
             "rgb(1,2)",
             "rgb(1%,2,3)",
             "hsl(1,2,3)",
+            "hsl(1, 2%)",
+            "hsl(x, 1%, 1%)",
+            "hsl(-5, 10%, 10%)",
         ] {
             let err = parse_background(text).unwrap_err().to_string();
             assert!(err.starts_with("invalid background color"), "{text}: {err}");
         }
+        // Pillow refuses a color of more than 100 characters, also a correct one.
+        let color = |zeros: usize| format!("rgb({}1,2,3)", "0".repeat(zeros));
+        assert_eq!(parse_background(&color(90)).unwrap(), Some([1, 2, 3]));
+        assert!(parse_background(&color(91)).is_err());
         assert_eq!(
             parse_background("nope").unwrap_err().to_string(),
             "invalid background color 'nope': use white, black, #RRGGBB or none"

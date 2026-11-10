@@ -265,6 +265,12 @@ mod tests {
         std::fs::write(&text, "not an image").unwrap();
         assert!(matches!(open(&text), Err(Error::NotAnImage { .. })));
 
+        // The magic bytes of farbfeld: the image crate knows the format, but this build has
+        // no decoder for it, and Pillow cannot open it either.
+        let farbfeld = dir.path().join("a.ff");
+        std::fs::write(&farbfeld, b"farbfeld\0\0\0\x01\0\0\0\x01\0\0\0\0\0\0\0\0").unwrap();
+        assert!(matches!(open(&farbfeld), Err(Error::NotAnImage { .. })));
+
         // The header is a PNG, but the data stops early.
         let cut = dir.path().join("cut.png");
         let mut png = Vec::new();

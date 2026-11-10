@@ -345,6 +345,18 @@ mod tests {
         assert_eq!(found.missing, 1);
     }
 
+    #[test]
+    fn a_path_through_a_parent_folder_is_the_same_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let a = dir.path().join("a.png");
+        touch(&a);
+        std::fs::create_dir(dir.path().join("sub")).unwrap();
+        let other = dir.path().join("sub").join("..").join("a.png");
+        assert_eq!(key(&other), key(&a));
+        let found = find_images(&[a.clone(), other], false);
+        assert_eq!(found.images, [a]);
+    }
+
     #[cfg(unix)]
     #[test]
     fn a_loop_of_links_ends() {

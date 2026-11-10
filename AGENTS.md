@@ -22,13 +22,13 @@ The first versions were in Python. The branch `python-legacy` keeps the last one
 | `crates/pixheet-core/` | The library: `decode.rs` (open, EXIF, color modes), `resample.rs` (the LANCZOS resize and the reduce of Pillow), `fit.rs` (the size cap and the color search), `xlsx.rs` (the XML and the zip), `color.rs` (the background colors), `convert.rs` (the API and the atomic write). |
 | `crates/pixheet-core/tests/golden.rs`, `tests/fixtures/` | The golden test: the output of the Python version for 139 cases. Read "Rules for code". |
 | `crates/pixheet-cli/` | The `pixheet` command. `tests/cli.rs` runs the binary. |
-| `crates/pixheet-app/` | The desktop app: Tauri 2 with a page in plain HTML, CSS and JavaScript (`ui/`). `main.rs` holds the commands of the page; `batch.rs` holds the state and has most tests; `worker.rs` converts; `files.rs` finds the images and names the outputs; `settings.rs` saves the settings. |
+| `crates/pixheet-app/` | The desktop app: Tauri 2 with a page in plain HTML, CSS and JavaScript (`ui/`). `main.rs` only starts the app; `app.rs` builds the app, runs the pump and has the tests of the commands; `commands.rs` holds the commands of the page; `system.rs` holds the commands that open a window of the system; `batch.rs` holds the state and has most tests; `worker.rs` converts; `files.rs` finds the images and names the outputs; `settings.rs` saves the settings. |
 | `crates/xtask/` | The project tasks: `version`, `check-pr`, `release-notes`, `release-plan`, `release-files`, `samples`, `bench`, `sample-pixels`. `tests/tasks.rs` runs the binary. |
 | `about.toml`, `about.hbs` | The config and the template of cargo-about: the accepted licenses, the license files of the bundled C code (libjpeg-turbo, mimalloc), and the page `THIRD-PARTY-LICENSES.html` of each release. |
 | `scripts/excel_check.ps1` | Opens the outputs in Excel through COM (Windows) and compares cell colors with `cargo xtask sample-pixels`. |
 | `docs/rust-port/` | The history of the port: the spike, the plan and the profile. |
 | `.github/actions/apt-install/` | The action that installs the Ubuntu packages of `ci.yml` and keeps the downloaded files in the cache. Sometimes the Ubuntu mirror is very slow. |
-| `.github/workflows/` | `ci.yml`: the format and clippy on Ubuntu; the tests, the debug builds and the smoke test of the app on Windows, Ubuntu and macOS; and the check of the version tag and of `CHANGELOG.md`. The coverage job on Ubuntu sends the line coverage to Codecov. `codecov.yml` divides it into one component for each crate. CI caches the dependencies and the Ubuntu packages, and builds without debug info. Only a run on `main` saves the cache of the dependencies, and a weekly run on `main` makes it again. With a full cache, Windows skips nasm. `release.yml`: the release builds for the three systems, the third-party licenses, and the release. On a pull request, it runs only when the code, the manifests or the toolchain change. |
+| `.github/workflows/` | `ci.yml`: the format and clippy on Ubuntu; the tests, the debug builds and the smoke test of the app on Windows, Ubuntu and macOS; and the check of the version tag and of `CHANGELOG.md`. The coverage job on Ubuntu measures the tests and the smoke test of the app, and sends the line coverage to Codecov. `codecov.yml` divides it into one component for each crate. CI caches the dependencies and the Ubuntu packages, and builds without debug info. Only a run on `main` saves the cache of the dependencies, and a weekly run on `main` makes it again. With a full cache, Windows skips nasm. `release.yml`: the release builds for the three systems, the third-party licenses, and the release. On a pull request, it runs only when the code, the manifests or the toolchain change. |
 | `CHANGELOG.md` | The changes of each version. The release job uses the section of the version as the release notes. |
 
 ## Commands
@@ -84,9 +84,9 @@ a change to the app, also run the smoke test.
 - The `.xlsx` writer must keep `sheet1.xml` and `styles.xml` byte for byte. The
   compressed bytes can differ.
 - Add a test for each change in behavior. Tests must not show windows on the screen:
-  the app tests drive `batch.rs` without a window, the tests of `main.rs` use the mock
+  the app tests drive `batch.rs` without a window, the tests of `app.rs` use the mock
   runtime of Tauri, and the smoke test uses `PIXHEET_HIDDEN_WINDOW=1`. Do not call the
-  dialog and opener commands in tests: they open windows of the system.
+  commands of `system.rs` in tests: they open windows of the system.
 - A message of the worker of the app changes only its card and the counts.
   `a_tick_of_500_cards_changes_one_card` in `batch.rs` checks this.
 - The page of the app has no npm packages and no build step. It writes text only with

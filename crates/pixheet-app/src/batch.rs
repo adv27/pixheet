@@ -1115,6 +1115,80 @@ mod tests {
     }
 
     #[test]
+    fn a_closing_window_takes_no_new_work() {
+        let dir = tempfile::tempdir().unwrap();
+        let paths = images(dir.path(), 2);
+        let (spawn, runs) = deferred();
+        let mut batch = Batch::new(spawn, Settings::default());
+        batch.add(&paths[..1]);
+        let worker = batch.worker;
+        batch.closing = true;
+        batch.add(&paths[1..]);
+        assert_eq!(batch.counts.total, 1);
+        // The job of the first image is still in the queue. Without the close, the end of
+        // the run would start a new worker for it.
+        batch.handle(worker, Message::Finished { stopped: false });
+        assert!(!batch.running());
+        assert_eq!(runs.lock().unwrap().len(), 1, "no new worker");
+        // The first image is ready, but the closing window does not start it.
+        assert_eq!(batch.counts.ready, 1);
+        batch.start();
+        assert!(!batch.running());
+        assert_eq!(runs.lock().unwrap().len(), 1, "no new run");
+    }
+
+    #[test]
+    fn images_that_come_at_the_end_of_a_run_start_a_new_worker() {
+        let dir = tempfile::tempdir().unwrap();
+        let paths = images(dir.path(), 2);
+        let (spawn, runs) = deferred();
+        let mut batch = Batch::new(spawn, Settings::default());
+        batch.add(&paths[..1]);
+        // The worker converts the first image. The second image comes before the batch gets
+        // the last message of the worker, so the worker did not see it.
+        let (queue, options, cancel, worker) = runs.lock().unwrap().pop().unwrap();
+        let mut messages = Vec::new();
+        crate::worker::run(queue, options, cancel, &mut |m| messages.push(m));
+        batch.add(&paths[1..]);
+        assert!(runs.lock().unwrap().is_empty(), "the run goes on");
+        for message in messages {
+            batch.handle(worker, message);
+        }
+        assert!(batch.running());
+        run_all(&mut batch, &runs);
+        assert_eq!(batch.counts.done, 2);
+    }
+
+    #[test]
+    fn a_removed_card_ignores_the_messages_of_the_worker() {
+        let dir = tempfile::tempdir().unwrap();
+        let (spawn, runs) = deferred();
+        let mut batch = Batch::new(spawn, Settings::default());
+        batch.add(&images(dir.path(), 2));
+        let worker = batch.worker;
+        let (first, second) = (batch.order[0], batch.order[1]);
+        // The reader takes the two jobs out of the queue.
+        let queue = Arc::clone(&runs.lock().unwrap()[0].0);
+        let (_job1, job2) = (queue.take().unwrap(), queue.take().unwrap());
+        // A card that converts stays in the list.
+        batch.handle(worker, Message::Started { id: first });
+        batch.remove(&[first]);
+        assert_eq!(batch.counts.converting, 1);
+        // The reader has the removed job already: the job must stop.
+        batch.remove(&[second]);
+        assert!(job2.skip.load(Ordering::SeqCst));
+        let url = "data:image/png;base64,".to_string();
+        batch.handle(worker, Message::Started { id: second });
+        batch.handle(worker, Message::Preview { id: second, url });
+        batch.handle(worker, Message::Stopped { id: second });
+        assert_eq!(batch.counts.total, 1);
+        let updates = batch.take_updates();
+        assert!(updates.previews.is_empty());
+        let cards = updates.cards.unwrap();
+        assert_eq!(cards.iter().map(|c| c.id).collect::<Vec<_>>(), [first]);
+    }
+
+    #[test]
     fn a_message_of_an_old_worker_has_no_effect() {
         let dir = tempfile::tempdir().unwrap();
         let (spawn, _) = deferred();
@@ -1148,6 +1222,35 @@ mod tests {
             toast,
             "The drop has no images. Ignored 1 file that is not an image."
         );
+        std::fs::write(dir.path().join("more.txt"), b"x").unwrap();
+        let missing = dir.path().join("gone.png");
+        batch.add(&[
+            dir.path().join("notes.txt"),
+            dir.path().join("more.txt"),
+            missing,
+        ]);
+        let toast = batch.take_updates().toast.unwrap();
+        assert_eq!(
+            toast,
+            "The drop has no images. Ignored 2 files that are not images. \
+             The app cannot read 1 dropped item."
+        );
+    }
+
+    #[test]
+    fn the_numbers_of_the_summary_are_for_people() {
+        assert_eq!(grouped(999), "999");
+        assert_eq!(grouped(1_234_567), "1,234,567");
+        assert_eq!(size_text(1000), "1000 bytes");
+        assert_eq!(size_text(712 * 1024), "712 KB");
+        assert_eq!(size_text(2_000_000), "1.9 MB");
+        // The time left comes only after 2 images, from the mean time of an image.
+        assert_eq!(eta_text(10.0, 1, 5), "");
+        assert_eq!(eta_text(10.0, 2, 0), "");
+        assert_eq!(eta_text(1.0, 2, 1), "About 5 s left");
+        assert_eq!(eta_text(10.0, 2, 4), "About 20 s left");
+        assert_eq!(eta_text(60.0, 2, 4), "About 2 min left");
+        assert_eq!(eta_text(3600.0, 2, 4), "About 2 h left");
     }
 
     #[test]
@@ -1269,9 +1372,15 @@ mod tests {
             std::fs::read(dir.path().join("photo.xlsx")).unwrap(),
             b"other"
         );
-        batch.retry_failed();
+        // Convert again of a failed image plans a new output with the current policy. It
+        // does not write over the file that appeared.
+        batch.convert_again(&[card.id]);
         run_all(&mut batch, &runs);
         assert_eq!(batch.counts.done, 1);
+        assert_eq!(
+            std::fs::read(dir.path().join("photo.xlsx")).unwrap(),
+            b"other"
+        );
         assert!(dir.path().join("photo (2).xlsx").is_file());
     }
 

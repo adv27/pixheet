@@ -398,6 +398,30 @@ mod tests {
     }
 
     #[test]
+    fn a_tall_image_resizes_vertically_first_as_pillow() {
+        // The height shrinks more than 2 times as much as the width, so Pillow resizes the
+        // columns first. The values come from Image.resize((3, 10), LANCZOS) of Pillow 13.
+        let (w, h) = (4, 40);
+        let mut im = Pixels::new(w, h);
+        for (i, p) in im.data.as_chunks_mut::<3>().0.iter_mut().enumerate() {
+            let (x, y) = (i % w, i / w);
+            *p = [
+                ((x * 37 + y * 11) % 256) as u8,
+                ((x * 5 + y * 29) % 256) as u8,
+                ((x * 91 + y * 3) % 256) as u8,
+            ];
+        }
+        let expected = [
+            23, 42, 15, 73, 49, 158, 122, 55, 70, 66, 170, 26, 116, 177, 169, 161, 183, 81, 111,
+            82, 39, 158, 89, 182, 224, 95, 94, 151, 142, 52, 221, 149, 193, 160, 155, 105, 214,
+            125, 64, 149, 132, 204, 26, 137, 117, 175, 107, 75, 22, 113, 222, 86, 125, 132, 41,
+            165, 109, 78, 175, 122, 131, 130, 76, 71, 80, 129, 124, 93, 89, 172, 99, 60, 120, 193,
+            140, 168, 170, 111, 223, 150, 79, 159, 85, 152, 223, 74, 121, 121, 62, 89,
+        ];
+        assert_eq!(resize(&im, 3, 10, None).data, expected);
+    }
+
+    #[test]
     fn reduce_rounds_as_pillow() {
         // The values come from Image.reduce((3, 1)) of Pillow 13. The multiplier is a
         // little too small, so a mean of 2/3 gives 0, and a mean of 254.67 gives 254.

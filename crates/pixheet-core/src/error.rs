@@ -108,4 +108,23 @@ mod tests {
         assert!(e.to_string().ends_with(": 'out.xlsx'"));
         assert!(!e.to_string().contains("os error"));
     }
+
+    #[test]
+    fn only_a_system_error_has_a_source() {
+        use std::error::Error as _;
+        let io = Error::Io {
+            path: "out.xlsx".into(),
+            step: Step::Rename,
+            source: io::Error::other("disk full"),
+        };
+        assert_eq!(io.source().unwrap().to_string(), "disk full");
+        let decode = Error::Decode {
+            path: "a.png".into(),
+            message: "broken data".into(),
+        };
+        assert_eq!(decode.to_string(), "broken data");
+        assert!(decode.source().is_none());
+        assert_eq!(Error::Cancelled.to_string(), "the conversion stopped");
+        assert!(Error::Cancelled.source().is_none());
+    }
 }

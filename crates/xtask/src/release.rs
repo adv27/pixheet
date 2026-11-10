@@ -371,6 +371,10 @@ mod tests {
                 .contains("is empty")
         );
         assert!(changelog_section("## [0.2.0]\n\nText.\n", "0.2.0").is_ok());
+        for version in ["", "0.2 .0"] {
+            let err = changelog_section("## 0.2.0\n\nText.\n", version).unwrap_err();
+            assert!(err.contains("is not correct"), "{version:?}: {err}");
+        }
     }
 
     #[test]
