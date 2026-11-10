@@ -24,6 +24,12 @@ section for the version in `Cargo.toml`. Write the text in Simplified Technical 
 - The app has a GitHub button in the top bar. The button opens the page of the project in
   the browser.
 
+### Fixed
+
+- The previews of the app are sharp. A preview is now about 512 pixels on the longest side,
+  not 160. A large sheet shrinks with a smooth filter, so thin lines and text stay clear.
+  A small sheet keeps sharp square cells.
+
 ## 0.2.1
 
 ### Changed
