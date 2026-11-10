@@ -49,13 +49,12 @@ jobs:
       - name: Cache the build of the dependencies
         uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
 
-      # Clippy needs only the build files: the recommended packages take time and are not
-      # necessary.
+      # Clippy needs only the build files. The action does not install the recommended
+      # packages, and it keeps the downloaded packages in the cache.
       - name: Install nasm and the libraries of the app
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends nasm libwebkit2gtk-4.1-dev \
-            libgtk-3-dev librsvg2-dev
+        uses: $/.github/actions/apt-install
+        with:
+          packages: nasm libwebkit2gtk-4.1-dev libgtk-3-dev librsvg2-dev
 
       - name: Check the format
         run: cargo fmt --all --check
@@ -102,13 +101,14 @@ jobs:
       # The desktop app (Tauri) needs WebKitGTK 4.1 and GTK 3 on Linux. Xvfb runs its
       # smoke test, and WebKit draws with the Mesa drivers (libgl1-mesa-dri). Do not install
       # the recommended packages: they include xdg-desktop-portal, and with it the app
-      # waited 30 seconds at the start in CI. They also make this step slower.
+      # waited 30 seconds at the start in CI. They also make this step slower. The action
+      # keeps the downloaded packages in the cache.
       - name: Install nasm and the libraries of the app (Linux)
         if: runner.os == 'Linux'
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends nasm libwebkit2gtk-4.1-dev \
-            libgtk-3-dev librsvg2-dev libgl1-mesa-dri xvfb xauth
+        uses: $/.github/actions/apt-install
+        with:
+          packages: >-
+            nasm libwebkit2gtk-4.1-dev libgtk-3-dev librsvg2-dev libgl1-mesa-dri xvfb xauth
 
       # The tests include the golden test: the output must be the output of the Python
       # version of Pixheet, which crates/pixheet-core/tests/fixtures keeps.
@@ -165,10 +165,9 @@ jobs:
         uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
 
       - name: Install nasm and the libraries of the app
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends nasm libwebkit2gtk-4.1-dev \
-            libgtk-3-dev librsvg2-dev
+        uses: $/.github/actions/apt-install
+        with:
+          packages: nasm libwebkit2gtk-4.1-dev libgtk-3-dev librsvg2-dev
 
       - name: Install cargo-llvm-cov
         run: cargo install cargo-llvm-cov --locked --version 0.9.1
