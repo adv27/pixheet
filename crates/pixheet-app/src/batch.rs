@@ -1080,11 +1080,6 @@ mod tests {
         assert_eq!(card.state, State::Failed);
         assert_eq!(card.status, "Not an image");
         assert_eq!(updates.summary.text, "Converted 0 of 1 image · 1 failed");
-        // Convert again of a failed image plans its output again and converts it.
-        batch.convert_again(&[card.id]);
-        assert!(batch.running());
-        run_all(&mut batch, &runs);
-        assert_eq!(batch.counts.failed, 1);
         png(&bad, 2, 2);
         batch.retry_failed();
         run_all(&mut batch, &runs);
@@ -1129,12 +1124,17 @@ mod tests {
         let worker = batch.worker;
         batch.closing = true;
         batch.add(&paths[1..]);
-        batch.start();
         assert_eq!(batch.counts.total, 1);
-        assert_eq!(runs.lock().unwrap().len(), 1);
-        batch.handle(worker, Message::Finished { stopped: true });
+        // The job of the first image is still in the queue. Without the close, the end of
+        // the run would start a new worker for it.
+        batch.handle(worker, Message::Finished { stopped: false });
         assert!(!batch.running());
         assert_eq!(runs.lock().unwrap().len(), 1, "no new worker");
+        // The first image is ready, but the closing window does not start it.
+        assert_eq!(batch.counts.ready, 1);
+        batch.start();
+        assert!(!batch.running());
+        assert_eq!(runs.lock().unwrap().len(), 1, "no new run");
     }
 
     #[test]
@@ -1162,21 +1162,28 @@ mod tests {
     #[test]
     fn a_removed_card_ignores_the_messages_of_the_worker() {
         let dir = tempfile::tempdir().unwrap();
-        let (spawn, _runs) = deferred();
+        let (spawn, runs) = deferred();
         let mut batch = Batch::new(spawn, Settings::default());
         batch.add(&images(dir.path(), 2));
         let worker = batch.worker;
         let (first, second) = (batch.order[0], batch.order[1]);
+        // The reader takes the two jobs out of the queue.
+        let queue = Arc::clone(&runs.lock().unwrap()[0].0);
+        let (_job1, job2) = (queue.take().unwrap(), queue.take().unwrap());
         // A card that converts stays in the list.
         batch.handle(worker, Message::Started { id: first });
         batch.remove(&[first]);
         assert_eq!(batch.counts.converting, 1);
-        // The reader can have a removed job already.
+        // The reader has the removed job already: the job must stop.
         batch.remove(&[second]);
+        assert!(job2.skip.load(Ordering::SeqCst));
+        let url = "data:image/png;base64,".to_string();
         batch.handle(worker, Message::Started { id: second });
+        batch.handle(worker, Message::Preview { id: second, url });
         batch.handle(worker, Message::Stopped { id: second });
         assert_eq!(batch.counts.total, 1);
         let updates = batch.take_updates();
+        assert!(updates.previews.is_empty());
         let cards = updates.cards.unwrap();
         assert_eq!(cards.iter().map(|c| c.id).collect::<Vec<_>>(), [first]);
     }
@@ -1365,9 +1372,15 @@ mod tests {
             std::fs::read(dir.path().join("photo.xlsx")).unwrap(),
             b"other"
         );
-        batch.retry_failed();
+        // Convert again of a failed image plans a new output with the current policy. It
+        // does not write over the file that appeared.
+        batch.convert_again(&[card.id]);
         run_all(&mut batch, &runs);
         assert_eq!(batch.counts.done, 1);
+        assert_eq!(
+            std::fs::read(dir.path().join("photo.xlsx")).unwrap(),
+            b"other"
+        );
         assert!(dir.path().join("photo (2).xlsx").is_file());
     }
 

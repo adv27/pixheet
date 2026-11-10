@@ -77,6 +77,12 @@ fn check_pr_passes_a_pull_request_that_keeps_the_version() {
 /// signing and the URL rules of the user do not apply. Git does not look above `dir`.
 fn isolated<'a>(command: &'a mut Command, dir: &Path) -> &'a mut Command {
     let parent = dir.parent().unwrap();
+    // A git hook sets GIT_DIR and other variables for the repository of the project.
+    for (name, _) in std::env::vars_os() {
+        if name.to_string_lossy().starts_with("GIT_") {
+            command.env_remove(name);
+        }
+    }
     command
         .current_dir(dir)
         .env("GIT_CONFIG_NOSYSTEM", "1")
