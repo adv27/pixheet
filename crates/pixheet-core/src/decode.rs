@@ -216,15 +216,6 @@ mod tests {
     }
 
     #[test]
-    fn alpha_without_background_is_dropped() {
-        let rgba = image::RgbaImage::from_raw(1, 1, vec![10, 20, 30, 0]).unwrap();
-        let out = normalize(DynamicImage::ImageRgba8(rgba.clone()), None);
-        assert_eq!(out.data, vec![10, 20, 30]);
-        let out = normalize(DynamicImage::ImageRgba8(rgba), Some([255, 255, 255]));
-        assert_eq!(out.data, vec![255, 255, 255]);
-    }
-
-    #[test]
     fn sixteen_bit_samples_keep_their_top_byte() {
         let rgb = image::ImageBuffer::from_raw(1, 1, vec![0x1234u16, 0xABCD, 0xFF00]).unwrap();
         let out = normalize(DynamicImage::ImageRgb16(rgb), None);

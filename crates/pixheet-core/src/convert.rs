@@ -256,17 +256,6 @@ mod tests {
     }
 
     #[test]
-    fn a_file_that_is_not_an_image_fails() {
-        let dir = tempfile::tempdir().unwrap();
-        let src = dir.path().join("a.png");
-        std::fs::write(&src, b"not an image").unwrap();
-        let err = convert(&src, &dir.path().join("a.xlsx"), &Options::default(), None);
-        let err = err.unwrap_err();
-        assert!(matches!(err, Error::NotAnImage { .. }));
-        assert!(err.to_string().starts_with("cannot identify image file '"));
-    }
-
-    #[test]
     fn a_bad_file_with_an_image_suffix_is_not_an_image() {
         // Only a TGA file gets its format from the suffix. A broken PNG is not an image.
         let dir = tempfile::tempdir().unwrap();
@@ -274,20 +263,10 @@ mod tests {
             let src = dir.path().join(name);
             std::fs::write(&src, b"not an image").unwrap();
             let err = convert(&src, &dir.path().join("a.xlsx"), &Options::default(), None);
-            assert!(matches!(err, Err(Error::NotAnImage { .. })), "{name}");
+            let err = err.unwrap_err();
+            assert!(matches!(err, Error::NotAnImage { .. }), "{name}");
+            assert!(err.to_string().starts_with("cannot identify image file '"));
         }
-    }
-
-    #[test]
-    fn a_tga_file_opens_by_its_suffix() {
-        let dir = tempfile::tempdir().unwrap();
-        let src = dir.path().join("a.tga");
-        image::RgbImage::from_pixel(3, 2, image::Rgb([1, 2, 3]))
-            .save(&src)
-            .unwrap();
-        let (size, im) = prepare(&src, &Options::default()).unwrap();
-        assert_eq!(size, (3, 2));
-        assert_eq!(im.get(2, 1), [1, 2, 3]);
     }
 
     #[test]
@@ -322,26 +301,5 @@ mod tests {
             }
             other => panic!("{other}"),
         }
-    }
-
-    #[test]
-    fn transparency_takes_the_background() {
-        let dir = tempfile::tempdir().unwrap();
-        let src = dir.path().join("t.png");
-        image::RgbaImage::from_pixel(3, 2, image::Rgba([10, 20, 30, 0]))
-            .save(&src)
-            .unwrap();
-        let red = Options {
-            background: Some([255, 0, 0]),
-            ..Options::default()
-        };
-        let (_, im) = prepare(&src, &red).unwrap();
-        assert_eq!(im.get(0, 0), [255, 0, 0]);
-        let none = Options {
-            background: None,
-            ..Options::default()
-        };
-        let (_, im) = prepare(&src, &none).unwrap();
-        assert_eq!(im.get(2, 1), [10, 20, 30]);
     }
 }

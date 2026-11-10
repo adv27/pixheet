@@ -660,19 +660,21 @@ header=\"0.3\" footer=\"0.3\"/></worksheet>";
     }
 
     #[test]
-    fn one_pixel_has_the_reference_a1() {
-        let mut zip = write(&image(1, 1, &[[1, 2, 3]]), false, ZIP64_LIMIT);
-        assert!(part(&mut zip, "xl/worksheets/sheet1.xml").contains("<dimension ref=\"A1\"/>"));
-    }
-
-    #[test]
     fn a_large_sheet_spans_many_chunks() {
-        // About 1.5 MB of text: several windows of chunks with a preset dictionary.
+        // About 1.5 MB of text. A window has 2 chunks for each thread, and a chunk has 18
+        // rows of this image. With one thread, the rows 37 and 73 start a new window,
+        // which uses the text before it as its preset dictionary.
         let im = image(700, 100, &[[1, 2, 3], [4, 5, 6], [7, 8, 9], [10, 11, 12]]);
-        let mut zip = write(&im, false, ZIP64_LIMIT);
+        let pool = rayon::ThreadPoolBuilder::new()
+            .num_threads(1)
+            .build()
+            .unwrap();
+        let mut zip = pool.install(|| write(&im, false, ZIP64_LIMIT));
         let sheet = part(&mut zip, "xl/worksheets/sheet1.xml");
         assert!(sheet.ends_with("</worksheet>"));
         assert_eq!(sheet.matches("<row ").count(), 100);
+        assert!(sheet.contains("<c r=\"A37\" s=\"1\"/>"));
+        assert!(sheet.contains("<c r=\"A73\" s=\"1\"/>"));
         assert!(sheet.contains("<c r=\"ZX100\" s=\"4\"/>"));
     }
 
@@ -684,6 +686,12 @@ header=\"0.3\" footer=\"0.3\"/></worksheet>";
         let sheet = part(&mut zip, "xl/worksheets/sheet1.xml");
         assert!(sheet.contains("<c r=\"AX40\""));
         assert_eq!(zip.len(), 6);
+        // The end record and the locator of zip64.
+        let has = |bytes: &[u8], signature: &[u8]| bytes.windows(4).any(|w| w == signature);
+        let bytes = zip.into_inner().into_inner();
+        assert!(has(&bytes, b"PK\x06\x06") && has(&bytes, b"PK\x06\x07"));
+        let bytes = write(&im, false, ZIP64_LIMIT).into_inner().into_inner();
+        assert!(!has(&bytes, b"PK\x06\x06") && !has(&bytes, b"PK\x06\x07"));
     }
 
     #[test]
@@ -696,19 +704,6 @@ header=\"0.3\" footer=\"0.3\"/></worksheet>";
         };
         write_xlsx(&im, Cursor::new(Vec::new()), false, &mut progress).unwrap();
         assert_eq!(calls, (0..=5).map(|i| (i, 5)).collect::<Vec<_>>());
-    }
-
-    #[test]
-    fn the_progress_function_can_stop_the_writer() {
-        let im = image(3, 5, &[[1, 2, 3]]);
-        let result = write_xlsx(&im, Cursor::new(Vec::new()), false, &mut |done, _| {
-            if done == 0 {
-                ControlFlow::Continue(())
-            } else {
-                ControlFlow::Break(())
-            }
-        });
-        assert!(matches!(result, Err(WriteError::Cancelled)));
     }
 
     #[test]

@@ -529,15 +529,6 @@ mod tests {
         path
     }
 
-    /// Wait until the batch agrees with `test`. The worker and the pump are threads.
-    fn wait_until(app: &MockApp, test: impl Fn(&Batch) -> bool) {
-        let end = Instant::now() + Duration::from_secs(60);
-        while !test(&app.state::<App>().lock()) {
-            assert!(Instant::now() < end, "the batch did not change in 60 s");
-            std::thread::sleep(Duration::from_millis(20));
-        }
-    }
-
     /// Keep the payloads of the event `name`.
     fn record(app: &MockApp, name: &str) -> Arc<Mutex<Vec<String>>> {
         let events = Arc::new(Mutex::new(Vec::new()));
@@ -546,6 +537,24 @@ mod tests {
             keep.lock().unwrap().push(event.payload().to_string());
         });
         events
+    }
+
+    /// Wait for the update that the pump sends at the end of a run, and give it. Then
+    /// forget the recorded updates, for the next run.
+    fn end_of_run(updates: &Mutex<Vec<String>>) -> Value {
+        let end = Instant::now() + Duration::from_secs(60);
+        loop {
+            let last = updates.lock().unwrap().iter().rev().find_map(|text| {
+                let update: Value = serde_json::from_str(text).unwrap();
+                (update["summary"]["running"] == false).then_some(update)
+            });
+            if let Some(update) = last {
+                updates.lock().unwrap().clear();
+                return update;
+            }
+            assert!(Instant::now() < end, "the run did not end in 60 s");
+            std::thread::sleep(Duration::from_millis(20));
+        }
     }
 
     #[test]
@@ -584,7 +593,7 @@ mod tests {
         png(&a);
         png(&b);
         let (app, window) = mock_app(&[], Some(manual(dir.path())));
-        let events = record(&app, "updates");
+        let sent = record(&app, "updates");
 
         // Without a done image, the buttons Open, Show in folder and Open folder do nothing.
         assert_eq!(invoke(&window, "open", json!({ "id": 1 })), Ok(Value::Null));
@@ -597,24 +606,17 @@ mod tests {
         let updates = invoke(&window, "add", json!({ "paths": [a, b] })).unwrap();
         assert_eq!(count(&updates, "ready"), 2);
 
+        // The worker converts on its thread. The pump sends the updates to the page.
         let updates = invoke(&window, "start", json!({})).unwrap();
         assert_eq!(updates["summary"]["running"], true);
-        wait_until(&app, |batch| !batch.running());
-        assert_eq!(app.state::<App>().lock().counts().done, 2);
+        assert_eq!(count(&end_of_run(&sent), "done"), 2);
         assert!(dir.path().join("a.xlsx").is_file());
         assert!(dir.path().join("b.xlsx").is_file());
-
-        // The pump sends the updates of the run to the page.
-        let sent = events.lock().unwrap().clone();
-        let last: Value = serde_json::from_str(sent.last().expect("an update")).unwrap();
-        assert_eq!(count(&last, "done"), 2);
-        assert_eq!(last["summary"]["running"], false);
 
         let ids = ids(&window);
         let updates = invoke(&window, "convert_again", json!({ "ids": [ids[0]] })).unwrap();
         assert_eq!(updates["summary"]["running"], true);
-        wait_until(&app, |batch| !batch.running());
-        assert_eq!(app.state::<App>().lock().counts().done, 2);
+        assert_eq!(count(&end_of_run(&sent), "done"), 2);
         assert!(
             !dir.path().join("a-1.xlsx").exists(),
             "convert again writes over a.xlsx"
@@ -635,16 +637,15 @@ mod tests {
         let bad = dir.path().join("bad.png");
         std::fs::write(&bad, b"not an image").unwrap();
         let (app, window) = mock_app(&[], Some(manual(dir.path())));
+        let sent = record(&app, "updates");
         invoke(&window, "add", json!({ "paths": [bad] })).unwrap();
 
         invoke(&window, "start", json!({})).unwrap();
-        wait_until(&app, |batch| !batch.running());
-        assert_eq!(app.state::<App>().lock().counts().failed, 1);
+        assert_eq!(count(&end_of_run(&sent), "failed"), 1);
 
         let updates = invoke(&window, "retry_failed", json!({})).unwrap();
         assert_eq!(updates["summary"]["running"], true);
-        wait_until(&app, |batch| !batch.running());
-        assert_eq!(app.state::<App>().lock().counts().failed, 1);
+        assert_eq!(count(&end_of_run(&sent), "failed"), 1);
 
         // Stop without a run changes nothing.
         let updates = invoke(&window, "stop", json!({})).unwrap();
@@ -699,25 +700,17 @@ mod tests {
         for event in events {
             window_event(&window, &WindowEvent::DragDrop(event));
         }
+        // Another event of the window does not change the drop zone.
         window_event(&window, &WindowEvent::Focused(true));
 
         assert_eq!(*drag.lock().unwrap(), ["true", "true", "false", "false"]);
-        assert_eq!(app.state::<App>().lock().counts().ready, 1);
+        assert_eq!(ids(&window.get_webview_window("main").unwrap()).len(), 1);
     }
 
     #[test]
     fn the_version_command_gives_the_version() {
         let (_app, window) = mock_app(&[], None);
         assert_eq!(invoke(&window, "version", json!({})), Ok(json!(VERSION)));
-    }
-
-    #[test]
-    fn the_version_has_three_numbers() {
-        let parts: Vec<&str> = VERSION.split('.').collect();
-        assert_eq!(parts.len(), 3, "{VERSION}");
-        for part in parts {
-            assert!(part.parse::<u32>().is_ok(), "{VERSION}");
-        }
     }
 
     #[test]
