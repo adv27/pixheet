@@ -225,7 +225,7 @@ pub fn tag_action(
          made the tag, and then it stopped. This job does not publish the files of a different \
          commit. To repair the release, re-run all jobs of the Release run of the commit \
          {tag_commit}. Or delete {delete} on GitHub, and then start the Release workflow on \
-         master again."
+         main again."
     ))
 }
 

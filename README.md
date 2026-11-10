@@ -1,6 +1,6 @@
 # Pixheet
 
-[![CI](https://github.com/adv27/pixheet/actions/workflows/ci.yml/badge.svg?branch=master)](https://github.com/adv27/pixheet/actions/workflows/ci.yml)
+[![CI](https://github.com/adv27/pixheet/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/adv27/pixheet/actions/workflows/ci.yml)
 [![codecov](https://codecov.io/gh/adv27/pixheet/graph/badge.svg?token=6ZUOTE5GOF)](https://codecov.io/gh/adv27/pixheet)
 
 Pixheet turns an image into an `.xlsx` spreadsheet. Each cell is one pixel and has the
