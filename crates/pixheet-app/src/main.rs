@@ -446,7 +446,10 @@ mod tests {
 
     #[test]
     fn the_repository_is_on_github() {
-        assert!(REPOSITORY.starts_with("https://github.com/"), "{REPOSITORY}");
+        assert!(
+            REPOSITORY.starts_with("https://github.com/"),
+            "{REPOSITORY}"
+        );
         assert!(!REPOSITORY.ends_with('/'), "{REPOSITORY}");
     }
 }
