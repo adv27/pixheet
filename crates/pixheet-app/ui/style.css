@@ -135,6 +135,7 @@ button, input { font: inherit; color: inherit; }
 }
 .brand { display: flex; align-items: center; gap: 10px; font-size: 16px; font-weight: 700; letter-spacing: .2px; }
 .logo { width: 24px; height: 24px; fill: var(--accent); }
+.version { font-size: 12px; font-weight: 500; letter-spacing: 0; color: var(--muted); }
 .top-actions { display: flex; align-items: center; gap: 8px; }
 
 .content {
