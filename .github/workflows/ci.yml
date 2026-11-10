@@ -189,6 +189,11 @@ jobs:
       - name: Install cargo-llvm-cov
         run: cargo install cargo-llvm-cov --locked --version 0.9.1
 
+      # With --no-report, cargo llvm-cov keeps the profiles of earlier runs. Remove them, so
+      # that the report has only the profiles of this job.
+      - name: Remove the profiles of earlier runs
+        run: cargo llvm-cov clean --workspace
+
       - name: Measure the coverage of the tests
         run: cargo llvm-cov --workspace --locked --no-report
 
