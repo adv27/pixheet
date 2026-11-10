@@ -1148,6 +1148,35 @@ mod tests {
             toast,
             "The drop has no images. Ignored 1 file that is not an image."
         );
+        std::fs::write(dir.path().join("more.txt"), b"x").unwrap();
+        let missing = dir.path().join("gone.png");
+        batch.add(&[
+            dir.path().join("notes.txt"),
+            dir.path().join("more.txt"),
+            missing,
+        ]);
+        let toast = batch.take_updates().toast.unwrap();
+        assert_eq!(
+            toast,
+            "The drop has no images. Ignored 2 files that are not images. \
+             The app cannot read 1 dropped item."
+        );
+    }
+
+    #[test]
+    fn the_numbers_of_the_summary_are_for_people() {
+        assert_eq!(grouped(999), "999");
+        assert_eq!(grouped(1_234_567), "1,234,567");
+        assert_eq!(size_text(1000), "1000 bytes");
+        assert_eq!(size_text(712 * 1024), "712 KB");
+        assert_eq!(size_text(2_000_000), "1.9 MB");
+        // The time left comes only after 2 images, from the mean time of an image.
+        assert_eq!(eta_text(10.0, 1, 5), "");
+        assert_eq!(eta_text(10.0, 2, 0), "");
+        assert_eq!(eta_text(1.0, 2, 1), "About 5 s left");
+        assert_eq!(eta_text(10.0, 2, 4), "About 20 s left");
+        assert_eq!(eta_text(60.0, 2, 4), "About 2 min left");
+        assert_eq!(eta_text(3600.0, 2, 4), "About 2 h left");
     }
 
     #[test]

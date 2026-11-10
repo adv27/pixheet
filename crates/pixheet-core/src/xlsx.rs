@@ -594,6 +594,36 @@ mod tests {
     use super::*;
     use std::io::{Cursor, Read};
 
+    /// A file on a disk that is full after `left` bytes. Then each write and seek fails.
+    struct FullDisk {
+        file: Cursor<Vec<u8>>,
+        left: usize,
+    }
+
+    impl Write for FullDisk {
+        fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
+            if self.left == 0 {
+                return Err(io::Error::other("disk full"));
+            }
+            let n = buf.len().min(self.left);
+            self.left -= n;
+            self.file.write(&buf[..n])
+        }
+
+        fn flush(&mut self) -> io::Result<()> {
+            Ok(())
+        }
+    }
+
+    impl Seek for FullDisk {
+        fn seek(&mut self, pos: SeekFrom) -> io::Result<u64> {
+            if self.left == 0 {
+                return Err(io::Error::other("disk full"));
+            }
+            self.file.seek(pos)
+        }
+    }
+
     fn image(w: usize, h: usize, colors: &[[u8; 3]]) -> Pixels {
         let mut im = Pixels::new(w, h);
         for (i, p) in im.data.as_chunks_mut::<3>().0.iter_mut().enumerate() {
@@ -692,6 +722,28 @@ header=\"0.3\" footer=\"0.3\"/></worksheet>";
         assert!(has(&bytes, b"PK\x06\x06") && has(&bytes, b"PK\x06\x07"));
         let bytes = write(&im, false, ZIP64_LIMIT).into_inner().into_inner();
         assert!(!has(&bytes, b"PK\x06\x06") && !has(&bytes, b"PK\x06\x07"));
+    }
+
+    #[test]
+    fn a_full_disk_stops_the_writer_with_its_error() {
+        let im = image(3, 2, &[[1, 2, 3], [4, 5, 6]]);
+        let write = |left: usize| {
+            let mut disk = FullDisk {
+                file: Cursor::new(Vec::new()),
+                left,
+            };
+            let result = write_xlsx(&im, &mut disk, false, &mut |_, _| ControlFlow::Continue(()));
+            (result, disk.file.into_inner())
+        };
+        let (result, file) = write(usize::MAX);
+        assert_eq!(result.unwrap(), 2);
+        // Each size below the size of the file stops a different write or seek.
+        for left in 0..file.len() {
+            match write(left) {
+                (Err(WriteError::Io(e)), _) => assert_eq!(e.to_string(), "disk full"),
+                (other, _) => panic!("{left} bytes: {other:?}"),
+            }
+        }
     }
 
     #[test]

@@ -497,6 +497,44 @@ mod tests {
         assert_eq!(decode(&url).dimensions(), (512, 384));
     }
 
+    #[test]
+    fn a_skipped_job_stops_and_the_next_job_converts() {
+        let dir = tempfile::tempdir().unwrap();
+        let job = |id: u64, name: &str, skip: bool| {
+            let src = dir.path().join(format!("{name}.png"));
+            image::RgbImage::from_pixel(3, 2, image::Rgb([id as u8, 2, 3]))
+                .save(&src)
+                .unwrap();
+            Job {
+                id,
+                dst: src.with_extension("xlsx"),
+                src,
+                skip: Arc::new(AtomicBool::new(skip)),
+                replace: false,
+            }
+        };
+        let queue = Queue::default();
+        queue.put([job(1, "a", true), job(2, "b", false)]);
+        let mut messages = Vec::new();
+        let options = Arc::new(Mutex::new(Options::default()));
+        let cancel = Arc::new(AtomicBool::new(false));
+        run(Arc::new(queue), options, cancel, &mut |m| messages.push(m));
+
+        assert!(matches!(messages[0], Message::Started { id: 1 }));
+        assert!(matches!(messages[1], Message::Stopped { id: 1 }));
+        assert!(!dir.path().join("a.xlsx").exists());
+        assert!(
+            messages
+                .iter()
+                .any(|m| matches!(m, Message::Done { id: 2, .. }))
+        );
+        assert!(dir.path().join("b.xlsx").is_file());
+        assert!(matches!(
+            messages.last(),
+            Some(Message::Finished { stopped: false })
+        ));
+    }
+
     /// The reason of `classify` for an error of `step` with the system error `source`.
     fn io_failure(step: Step, source: io::Error, dst: &Path) -> Failure {
         let error = Error::Io {
