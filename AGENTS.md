@@ -86,7 +86,8 @@ a change to the app, also run the smoke test.
 - Add a test for each change in behavior. Tests must not show windows on the screen:
   the app tests drive `batch.rs` without a window, the tests of `app.rs` use the mock
   runtime of Tauri, and the smoke test uses `PIXHEET_HIDDEN_WINDOW=1`. Do not call the
-  commands of `system.rs` in tests: they open windows of the system.
+  commands of `system.rs` in tests: they open windows of the system. Codecov does not
+  count `system.rs`, so put only code that needs a window there.
 - A message of the worker of the app changes only its card and the counts.
   `a_tick_of_500_cards_changes_one_card` in `batch.rs` checks this.
 - The page of the app has no npm packages and no build step. It writes text only with

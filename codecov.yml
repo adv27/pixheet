@@ -30,6 +30,12 @@ component_management:
       paths:
         - crates/xtask/**
 
+# The commands in system.rs open a window of the system: a file dialog, a file, a folder or
+# the browser. They need a person at the screen, so no test can run them, and Codecov does
+# not count them. Put only such code in this file. Read AGENTS.md.
+ignore:
+  - crates/pixheet-app/src/system.rs
+
 comment:
   # Show the totals, the coverage of each component and the changed files in the comment
   # on a pull request.
