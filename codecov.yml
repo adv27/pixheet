@@ -7,6 +7,30 @@ coverage:
         # coverage a little. A drop of 1 % or less does not fail the check.
         threshold: 1%
 
+# The components divide the coverage by crate. Read https://docs.codecov.com/docs/components.
+# Codecov finds them from the paths, so the upload needs no flags. The components have no
+# status checks: only the project check above can fail a pull request.
+# Do not change a component_id or a name: a new one starts a new history.
+component_management:
+  individual_components:
+    - component_id: core
+      name: Library
+      paths:
+        - crates/pixheet-core/**
+    - component_id: cli
+      name: CLI
+      paths:
+        - crates/pixheet-cli/**
+    - component_id: app
+      name: Desktop app
+      paths:
+        - crates/pixheet-app/**
+    - component_id: xtask
+      name: Project tasks
+      paths:
+        - crates/xtask/**
+
 comment:
-  # Show only the totals and the changed files in the comment on a pull request.
-  layout: "condensed_header, condensed_files, condensed_footer"
+  # Show the totals, the coverage of each component and the changed files in the comment
+  # on a pull request.
+  layout: "condensed_header, components, condensed_files, condensed_footer"
