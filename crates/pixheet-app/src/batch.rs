@@ -237,16 +237,6 @@ impl Batch {
         self.running
     }
 
-    #[cfg(test)]
-    pub fn counts(&self) -> Counts {
-        self.counts
-    }
-
-    #[cfg(test)]
-    pub fn worker(&self) -> u64 {
-        self.worker
-    }
-
     pub fn settings(&self) -> &Settings {
         &self.settings
     }
@@ -995,7 +985,7 @@ mod tests {
         batch.take_updates();
         run_all(&mut batch, &runs);
         let updates = batch.take_updates();
-        assert_eq!(batch.counts().done, 3);
+        assert_eq!(batch.counts.done, 3);
         assert_eq!(updates.previews.len(), 3);
         assert!(
             updates
@@ -1025,7 +1015,7 @@ mod tests {
         let mut batch = Batch::new(spawn, Settings::default());
         batch.add(&images(dir.path(), 500));
         batch.take_updates();
-        let worker = batch.worker();
+        let worker = batch.worker;
         let id = batch.order[250];
         batch.handle(worker, Message::Started { id });
         batch.handle(worker, Message::Progress { id, percent: 40 });
@@ -1033,8 +1023,8 @@ mod tests {
         assert!(updates.cards.is_none());
         assert_eq!(updates.changed.len(), 1);
         assert_eq!(updates.changed[0].status, "Writing 40%");
-        assert_eq!(batch.counts().converting, 1);
-        assert_eq!(batch.counts().ready, 499);
+        assert_eq!(batch.counts.converting, 1);
+        assert_eq!(batch.counts.ready, 499);
     }
 
     #[test]
@@ -1065,8 +1055,8 @@ mod tests {
         let mut batch = Batch::new(spawn, settings);
         batch.add(&paths);
         run_all(&mut batch, &runs);
-        assert_eq!(batch.counts().skipped, 1);
-        assert_eq!(batch.counts().done, 1);
+        assert_eq!(batch.counts.skipped, 1);
+        assert_eq!(batch.counts.done, 1);
         assert_eq!(
             std::fs::read(paths[0].with_extension("xlsx")).unwrap(),
             b"old"
@@ -1093,7 +1083,7 @@ mod tests {
         png(&bad, 2, 2);
         batch.retry_failed();
         run_all(&mut batch, &runs);
-        assert_eq!(batch.counts().done, 1);
+        assert_eq!(batch.counts.done, 1);
     }
 
     #[test]
@@ -1102,7 +1092,7 @@ mod tests {
         let (spawn, runs) = deferred();
         let mut batch = Batch::new(spawn, Settings::default());
         batch.add(&images(dir.path(), 3));
-        let worker = batch.worker();
+        let worker = batch.worker;
         let first = batch.order[0];
         batch.handle(worker, Message::Started { id: first });
         batch.stop();
@@ -1111,7 +1101,7 @@ mod tests {
         batch.handle(worker, Message::Finished { stopped: true });
         let updates = batch.take_updates();
         assert!(!updates.summary.running);
-        assert_eq!(batch.counts().ready, 2);
+        assert_eq!(batch.counts.ready, 2);
         assert_eq!(
             updates.summary.text,
             "Stopped · Converted 0 of 3 images · 1 stopped · 2 ready"
@@ -1119,9 +1109,9 @@ mod tests {
         // The next start queues the images again, also the ones of the old run.
         runs.lock().unwrap().clear();
         batch.retry_failed();
-        assert_eq!(batch.counts().ready, 3);
+        assert_eq!(batch.counts.ready, 3);
         run_all(&mut batch, &runs);
-        assert_eq!(batch.counts().done, 3);
+        assert_eq!(batch.counts.done, 3);
     }
 
     #[test]
@@ -1131,8 +1121,8 @@ mod tests {
         let mut batch = Batch::new(spawn, Settings::default());
         batch.add(&images(dir.path(), 1));
         let id = batch.order[0];
-        batch.handle(batch.worker() + 1, Message::Started { id });
-        assert_eq!(batch.counts().converting, 0);
+        batch.handle(batch.worker + 1, Message::Started { id });
+        assert_eq!(batch.counts.converting, 0);
     }
 
     #[test]
@@ -1204,7 +1194,7 @@ mod tests {
         let id = batch.order[0];
         batch.convert_again(&[id]);
         run_all(&mut batch, &runs);
-        assert_eq!(batch.counts().done, 1);
+        assert_eq!(batch.counts.done, 1);
         assert!(!dir.path().join("img0 (2).xlsx").exists());
     }
 
@@ -1223,7 +1213,7 @@ mod tests {
         let id = batch.order[0];
         batch.convert_again(&[id]);
         run_all(&mut batch, &runs);
-        assert_eq!(batch.counts().done, 1);
+        assert_eq!(batch.counts.done, 1);
         assert_eq!(std::fs::read(&other).unwrap(), b"other");
         assert_eq!(batch.items[&id].dst, dir.path().join("photo (2).xlsx"));
     }
@@ -1258,7 +1248,7 @@ mod tests {
         batch.add(std::slice::from_ref(&src));
         std::fs::remove_file(dir.path().join("photo (2).xlsx")).unwrap();
         batch.start();
-        assert_eq!(batch.counts().skipped, 1);
+        assert_eq!(batch.counts.skipped, 1);
     }
 
     #[test]
@@ -1281,7 +1271,7 @@ mod tests {
         );
         batch.retry_failed();
         run_all(&mut batch, &runs);
-        assert_eq!(batch.counts().done, 1);
+        assert_eq!(batch.counts.done, 1);
         assert!(dir.path().join("photo (2).xlsx").is_file());
     }
 
@@ -1300,7 +1290,7 @@ mod tests {
             ..Settings::default()
         });
         run_all(&mut batch, &runs);
-        assert_eq!(batch.counts().done, 3);
+        assert_eq!(batch.counts.done, 3);
         for path in &paths {
             assert!(
                 out.join(path.with_extension("xlsx").file_name().unwrap())
@@ -1313,10 +1303,10 @@ mod tests {
     #[test]
     fn clear_removes_all_cards_without_a_run() {
         let dir = tempfile::tempdir().unwrap();
-        let (spawn, runs) = deferred();
-        let mut batch = Batch::new(spawn, Settings::default());
+        let (spawn, _runs) = deferred();
+        let mut batch = Batch::new(spawn, manual());
         batch.add(&images(dir.path(), 2));
-        run_all(&mut batch, &runs);
+        assert_eq!(batch.counts.ready, 2);
         batch.clear();
         let updates = batch.take_updates();
         assert_eq!(updates.cards.map(|c| c.len()), Some(0));

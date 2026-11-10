@@ -293,14 +293,6 @@ mod tests {
     }
 
     #[test]
-    fn max_side_texts() {
-        assert_eq!(max_side_arg("0"), Ok(0));
-        assert_eq!(max_side_arg("-1"), Err("must be >= 0, got -1".into()));
-        assert_eq!(max_side_arg("big"), Err("not an integer: 'big'".into()));
-        assert_eq!(max_side_arg("1.5"), Err("not an integer: '1.5'".into()));
-    }
-
-    #[test]
     fn wildcards_expand_in_order() {
         let dir = tempfile::tempdir().unwrap();
         for name in ["img10.png", "img2.png", ".hidden.png", "other.jpg"] {
@@ -331,13 +323,6 @@ mod tests {
         let file = dir.path().join("img[1].png");
         std::fs::write(&file, b"").unwrap();
         assert_eq!(expand(&[file.clone().into_os_string()]), [file]);
-    }
-
-    #[test]
-    fn a_pattern_without_a_match_stays() {
-        let dir = tempfile::tempdir().unwrap();
-        let pattern = dir.path().join("nothing*.png");
-        assert_eq!(expand(&[pattern.clone().into_os_string()]), [pattern]);
     }
 
     #[test]

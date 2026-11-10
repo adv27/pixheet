@@ -47,15 +47,20 @@ fn images(dir: &Path) -> Vec<PathBuf> {
         .collect()
 }
 
-fn sheet(path: &Path) -> String {
+/// The text of the member `name` of the .xlsx file at `path`.
+fn member(path: &Path, name: &str) -> String {
     let file = std::fs::File::open(path).unwrap();
     let mut zip = zip::ZipArchive::new(file).unwrap();
     let mut text = String::new();
-    zip.by_name("xl/worksheets/sheet1.xml")
+    zip.by_name(name)
         .unwrap()
         .read_to_string(&mut text)
         .unwrap();
     text
+}
+
+fn sheet(path: &Path) -> String {
+    member(path, "xl/worksheets/sheet1.xml")
 }
 
 #[test]
@@ -151,6 +156,9 @@ fn options_are_passed() {
     let text = sheet(&src.with_extension("xlsx"));
     assert!(text.contains("<c s=\"1\"/>"));
     assert!(!text.contains("<c r="));
+    // The transparent pixels take the background.
+    let styles = member(&src.with_extension("xlsx"), "xl/styles.xml");
+    assert!(styles.contains("rgb=\"FFFF0000\""), "{styles}");
 }
 
 #[test]
@@ -180,10 +188,7 @@ fn bad_arguments() {
         let out = pixheet(&argv);
         assert_eq!(out.status.code(), Some(2), "{args:?}");
         let err = stderr(&out);
-        assert!(
-            err.contains("--max-side") || err.contains("--background"),
-            "{err}"
-        );
+        assert!(err.contains(args[0]), "{err}");
         assert!(err.contains(message), "{err}");
     }
     let out = pixheet(&[]);

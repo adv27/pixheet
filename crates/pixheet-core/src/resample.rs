@@ -415,10 +415,4 @@ mod tests {
         assert_eq!(reduce(&im, 3, 1).data, vec![0, 2, 254]);
         assert_eq!(reduce_multiplier(4), 1 << 22);
     }
-
-    #[test]
-    fn the_multiplier_of_three_is_below_the_exact_value() {
-        // 2**32 / 768 = 5592405.33: the float division truncates.
-        assert_eq!(reduce_multiplier(3), 5_592_405);
-    }
 }

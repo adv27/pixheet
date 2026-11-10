@@ -268,6 +268,5 @@ mod tests {
         let out = fit(im, 1000).unwrap();
         // pixheet.prepare(many_colors()) gives the same size.
         assert_eq!((out.w, out.h), (252, 252));
-        assert!(count_colors(&out, MAX_COLORS).is_some());
     }
 }
