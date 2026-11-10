@@ -22,6 +22,8 @@ pixheet-core = { path = "../pixheet-core", optional = true }
 toml = { version = "1", default-features = false, features = ["parse", "serde", "std"] }
 
 [dev-dependencies]
+# The tests of the binary write images for sample-pixels and bench.
+image = { version = "0.25", default-features = false, features = ["png"] }
 tempfile = "3"
 
 [lints]
