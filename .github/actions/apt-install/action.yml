@@ -1,0 +1,59 @@
+# Installs Ubuntu packages with apt-get and keeps the downloaded .deb files in the GitHub
+# Actions cache. The CI jobs on Ubuntu download about 64 MB of packages. Sometimes the
+# Azure mirror sends them at about 190 kB/s, and the download then takes about 6 minutes.
+# With the cache, apt-get downloads only the packages that changed.
+#
+# Only ci.yml uses this action. release.yml must not use a cache: a file from a cache could
+# go into a release. A cache that a pull request saves is available only to that pull
+# request, and the output of CI does not go into a release.
+name: Install the Ubuntu packages
+description: Install Ubuntu packages with apt-get, and keep the downloaded files in the cache.
+
+inputs:
+  packages:
+    description: The names of the packages, with a space between them.
+    required: true
+
+runs:
+  using: composite
+  steps:
+    # The key holds the runner image and the list of packages. A new image gives a new key,
+    # so the cache does not keep old packages for a long time. The restore key accepts a
+    # cache of an earlier image or of a different list: apt-get then downloads only the
+    # packages that are not in it.
+    - name: Make the key of the package cache
+      id: key
+      shell: bash
+      env:
+        PACKAGES: ${{ inputs.packages }}
+      run: |
+        # shellcheck disable=SC2086 # PACKAGES is a list of words.
+        hash=$(printf '%s\n' $PACKAGES | sort | sha256sum | cut -c1-16)
+        image="${ImageOS:-ubuntu}-${ImageVersion:-unknown}"
+        echo "prefix=apt-${ImageOS:-ubuntu}-" >> "$GITHUB_OUTPUT"
+        echo "key=apt-$image-$hash" >> "$GITHUB_OUTPUT"
+
+    - name: Cache the Ubuntu packages
+      uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+      with:
+        path: ~/apt-archives
+        key: ${{ steps.key.outputs.key }}
+        restore-keys: ${{ steps.key.outputs.prefix }}
+
+    # The archive directory of apt belongs to root, so the cache uses a directory in the home
+    # directory. autoclean removes the files that the package index does not have anymore.
+    - name: Install the packages
+      shell: bash
+      env:
+        PACKAGES: ${{ inputs.packages }}
+      run: |
+        archives=/var/cache/apt/archives
+        mkdir -p ~/apt-archives
+        find ~/apt-archives -maxdepth 1 -name '*.deb' -exec sudo cp -t "$archives" {} +
+        sudo apt-get update
+        # shellcheck disable=SC2086 # PACKAGES is a list of words.
+        sudo apt-get install -y --no-install-recommends \
+          -o APT::Keep-Downloaded-Packages=true $PACKAGES
+        sudo apt-get autoclean
+        find ~/apt-archives -maxdepth 1 -name '*.deb' -delete
+        find "$archives" -maxdepth 1 -name '*.deb' -exec cp -t ~/apt-archives {} +
