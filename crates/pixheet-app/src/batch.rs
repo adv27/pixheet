@@ -1080,6 +1080,11 @@ mod tests {
         assert_eq!(card.state, State::Failed);
         assert_eq!(card.status, "Not an image");
         assert_eq!(updates.summary.text, "Converted 0 of 1 image · 1 failed");
+        // Convert again of a failed image plans its output again and converts it.
+        batch.convert_again(&[card.id]);
+        assert!(batch.running());
+        run_all(&mut batch, &runs);
+        assert_eq!(batch.counts.failed, 1);
         png(&bad, 2, 2);
         batch.retry_failed();
         run_all(&mut batch, &runs);
@@ -1112,6 +1117,68 @@ mod tests {
         assert_eq!(batch.counts.ready, 3);
         run_all(&mut batch, &runs);
         assert_eq!(batch.counts.done, 3);
+    }
+
+    #[test]
+    fn a_closing_window_takes_no_new_work() {
+        let dir = tempfile::tempdir().unwrap();
+        let paths = images(dir.path(), 2);
+        let (spawn, runs) = deferred();
+        let mut batch = Batch::new(spawn, Settings::default());
+        batch.add(&paths[..1]);
+        let worker = batch.worker;
+        batch.closing = true;
+        batch.add(&paths[1..]);
+        batch.start();
+        assert_eq!(batch.counts.total, 1);
+        assert_eq!(runs.lock().unwrap().len(), 1);
+        batch.handle(worker, Message::Finished { stopped: true });
+        assert!(!batch.running());
+        assert_eq!(runs.lock().unwrap().len(), 1, "no new worker");
+    }
+
+    #[test]
+    fn images_that_come_at_the_end_of_a_run_start_a_new_worker() {
+        let dir = tempfile::tempdir().unwrap();
+        let paths = images(dir.path(), 2);
+        let (spawn, runs) = deferred();
+        let mut batch = Batch::new(spawn, Settings::default());
+        batch.add(&paths[..1]);
+        // The worker converts the first image. The second image comes before the batch gets
+        // the last message of the worker, so the worker did not see it.
+        let (queue, options, cancel, worker) = runs.lock().unwrap().pop().unwrap();
+        let mut messages = Vec::new();
+        crate::worker::run(queue, options, cancel, &mut |m| messages.push(m));
+        batch.add(&paths[1..]);
+        assert!(runs.lock().unwrap().is_empty(), "the run goes on");
+        for message in messages {
+            batch.handle(worker, message);
+        }
+        assert!(batch.running());
+        run_all(&mut batch, &runs);
+        assert_eq!(batch.counts.done, 2);
+    }
+
+    #[test]
+    fn a_removed_card_ignores_the_messages_of_the_worker() {
+        let dir = tempfile::tempdir().unwrap();
+        let (spawn, _runs) = deferred();
+        let mut batch = Batch::new(spawn, Settings::default());
+        batch.add(&images(dir.path(), 2));
+        let worker = batch.worker;
+        let (first, second) = (batch.order[0], batch.order[1]);
+        // A card that converts stays in the list.
+        batch.handle(worker, Message::Started { id: first });
+        batch.remove(&[first]);
+        assert_eq!(batch.counts.converting, 1);
+        // The reader can have a removed job already.
+        batch.remove(&[second]);
+        batch.handle(worker, Message::Started { id: second });
+        batch.handle(worker, Message::Stopped { id: second });
+        assert_eq!(batch.counts.total, 1);
+        let updates = batch.take_updates();
+        let cards = updates.cards.unwrap();
+        assert_eq!(cards.iter().map(|c| c.id).collect::<Vec<_>>(), [first]);
     }
 
     #[test]

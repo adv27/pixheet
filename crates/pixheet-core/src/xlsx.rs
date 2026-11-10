@@ -759,6 +759,18 @@ header=\"0.3\" footer=\"0.3\"/></worksheet>";
     }
 
     #[test]
+    fn a_stop_before_the_first_row_cancels_the_writer() {
+        let im = image(3, 5, &[[1, 2, 3]]);
+        let mut calls = 0;
+        let result = write_xlsx(&im, Cursor::new(Vec::new()), false, &mut |_, _| {
+            calls += 1;
+            ControlFlow::Break(())
+        });
+        assert!(matches!(result, Err(WriteError::Cancelled)));
+        assert_eq!(calls, 1);
+    }
+
+    #[test]
     fn a_sheet_larger_than_the_grid_fails() {
         let im = Pixels::new(MAX_COLUMNS + 1, 1);
         let result = write_xlsx(&im, Cursor::new(Vec::new()), false, &mut |_, _| {

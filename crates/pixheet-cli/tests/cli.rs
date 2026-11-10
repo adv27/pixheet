@@ -284,3 +284,19 @@ fn background_none() {
         .unwrap();
     assert!(styles.contains("rgb=\"FF0A141E\""));
 }
+
+#[test]
+fn a_pattern_without_a_folder_expands_in_the_current_folder() {
+    // cmd.exe does not expand wildcards: pixheet *.png must work in the folder.
+    let dir = tempfile::tempdir().unwrap();
+    images(dir.path());
+    let out = Command::new(env!("CARGO_BIN_EXE_pixheet"))
+        .arg("img*.png")
+        .current_dir(dir.path())
+        .output()
+        .expect("run pixheet");
+    assert!(out.status.success(), "{}", stderr(&out));
+    assert_eq!(stdout(&out).lines().count(), 2);
+    assert!(dir.path().join("img0.xlsx").is_file());
+    assert!(dir.path().join("img1.xlsx").is_file());
+}
