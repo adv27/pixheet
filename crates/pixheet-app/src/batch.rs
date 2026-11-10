@@ -120,7 +120,7 @@ pub struct Updates {
     /// All cards, after cards came, went or moved. None when only cards changed.
     pub cards: Option<Vec<Card>>,
     pub changed: Vec<Card>,
-    /// New previews: (card id, PNG data URL).
+    /// New previews: (card id, PNG or JPEG data URL).
     pub previews: Vec<(u64, String)>,
     pub summary: Summary,
     /// A short note for a toast, for example about files that are not images.

@@ -18,7 +18,7 @@ tauri-build = { version = "2", features = [] }
 
 [dependencies]
 base64 = "0.22"
-image = { version = "0.25", default-features = false, features = ["png"] }
+image = { version = "0.25", default-features = false, features = ["jpeg", "png"] }
 mimalloc = { version = "0.1", default-features = false }
 pixheet-core = { path = "../pixheet-core" }
 serde = { version = "1", features = ["derive"] }
