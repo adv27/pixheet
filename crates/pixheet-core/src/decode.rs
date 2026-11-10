@@ -223,4 +223,69 @@ mod tests {
         let out = normalize(DynamicImage::ImageRgba8(rgba), Some([255, 255, 255]));
         assert_eq!(out.data, vec![255, 255, 255]);
     }
+
+    #[test]
+    fn sixteen_bit_samples_keep_their_top_byte() {
+        let rgb = image::ImageBuffer::from_raw(1, 1, vec![0x1234u16, 0xABCD, 0xFF00]).unwrap();
+        let out = normalize(DynamicImage::ImageRgb16(rgb), None);
+        assert_eq!(out.data, vec![0x12, 0xAB, 0xFF]);
+
+        let luma = image::ImageBuffer::from_raw(2, 1, vec![0x8001u16, 0x00FF]).unwrap();
+        let out = normalize(DynamicImage::ImageLuma16(luma), None);
+        assert_eq!((out.w, out.h), (2, 1));
+        assert_eq!(out.data, vec![0x80, 0x80, 0x80, 0, 0, 0]);
+
+        let rgba = image::ImageBuffer::from_raw(1, 1, vec![0x1000u16, 0x2000, 0x3000, 0]).unwrap();
+        let out = normalize(DynamicImage::ImageRgba16(rgba), None);
+        assert_eq!(out.data, vec![0x10, 0x20, 0x30]);
+
+        // Gray and alpha: the gray goes to the three channels, then onto the background.
+        let luma_alpha =
+            image::ImageBuffer::from_raw(2, 1, vec![0x4000u16, 0xFFFF, 0x4000, 0]).unwrap();
+        let out = normalize(DynamicImage::ImageLumaA16(luma_alpha), Some([255, 0, 0]));
+        assert_eq!(out.data, vec![0x40, 0x40, 0x40, 255, 0, 0]);
+    }
+
+    #[test]
+    fn other_modes_convert_to_rgb() {
+        let gray = image::GrayImage::from_raw(1, 1, vec![7]).unwrap();
+        assert_eq!(
+            normalize(DynamicImage::ImageLuma8(gray), None).data,
+            vec![7, 7, 7]
+        );
+
+        let float = image::Rgb32FImage::from_raw(1, 1, vec![1.0, 0.0, 0.25]).unwrap();
+        let out = normalize(DynamicImage::ImageRgb32F(float), None);
+        assert_eq!(out.data, vec![255, 0, 64]);
+    }
+
+    #[test]
+    fn open_tells_why_a_file_is_not_an_image() {
+        let dir = tempfile::tempdir().unwrap();
+
+        let missing = dir.path().join("missing.png");
+        let Err(Error::Io { step, source, .. }) = open(&missing) else {
+            panic!("a missing file must give an I/O error");
+        };
+        assert_eq!(step, Step::Read);
+        assert_eq!(source.kind(), std::io::ErrorKind::NotFound);
+
+        let text = dir.path().join("text.png");
+        std::fs::write(&text, "not an image").unwrap();
+        assert!(matches!(open(&text), Err(Error::NotAnImage { .. })));
+
+        // The header is a PNG, but the data stops early.
+        let cut = dir.path().join("cut.png");
+        let mut png = Vec::new();
+        image::RgbImage::from_pixel(64, 64, image::Rgb([1, 2, 3]))
+            .write_to(&mut Cursor::new(&mut png), ImageFormat::Png)
+            .unwrap();
+        std::fs::write(&cut, &png[..png.len() / 2]).unwrap();
+        assert!(matches!(open(&cut), Err(Error::Decode { .. })));
+
+        // A JPEG marker, then bytes that are not JPEG data.
+        let jpeg = dir.path().join("bad.jpg");
+        std::fs::write(&jpeg, b"\xFF\xD8\xFF\xE0 this is not a JPEG file").unwrap();
+        assert!(matches!(open(&jpeg), Err(Error::Decode { .. })));
+    }
 }
