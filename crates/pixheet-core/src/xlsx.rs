@@ -1,23 +1,26 @@
 //! A port of `pixheet._xlsx`: a streaming .xlsx writer, one blank cell for each pixel.
 //!
 //! `sheet1.xml` and `styles.xml` are byte-identical to the output of the Python version,
-//! and thus to the output of xlsxwriter. This module writes the zip by hand, as Python's
-//! `zipfile` does for a file that can seek: no data descriptors, and zip64 only for a
-//! member that can be larger than 2 GiB.
+//! and thus to the output of xlsxwriter. The child module `xml` makes the text of the
+//! parts, and `archive` writes the zip by hand, as Python's `zipfile` does.
 //!
 //! The sheet XML goes out in chunks of about CHUNK bytes. The rayon pool makes the text
-//! of the chunks, then compresses them. Each chunk has its own DEFLATE compressor, with
-//! the 32 KiB before the chunk as its preset dictionary (the pigz method, as in
-//! `pixheet._threads`). The members decompress to the same bytes as one stream.
+//! of the chunks, then compresses them.
+
+mod archive;
+mod xml;
 
 use std::io::{self, Seek, SeekFrom, Write};
 use std::ops::ControlFlow;
 
-use flate2::{Compress, Compression, FlushCompress, Status};
 use rayon::prelude::*;
-use rustc_hash::FxHashMap;
 
 use crate::resample::Pixels;
+use archive::{Entry, ZipOut, compress_chunks};
+use xml::{
+    SHEET_FOOTER_XML, column_name, content_types_xml, root_rels_xml, rows_xml, sheet_header_xml,
+    style_ids, styles_xml, workbook_rels_xml, workbook_xml,
+};
 
 /// Excel's column limit (A to XFD).
 pub const MAX_COLUMNS: usize = 16_384;
@@ -26,423 +29,14 @@ pub const MAX_ROWS: usize = 1_048_576;
 /// Excel allows 64,000 cell formats, and format 0 is the default style.
 pub const MAX_COLORS: usize = 63_999;
 /// `zipfile.ZIP64_LIMIT`: a larger member or offset needs zip64.
-pub(crate) const ZIP64_LIMIT: u64 = (1 << 31) - 1;
-const ZIP_FILECOUNT_LIMIT: usize = (1 << 16) - 1;
+const ZIP64_LIMIT: u64 = (1 << 31) - 1;
 
 const CHUNK: usize = 256 * 1024;
 const WINDOW: usize = 32 * 1024;
-/// The DEFLATE level. zipfile uses 6. With zlib-rs, level 3 compresses about 2 times
-/// faster, and the files are only 2 to 3 % larger. Read docs/rust-port/PROFILE.md.
-const LEVEL: u32 = 3;
-
-const XML_DECL: &str = "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\n";
-const MAIN_NS: &str = "http://schemas.openxmlformats.org/spreadsheetml/2006/main";
-const DOC_REL: &str = "http://schemas.openxmlformats.org/officeDocument/2006/relationships";
-const PKG_REL: &str = "http://schemas.openxmlformats.org/package/2006/relationships";
-const SHEET_CT: &str = "application/vnd.openxmlformats-officedocument.spreadsheetml";
 
 /// The longest cell and row markup. They tell if the sheet part can be larger than 2 GiB.
 const MAX_CELL_BYTES: usize = "<c r=\"XFD1048576\" s=\"63999\"/>".len();
 const MAX_ROW_BYTES: usize = "<row r=\"1048576\" ht=\"0.75\" customHeight=\"1\"></row>".len();
-
-fn content_types_xml() -> String {
-    format!(
-        "{XML_DECL}<Types xmlns=\"http://schemas.openxmlformats.org/package/2006/content-types\">\
-<Default Extension=\"rels\" ContentType=\"application/vnd.openxmlformats-package.relationships+xml\"/>\
-<Default Extension=\"xml\" ContentType=\"application/xml\"/>\
-<Override PartName=\"/xl/workbook.xml\" ContentType=\"{SHEET_CT}.sheet.main+xml\"/>\
-<Override PartName=\"/xl/worksheets/sheet1.xml\" ContentType=\"{SHEET_CT}.worksheet+xml\"/>\
-<Override PartName=\"/xl/styles.xml\" ContentType=\"{SHEET_CT}.styles+xml\"/></Types>"
-    )
-}
-
-fn root_rels_xml() -> String {
-    format!(
-        "{XML_DECL}<Relationships xmlns=\"{PKG_REL}\">\
-<Relationship Id=\"rId1\" Type=\"{DOC_REL}/officeDocument\" Target=\"xl/workbook.xml\"/></Relationships>"
-    )
-}
-
-fn workbook_xml() -> String {
-    format!(
-        "{XML_DECL}<workbook xmlns=\"{MAIN_NS}\" xmlns:r=\"{DOC_REL}\">\
-<sheets><sheet name=\"Sheet1\" sheetId=\"1\" r:id=\"rId1\"/></sheets></workbook>"
-    )
-}
-
-fn workbook_rels_xml() -> String {
-    format!(
-        "{XML_DECL}<Relationships xmlns=\"{PKG_REL}\">\
-<Relationship Id=\"rId1\" Type=\"{DOC_REL}/worksheet\" Target=\"worksheets/sheet1.xml\"/>\
-<Relationship Id=\"rId2\" Type=\"{DOC_REL}/styles\" Target=\"styles.xml\"/></Relationships>"
-    )
-}
-
-/// Columns and rows are about 1 px; rows without data are hidden.
-fn sheet_header_xml(reference: &str, width: usize) -> String {
-    format!(
-        "{XML_DECL}<worksheet xmlns=\"{MAIN_NS}\" xmlns:r=\"{DOC_REL}\">\
-<dimension ref=\"{reference}\"/>\
-<sheetViews><sheetView tabSelected=\"1\" workbookViewId=\"0\"/></sheetViews>\
-<sheetFormatPr defaultRowHeight=\"0.75\" customHeight=\"1\" zeroHeight=\"1\"/>\
-<cols><col min=\"1\" max=\"{width}\" width=\"0.140625\" customWidth=\"1\"/></cols><sheetData>"
-    )
-}
-
-const SHEET_FOOTER_XML: &str = "</sheetData>\
-<pageMargins left=\"0.7\" right=\"0.7\" top=\"0.75\" bottom=\"0.75\" header=\"0.3\" footer=\"0.3\"/>\
-</worksheet>";
-
-/// styles.xml for the colors (0xRRGGBB) in the order of their style ids.
-///
-/// Fills 0 and 1 are reserved (`none` and `gray125`) and format 0 is the default style,
-/// so color `i` (1-based) uses `fillId = i + 1` and is format `i`.
-pub(crate) fn styles_xml(colors: &[u32]) -> String {
-    const HEX: &[u8; 16] = b"0123456789ABCDEF";
-    let count = colors.len();
-    let mut fills = String::with_capacity(count * 100);
-    let mut xfs = String::with_capacity(count * 80);
-    for (i, rgb) in colors.iter().enumerate() {
-        fills.push_str("<fill><patternFill patternType=\"solid\"><fgColor rgb=\"FF");
-        for shift in (0..24).step_by(4).rev() {
-            fills.push(char::from(HEX[(rgb >> shift) as usize & 15]));
-        }
-        fills.push_str("\"/><bgColor indexed=\"64\"/></patternFill></fill>");
-        xfs.push_str("<xf numFmtId=\"0\" fontId=\"0\" fillId=\"");
-        xfs.push_str(itoa::Buffer::new().format(i + 2));
-        xfs.push_str("\" borderId=\"0\" xfId=\"0\" applyFill=\"1\"/>");
-    }
-    format!(
-        "{XML_DECL}<styleSheet xmlns=\"{MAIN_NS}\">\
-<fonts count=\"1\"><font><sz val=\"11\"/><color theme=\"1\"/><name val=\"Calibri\"/>\
-<family val=\"2\"/><scheme val=\"minor\"/></font></fonts>\
-<fills count=\"{}\"><fill><patternFill patternType=\"none\"/></fill>\
-<fill><patternFill patternType=\"gray125\"/></fill>{fills}</fills>\
-<borders count=\"1\"><border><left/><right/><top/><bottom/><diagonal/></border></borders>\
-<cellStyleXfs count=\"1\"><xf numFmtId=\"0\" fontId=\"0\" fillId=\"0\" borderId=\"0\"/></cellStyleXfs>\
-<cellXfs count=\"{}\"><xf numFmtId=\"0\" fontId=\"0\" fillId=\"0\" borderId=\"0\" xfId=\"0\"/>\
-{xfs}</cellXfs>\
-<cellStyles count=\"1\"><cellStyle name=\"Normal\" xfId=\"0\" builtinId=\"0\"/></cellStyles>\
-<dxfs count=\"0\"/>\
-<tableStyles count=\"0\" defaultTableStyle=\"TableStyleMedium9\" defaultPivotStyle=\"PivotStyleLight16\"/>\
-</styleSheet>",
-        count + 2,
-        count + 1
-    )
-}
-
-/// The column letters for a 0-based column index (0 gives "A", 16383 gives "XFD").
-pub fn column_name(index: usize) -> String {
-    let mut name = Vec::new();
-    let mut i = index + 1;
-    while i > 0 {
-        name.push(b'A' + ((i - 1) % 26) as u8);
-        i = (i - 1) / 26;
-    }
-    name.reverse();
-    String::from_utf8(name).unwrap_or_default()
-}
-
-/// The style id (1, 2, ...) of each pixel, by first appearance, and the colors in id order.
-fn style_ids(im: &Pixels) -> (Vec<u32>, Vec<u32>) {
-    let mut map: FxHashMap<u32, u32> = FxHashMap::default();
-    let mut order = Vec::new();
-    let ids = im
-        .data
-        .as_chunks::<3>()
-        .0
-        .iter()
-        .map(|p| {
-            let key = (u32::from(p[0]) << 16) | (u32::from(p[1]) << 8) | u32::from(p[2]);
-            *map.entry(key).or_insert_with(|| {
-                order.push(key);
-                order.len() as u32
-            })
-        })
-        .collect();
-    (ids, order)
-}
-
-/// Add the sheet XML of rows `y0..y1` to `out`.
-fn rows_xml(
-    out: &mut Vec<u8>,
-    ids: &[u32],
-    w: usize,
-    rows: std::ops::Range<usize>,
-    cols: &[String],
-    compact: bool,
-) {
-    let mut rbuf = itoa::Buffer::new();
-    let mut sbuf = itoa::Buffer::new();
-    for y in rows {
-        let r = rbuf.format(y + 1);
-        out.extend_from_slice(b"<row r=\"");
-        out.extend_from_slice(r.as_bytes());
-        out.extend_from_slice(b"\" ht=\"0.75\" customHeight=\"1\">");
-        let row = &ids[y * w..(y + 1) * w];
-        if compact {
-            for &id in row {
-                out.extend_from_slice(b"<c s=\"");
-                out.extend_from_slice(sbuf.format(id).as_bytes());
-                out.extend_from_slice(b"\"/>");
-            }
-        } else {
-            for (col, &id) in cols.iter().zip(row) {
-                out.extend_from_slice(b"<c r=\"");
-                out.extend_from_slice(col.as_bytes());
-                out.extend_from_slice(r.as_bytes());
-                out.extend_from_slice(b"\" s=\"");
-                out.extend_from_slice(sbuf.format(id).as_bytes());
-                out.extend_from_slice(b"\"/>");
-            }
-        }
-        out.extend_from_slice(b"</row>");
-    }
-}
-
-/// Raw DEFLATE of `data` with `dict` as the preset dictionary. A sync flush ends the
-/// chunk on a byte boundary; with `last`, the chunk ends the stream.
-fn deflate(data: &[u8], dict: &[u8], last: bool) -> Vec<u8> {
-    let mut c = Compress::new(Compression::new(LEVEL), false);
-    if !dict.is_empty() {
-        // zlib-rs takes any dictionary for a new raw stream.
-        c.set_dictionary(dict)
-            .expect("a new compressor takes a dictionary");
-    }
-    let mut out = Vec::with_capacity(data.len() / 4 + 1024);
-    let flush = if last {
-        FlushCompress::Finish
-    } else {
-        FlushCompress::Sync
-    };
-    loop {
-        if out.capacity() - out.len() < 64 * 1024 {
-            out.reserve(out.capacity().max(64 * 1024));
-        }
-        let consumed = c.total_in() as usize;
-        let status = c
-            .compress_vec(&data[consumed..], &mut out, flush)
-            .expect("deflate");
-        let done = c.total_in() as usize == data.len();
-        // The flush is complete when the compressor leaves space in the output.
-        if status == Status::StreamEnd || (done && !last && out.capacity() > out.len()) {
-            return out;
-        }
-    }
-}
-
-/// Compress consecutive chunks of one member on the pool. `tail` is the text before the
-/// first chunk. With `last`, the last chunk ends the DEFLATE stream.
-fn compress_chunks(chunks: &[&[u8]], tail: &[u8], last: bool) -> Vec<(Vec<u8>, crc32fast::Hasher)> {
-    chunks
-        .par_iter()
-        .enumerate()
-        .map(|(i, text)| {
-            let dict: &[u8] = if i == 0 {
-                tail
-            } else {
-                let prev = chunks[i - 1];
-                &prev[prev.len().saturating_sub(WINDOW)..]
-            };
-            let mut hasher = crc32fast::Hasher::new();
-            hasher.update(text);
-            (deflate(text, dict, last && i == chunks.len() - 1), hasher)
-        })
-        .collect()
-}
-
-struct Entry {
-    name: &'static str,
-    crc: u32,
-    csize: u64,
-    usize: u64,
-    offset: u64,
-}
-
-/// The "version made by" system: 0 for Windows, 3 for Unix, as zipfile writes it.
-const CREATE_SYSTEM: u16 = if cfg!(windows) { 0 } else { 3 };
-
-struct ZipOut<W: Write + Seek> {
-    out: W,
-    entries: Vec<Entry>,
-    pos: u64,
-    time: u16,
-    date: u16,
-    limit: u64,
-}
-
-/// The DOS time and date of now, in local time, as zipfile writes them.
-fn dos_now() -> (u16, u16) {
-    use chrono::{Datelike, Timelike};
-    let now = chrono::Local::now();
-    let time = (now.hour() << 11) | (now.minute() << 5) | (now.second() / 2);
-    let year = (now.year() - 1980).clamp(0, 127) as u32;
-    let date = (year << 9) | (now.month() << 5) | now.day();
-    (time as u16, date as u16)
-}
-
-impl<W: Write + Seek> ZipOut<W> {
-    fn new(out: W, limit: u64) -> Self {
-        let (time, date) = dos_now();
-        Self {
-            out,
-            entries: Vec::new(),
-            pos: 0,
-            time,
-            date,
-            limit,
-        }
-    }
-
-    fn put(&mut self, b: &[u8]) -> io::Result<()> {
-        self.out.write_all(b)?;
-        self.pos += b.len() as u64;
-        Ok(())
-    }
-
-    /// The local file header. With `zip64`, the sizes are in a zip64 extra field.
-    fn local_header(
-        &mut self,
-        name: &str,
-        crc: u32,
-        csize: u64,
-        usize: u64,
-        zip64: bool,
-    ) -> io::Result<()> {
-        let mut h = Vec::with_capacity(50 + name.len());
-        h.extend_from_slice(&0x0403_4b50u32.to_le_bytes());
-        h.extend_from_slice(&(if zip64 { 45u16 } else { 20 }).to_le_bytes());
-        h.extend_from_slice(&0u16.to_le_bytes()); // flags
-        h.extend_from_slice(&8u16.to_le_bytes()); // deflate
-        h.extend_from_slice(&self.time.to_le_bytes());
-        h.extend_from_slice(&self.date.to_le_bytes());
-        h.extend_from_slice(&crc.to_le_bytes());
-        let (cs, us) = if zip64 {
-            (u32::MAX, u32::MAX)
-        } else {
-            (csize as u32, usize as u32)
-        };
-        h.extend_from_slice(&cs.to_le_bytes());
-        h.extend_from_slice(&us.to_le_bytes());
-        h.extend_from_slice(&(name.len() as u16).to_le_bytes());
-        h.extend_from_slice(&(if zip64 { 20u16 } else { 0 }).to_le_bytes());
-        h.extend_from_slice(name.as_bytes());
-        if zip64 {
-            h.extend_from_slice(&1u16.to_le_bytes());
-            h.extend_from_slice(&16u16.to_le_bytes());
-            h.extend_from_slice(&usize.to_le_bytes());
-            h.extend_from_slice(&csize.to_le_bytes());
-        }
-        self.put(&h)
-    }
-
-    /// A member that is in memory. A large member is compressed in chunks on the pool.
-    fn member(&mut self, name: &'static str, data: &[u8]) -> io::Result<()> {
-        let chunks: Vec<&[u8]> = data.chunks(CHUNK).collect();
-        let packed = compress_chunks(&chunks, &[], true);
-        let mut crc = crc32fast::Hasher::new();
-        let mut csize = 0;
-        for (p, hasher) in &packed {
-            crc.combine(hasher);
-            csize += p.len() as u64;
-        }
-        let crc = crc.finalize();
-        let offset = self.pos;
-        self.local_header(name, crc, csize, data.len() as u64, false)?;
-        for (p, _) in &packed {
-            self.put(p)?;
-        }
-        self.entries.push(Entry {
-            name,
-            crc,
-            csize,
-            usize: data.len() as u64,
-            offset,
-        });
-        Ok(())
-    }
-
-    /// The central directory and its end record, with the zip64 records when necessary.
-    fn finish(mut self) -> io::Result<W> {
-        let cd_start = self.pos;
-        let entries = std::mem::take(&mut self.entries);
-        for e in &entries {
-            let mut extra: Vec<u64> = Vec::new();
-            let (mut cs, mut us, mut off) = (e.csize as u32, e.usize as u32, e.offset as u32);
-            if e.usize > self.limit || e.csize > self.limit {
-                extra.extend([e.usize, e.csize]);
-                (cs, us) = (u32::MAX, u32::MAX);
-            }
-            if e.offset > self.limit {
-                extra.push(e.offset);
-                off = u32::MAX;
-            }
-            let version: u16 = if extra.is_empty() { 20 } else { 45 };
-            let mut h = Vec::with_capacity(46 + e.name.len() + 28);
-            h.extend_from_slice(&0x0201_4b50u32.to_le_bytes());
-            h.extend_from_slice(&(version | (CREATE_SYSTEM << 8)).to_le_bytes());
-            h.extend_from_slice(&version.to_le_bytes());
-            h.extend_from_slice(&0u16.to_le_bytes());
-            h.extend_from_slice(&8u16.to_le_bytes());
-            h.extend_from_slice(&self.time.to_le_bytes());
-            h.extend_from_slice(&self.date.to_le_bytes());
-            h.extend_from_slice(&e.crc.to_le_bytes());
-            h.extend_from_slice(&cs.to_le_bytes());
-            h.extend_from_slice(&us.to_le_bytes());
-            h.extend_from_slice(&(e.name.len() as u16).to_le_bytes());
-            let extra_len = if extra.is_empty() {
-                0
-            } else {
-                4 + 8 * extra.len()
-            };
-            h.extend_from_slice(&(extra_len as u16).to_le_bytes());
-            h.extend_from_slice(&[0; 6]); // comment length, disk, internal attributes
-            h.extend_from_slice(&(0o600u32 << 16).to_le_bytes()); // as zipfile writes
-            h.extend_from_slice(&off.to_le_bytes());
-            h.extend_from_slice(e.name.as_bytes());
-            if !extra.is_empty() {
-                h.extend_from_slice(&1u16.to_le_bytes());
-                h.extend_from_slice(&((8 * extra.len()) as u16).to_le_bytes());
-                for v in extra {
-                    h.extend_from_slice(&v.to_le_bytes());
-                }
-            }
-            self.put(&h)?;
-        }
-        let cd_size = self.pos - cd_start;
-        let count = entries.len();
-        if count > ZIP_FILECOUNT_LIMIT || cd_start > self.limit || cd_size > self.limit {
-            let record = self.pos;
-            let mut z = Vec::with_capacity(76);
-            z.extend_from_slice(&0x0606_4b50u32.to_le_bytes());
-            z.extend_from_slice(&44u64.to_le_bytes());
-            z.extend_from_slice(&45u16.to_le_bytes());
-            z.extend_from_slice(&45u16.to_le_bytes());
-            z.extend_from_slice(&[0; 8]); // this disk, the disk of the directory
-            z.extend_from_slice(&(count as u64).to_le_bytes());
-            z.extend_from_slice(&(count as u64).to_le_bytes());
-            z.extend_from_slice(&cd_size.to_le_bytes());
-            z.extend_from_slice(&cd_start.to_le_bytes());
-            z.extend_from_slice(&0x0706_4b50u32.to_le_bytes());
-            z.extend_from_slice(&0u32.to_le_bytes());
-            z.extend_from_slice(&record.to_le_bytes());
-            z.extend_from_slice(&1u32.to_le_bytes());
-            self.put(&z)?;
-        }
-        let mut end = Vec::with_capacity(22);
-        end.extend_from_slice(&0x0605_4b50u32.to_le_bytes());
-        end.extend_from_slice(&[0; 4]);
-        let short = count.min(0xFFFF) as u16;
-        end.extend_from_slice(&short.to_le_bytes());
-        end.extend_from_slice(&short.to_le_bytes());
-        end.extend_from_slice(&(cd_size.min(0xFFFF_FFFF) as u32).to_le_bytes());
-        end.extend_from_slice(&(cd_start.min(0xFFFF_FFFF) as u32).to_le_bytes());
-        end.extend_from_slice(&0u16.to_le_bytes());
-        self.put(&end)?;
-        self.out.flush()?;
-        Ok(self.out)
-    }
-}
 
 /// Why the writer stopped.
 #[derive(Debug)]
@@ -777,13 +371,5 @@ header=\"0.3\" footer=\"0.3\"/></worksheet>";
             ControlFlow::Continue(())
         });
         assert!(matches!(result, Err(WriteError::Invalid(_))));
-    }
-
-    #[test]
-    fn column_names() {
-        assert_eq!(column_name(0), "A");
-        assert_eq!(column_name(25), "Z");
-        assert_eq!(column_name(26), "AA");
-        assert_eq!(column_name(16_383), "XFD");
     }
 }
