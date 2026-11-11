@@ -93,10 +93,13 @@ a change to the app, also run the smoke test.
   `textContent`. The content security policy blocks inline scripts and inline `style`
   attributes: use classes, or set styles from JavaScript.
 - Use the module layout of the Rust book (chapter 7.5): a module `name.rs` keeps its
-  child modules in the folder `name/`. Do not use `mod.rs`. Split a file when its code
-  (without the tests) has more than about 400 lines or more than one topic.
-- Keep the unit tests in a `mod tests` in the file of the code (Rust book, chapter
-  11.3). A module with many tests can keep them in `name/tests.rs`.
+  child modules in the folder `name/`. Do not use `mod.rs`, the older style.
+- Split a file when its code (without the tests) has more than one topic. As a guide of
+  this project, not of the book, look again at a file with more than about 400 lines of
+  code.
+- Keep the unit tests in a `#[cfg(test)] mod tests` in the file of the code (Rust book,
+  chapter 11.3). This project has one exception: the tests of `Batch` have more than 500
+  lines, so they are in `batch/tests.rs`.
 - The line length is 100 (`rustfmt` default).
 - Do not commit `samples/`, `local-samples/`, `*.xlsx`, `profiles/` or `target/`. The
   `.gitignore` file excludes them.
