@@ -6,10 +6,16 @@ coverage:
         # A small change, for example a refactor that removes tested lines, can lower the
         # coverage a little. A drop of 1 % or less does not fail the check.
         threshold: 1%
+    # The patch check shows the coverage of the changed lines, but it does not fail. Codecov
+    # counts moved lines as new lines. Thus a refactor that moves code can fail this check,
+    # also when the project coverage goes up.
+    patch:
+      default:
+        informational: true
 
 # The components divide the coverage by crate. Read https://docs.codecov.com/docs/components.
 # Codecov finds them from the paths, so the upload needs no flags. The components have no
-# status checks: only the project check above can fail a pull request.
+# status checks. Only the project check above can fail a pull request or a commit on main.
 # Do not change a component_id or a name: a new one starts a new history.
 component_management:
   individual_components:
