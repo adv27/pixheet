@@ -3,32 +3,27 @@
 //!
 //! A reader thread decodes the next image while the worker fits and writes the current
 //! one, as the command does. The decode uses one CPU; the other steps use all of them.
+//! The child module `preview` makes the preview of a card, and `failure` gives the
+//! reason of a failed conversion.
+
+mod failure;
+mod preview;
 
 use std::collections::{HashSet, VecDeque};
-use std::io;
 use std::ops::ControlFlow;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, mpsc};
 use std::time::{Duration, Instant};
 
-use base64::Engine;
-use pixheet_core::{
-    ConvertResult, Error, Options, Pixels, Step, check_output, fit_image, io_reason, load, write,
-};
+use pixheet_core::{ConvertResult, Error, Options, Pixels, check_output, fit_image, load, write};
+
+pub use failure::Failure;
+use failure::{classify, name};
+use preview::preview_url;
 
 /// The marker of an output that appeared after the plan.
 const EXISTS: &str = "the output exists";
-
-/// The longest side of a preview, in pixels. A card is at most about 400 CSS pixels wide, and
-/// the preview must stay sharp on a display with a scale above 100 %.
-const PREVIEW_SIDE: usize = 512;
-
-/// The largest PNG preview, in bytes. A larger preview, for example a photo, goes as a JPEG.
-const PNG_BUDGET: usize = 96 * 1024;
-
-/// The quality of a JPEG preview.
-const JPEG_QUALITY: u8 = 88;
 
 /// One image to convert.
 #[derive(Clone, Debug)]
@@ -79,13 +74,6 @@ impl Queue {
     }
 }
 
-/// Why a conversion failed: a short reason for the card and a full text.
-#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize)]
-pub struct Failure {
-    pub reason: String,
-    pub detail: String,
-}
-
 /// A message of the worker.
 #[derive(Clone, Debug)]
 pub enum Message {
@@ -117,163 +105,6 @@ pub enum Message {
     Finished {
         stopped: bool,
     },
-}
-
-/// A copy of `image` for the card, as a PNG or JPEG data URL.
-///
-/// The longest side of the copy is near [`PREVIEW_SIDE`], so the page does not scale it up
-/// much. A large image shrinks with the Catmull-Rom filter: thin lines and text stay clear
-/// at each ratio. A small image grows by a whole number with the nearest pixel, so each cell stays
-/// a sharp square.
-pub fn preview_url(image: &Pixels) -> Option<String> {
-    let preview = preview_pixels(image)?;
-    let (w, h) = (preview.w as u32, preview.h as u32);
-    let mut png = Vec::new();
-    image::ImageEncoder::write_image(
-        image::codecs::png::PngEncoder::new_with_quality(
-            &mut png,
-            image::codecs::png::CompressionType::Fast,
-            image::codecs::png::FilterType::Adaptive,
-        ),
-        &preview.data,
-        w,
-        h,
-        image::ExtendedColorType::Rgb8,
-    )
-    .ok()?;
-    let (mime, bytes) = if png.len() <= PNG_BUDGET {
-        ("png", png)
-    } else {
-        let mut jpeg = Vec::new();
-        image::ImageEncoder::write_image(
-            image::codecs::jpeg::JpegEncoder::new_with_quality(&mut jpeg, JPEG_QUALITY),
-            &preview.data,
-            w,
-            h,
-            image::ExtendedColorType::Rgb8,
-        )
-        .ok()?;
-        ("jpeg", jpeg)
-    };
-    Some(format!(
-        "data:image/{mime};base64,{}",
-        base64::engine::general_purpose::STANDARD.encode(bytes)
-    ))
-}
-
-/// The pixels of the preview of `image`. Read [`preview_url`].
-fn preview_pixels(image: &Pixels) -> Option<Pixels> {
-    let longest = image.w.max(image.h).max(1);
-    if longest > PREVIEW_SIDE {
-        let scale = PREVIEW_SIDE as f64 / longest as f64;
-        let w = ((image.w as f64 * scale).round() as u32).max(1);
-        let h = ((image.h as f64 * scale).round() as u32).max(1);
-        let view = image::ImageBuffer::<image::Rgb<u8>, &[u8]>::from_raw(
-            image.w as u32,
-            image.h as u32,
-            &image.data,
-        )?;
-        let small = image::imageops::resize(&view, w, h, image::imageops::FilterType::CatmullRom);
-        return Some(Pixels {
-            w: w as usize,
-            h: h as usize,
-            data: small.into_raw(),
-        });
-    }
-    // Round, so that the copy is between 2/3 and 3/2 of PREVIEW_SIDE.
-    let k = ((PREVIEW_SIDE as f64 / longest as f64).round() as usize).max(1);
-    if k == 1 {
-        return Some(image.clone());
-    }
-    let mut out = Pixels::new(image.w * k, image.h * k);
-    for (y, row) in out.data.chunks_exact_mut(image.w * k * 3).enumerate() {
-        let src = &image.data[(y / k) * image.w * 3..][..image.w * 3];
-        for (cell, rgb) in row.chunks_exact_mut(k * 3).zip(src.as_chunks::<3>().0) {
-            cell.as_chunks_mut::<3>().0.fill(*rgb);
-        }
-    }
-    Some(out)
-}
-
-fn name(path: &Path) -> String {
-    path.file_name()
-        .unwrap_or_default()
-        .to_string_lossy()
-        .into_owned()
-}
-
-fn folder(path: &Path) -> String {
-    path.parent().unwrap_or(Path::new("")).display().to_string()
-}
-
-/// The reason of a failed conversion, for people.
-pub fn classify(error: &Error, dst: &Path) -> Failure {
-    let plain = |reason: &str, detail: String| Failure {
-        reason: reason.into(),
-        detail,
-    };
-    match error {
-        Error::NotAnImage { .. } => plain(
-            "Not an image",
-            "The app cannot read this file as an image.".into(),
-        ),
-        Error::Decode { message, .. } => plain(
-            "Damaged image",
-            format!("The image data has an error: {message}"),
-        ),
-        Error::Invalid(message) => plain("Cannot convert", message.clone()),
-        Error::Cancelled => plain("Stopped", "The conversion stopped.".into()),
-        Error::Io {
-            step: Step::Read,
-            source,
-            ..
-        } => match source.kind() {
-            io::ErrorKind::NotFound => {
-                plain("File not found", "The image is not there any more.".into())
-            }
-            _ => plain(
-                "Cannot read",
-                format!("The app cannot read the image: {}.", io_reason(source)),
-            ),
-        },
-        Error::Io { step, source, .. } => {
-            let denied = source.kind() == io::ErrorKind::PermissionDenied
-                || source.raw_os_error() == Some(30); // EROFS: a read-only disk
-            if cfg!(windows) && *step == Step::Rename && denied && dst.is_file() {
-                // The app wrote the temporary file, so it can write in the folder. Windows
-                // does not let it replace a file that another app has open.
-                return plain(
-                    "File is in use",
-                    format!(
-                        "Another app has {} open, for example Excel. Close the file, then retry.",
-                        name(dst)
-                    ),
-                );
-            }
-            if denied {
-                return plain(
-                    "Cannot write here",
-                    format!(
-                        "The app cannot write in {}. Choose another output folder, then retry.",
-                        folder(dst)
-                    ),
-                );
-            }
-            if source.kind() == io::ErrorKind::NotFound {
-                return plain(
-                    "Folder not found",
-                    format!(
-                        "The folder {} is not there. Choose another output folder, then retry.",
-                        folder(dst)
-                    ),
-                );
-            }
-            plain(
-                "Cannot write",
-                format!("The app cannot write {}: {}.", name(dst), io_reason(source)),
-            )
-        }
-    }
 }
 
 /// An image that the reader decoded, or the error of the decode.
@@ -411,92 +242,6 @@ fn convert_one(loaded: Loaded, cancel: &AtomicBool, post: &mut dyn FnMut(Message
 mod tests {
     use super::*;
 
-    fn decode(url: &str) -> image::RgbImage {
-        let data = url.split_once(";base64,").unwrap().1;
-        let bytes = base64::engine::general_purpose::STANDARD
-            .decode(data)
-            .unwrap();
-        image::load_from_memory(&bytes).unwrap().to_rgb8()
-    }
-
-    fn pixels(w: usize, h: usize, mut color: impl FnMut(usize, usize) -> [u8; 3]) -> Pixels {
-        let mut image = Pixels::new(w, h);
-        for y in 0..h {
-            for x in 0..w {
-                let i = (y * w + x) * 3;
-                image.data[i..i + 3].copy_from_slice(&color(x, y));
-            }
-        }
-        image
-    }
-
-    #[test]
-    fn a_large_image_shrinks_without_aliasing() {
-        // A checkerboard of 1-pixel squares: the nearest pixel gives black or white.
-        let image = pixels(2048, 1536, |x, y| {
-            [if (x + y) % 2 == 0 { 255 } else { 0 }; 3]
-        });
-        let url = preview_url(&image).unwrap();
-        assert!(url.starts_with("data:image/png;base64,"));
-        let preview = decode(&url);
-        assert_eq!(preview.dimensions(), (512, 384));
-        assert!(
-            preview
-                .pixels()
-                .all(|p| p.0.iter().all(|&c| (120..=135).contains(&c)))
-        );
-    }
-
-    #[test]
-    fn thin_lines_stay_even_at_a_ratio_that_is_not_whole() {
-        // Black and white rows of 1 pixel, shrunk by 1.4. A filter that takes each source
-        // row for one target row gives rows of pure black or white.
-        let image = pixels(717, 538, |_, y| [if y % 2 == 0 { 255 } else { 0 }; 3]);
-        let preview = preview_pixels(&image).unwrap();
-        assert_eq!((preview.w, preview.h), (512, 384));
-        assert!(preview.data.iter().all(|&c| (64..=192).contains(&c)));
-    }
-
-    #[test]
-    fn a_small_image_grows_with_sharp_cells() {
-        let image = pixels(4, 3, |x, y| [(x * 60) as u8, (y * 80) as u8, 7]);
-        let url = preview_url(&image).unwrap();
-        assert!(url.starts_with("data:image/png;base64,"));
-        let preview = decode(&url);
-        assert_eq!(preview.dimensions(), (512, 384));
-        for (x, y, p) in preview.enumerate_pixels() {
-            assert_eq!(p.0, image.get(x as usize / 128, y as usize / 128));
-        }
-    }
-
-    #[test]
-    fn a_preview_stays_near_the_preview_side() {
-        for (w, h, side) in [
-            (300, 200, 600),
-            (400, 100, 400),
-            (342, 10, 342),
-            (1, 1, 512),
-        ] {
-            let preview = preview_pixels(&pixels(w, h, |_, _| [1, 2, 3])).unwrap();
-            assert_eq!(preview.w.max(preview.h), side, "{w} x {h}");
-            assert_eq!(preview.w * h, preview.h * w);
-        }
-    }
-
-    #[test]
-    fn a_photo_goes_as_a_jpeg() {
-        // Noise does not compress, so the PNG is larger than the budget.
-        let mut seed = 1u32;
-        let image = pixels(800, 600, |_, _| {
-            seed = seed.wrapping_mul(1_664_525).wrapping_add(1_013_904_223);
-            let [a, b, c, _] = seed.to_le_bytes();
-            [a, b, c]
-        });
-        let url = preview_url(&image).unwrap();
-        assert!(url.starts_with("data:image/jpeg;base64,"));
-        assert_eq!(decode(&url).dimensions(), (512, 384));
-    }
-
     #[test]
     fn a_skipped_job_stops_and_the_next_job_converts() {
         let dir = tempfile::tempdir().unwrap();
@@ -533,79 +278,5 @@ mod tests {
             messages.last(),
             Some(Message::Finished { stopped: false })
         ));
-    }
-
-    /// The reason of `classify` for an error of `step` with the system error `source`.
-    fn io_failure(step: Step, source: io::Error, dst: &Path) -> Failure {
-        let error = Error::Io {
-            path: dst.to_path_buf(),
-            step,
-            source,
-        };
-        classify(&error, dst)
-    }
-
-    #[test]
-    fn each_error_has_a_reason_for_people() {
-        let dst = Path::new("out").join("a.xlsx");
-        let reason = |error: Error| classify(&error, &dst).reason;
-        let path = PathBuf::from("a.png");
-        assert_eq!(
-            reason(Error::NotAnImage { path: path.clone() }),
-            "Not an image"
-        );
-        let decode = Error::Decode {
-            path,
-            message: "bad data".into(),
-        };
-        let failure = classify(&decode, &dst);
-        assert_eq!(failure.reason, "Damaged image");
-        assert_eq!(failure.detail, "The image data has an error: bad data");
-        let failure = classify(&Error::Invalid("too large".into()), &dst);
-        assert_eq!(failure.reason, "Cannot convert");
-        assert_eq!(failure.detail, "too large");
-        assert_eq!(reason(Error::Cancelled), "Stopped");
-    }
-
-    #[test]
-    fn a_system_error_tells_the_step_and_the_cause() {
-        let dst = Path::new("out").join("a.xlsx");
-        let kind = io::Error::from;
-        let read = |e| io_failure(Step::Read, e, &dst);
-        assert_eq!(read(kind(io::ErrorKind::NotFound)).reason, "File not found");
-        let failure = read(io::Error::other("disk error"));
-        assert_eq!(failure.reason, "Cannot read");
-        assert_eq!(failure.detail, "The app cannot read the image: disk error.");
-
-        let write = |e| io_failure(Step::Write, e, &dst);
-        let failure = write(kind(io::ErrorKind::PermissionDenied));
-        assert_eq!(failure.reason, "Cannot write here");
-        assert!(failure.detail.contains(&folder(&dst)), "{}", failure.detail);
-        let failure = write(kind(io::ErrorKind::NotFound));
-        assert_eq!(failure.reason, "Folder not found");
-        assert!(failure.detail.contains(&folder(&dst)), "{}", failure.detail);
-        let failure = write(io::Error::other("disk full"));
-        assert_eq!(failure.reason, "Cannot write");
-        assert_eq!(failure.detail, "The app cannot write a.xlsx: disk full.");
-
-        // The output does not exist, so the rename is not blocked by another app.
-        let rename = io_failure(Step::Rename, kind(io::ErrorKind::PermissionDenied), &dst);
-        assert_eq!(rename.reason, "Cannot write here");
-    }
-
-    #[test]
-    fn a_rename_over_an_open_file_tells_to_close_it() {
-        let dir = tempfile::tempdir().unwrap();
-        let dst = dir.path().join("a.xlsx");
-        std::fs::write(&dst, b"old").unwrap();
-        let denied = io::Error::from(io::ErrorKind::PermissionDenied);
-        let failure = io_failure(Step::Rename, denied, &dst);
-        // Only Windows locks a file that another app has open.
-        if cfg!(windows) {
-            assert_eq!(failure.reason, "File is in use");
-            assert!(failure.detail.contains("a.xlsx"), "{}", failure.detail);
-        } else {
-            assert_eq!(failure.reason, "Cannot write here");
-        }
     }
 }
