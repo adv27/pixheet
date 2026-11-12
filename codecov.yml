@@ -6,6 +6,12 @@ coverage:
         # A small change, for example a refactor that removes tested lines, can lower the
         # coverage a little. A drop of 1 % or less does not fail the check.
         threshold: 1%
+    patch:
+      default:
+        # The patch check shows the coverage of the changed lines, but it does not fail. A
+        # move of code counts the moved lines as new lines, and the code that needs a real
+        # window has no coverage. Read the figure on each pull request.
+        informational: true
 
 # The components divide the coverage by crate. Read https://docs.codecov.com/docs/components.
 # Codecov finds them from the paths, so the upload needs no flags. The components have no
