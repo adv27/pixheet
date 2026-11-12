@@ -72,7 +72,7 @@ With 4 threads, only 1.9 of the 4 CPUs worked: the decode runs on one thread.
 | Count the colors of a large image on several threads. | Small: the counts take a few ms. | Same bytes | |
 | Make the text of `styles.xml` on several threads. | A few ms for a photo. | Same bytes | |
 | libdeflate | None now | Same XML | libdeflate ends each stream with a final block. Thus the chunks of the threads cannot join into one zip member. |
-| Smaller files: DEFLATE level 6 or 9 again. | Files 2 to 3 % smaller, but 20 to 50 % slower. | Same XML | Change `LEVEL` in `xlsx.rs`. |
+| Smaller files: DEFLATE level 6 or 9 again. | Files 2 to 3 % smaller, but 20 to 50 % slower. | Same XML | Change `LEVEL` in `xlsx/archive.rs`. |
 
 The decode of the 12 MP photo takes about 80 ms on one thread (the spike measured it
 with `--stages`, and the decoder did not change). That is most of the 126 ms of one
