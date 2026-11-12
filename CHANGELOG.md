@@ -16,7 +16,7 @@ The CI job "Check the version tag" stops a pull request when `CHANGELOG.md` has 
 section for the version in `Cargo.toml`. Write the text in Simplified Technical English
 (ASD-STE100). Read [AGENTS.md](AGENTS.md).
 
-## Unreleased
+## 0.3.0
 
 ### Added
 

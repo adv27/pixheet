@@ -2786,7 +2786,7 @@ dependencies = [
 
 [[package]]
 name = "pixheet-app"
-version = "0.2.1"
+version = "0.3.0"
 dependencies = [
  "base64 0.22.1",
  "image",
@@ -2803,7 +2803,7 @@ dependencies = [
 
 [[package]]
 name = "pixheet-cli"
-version = "0.2.1"
+version = "0.3.0"
 dependencies = [
  "clap",
  "glob",
@@ -2818,7 +2818,7 @@ dependencies = [
 
 [[package]]
 name = "pixheet-core"
-version = "0.2.1"
+version = "0.3.0"
 dependencies = [
  "chrono",
  "crc32fast",
@@ -5356,7 +5356,7 @@ dependencies = [
 
 [[package]]
 name = "xtask"
-version = "0.2.1"
+version = "0.3.0"
 dependencies = [
  "clap",
  "image",
